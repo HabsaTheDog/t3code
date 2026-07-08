@@ -241,7 +241,11 @@ function ProviderSettingsFieldRow({
   const type = field.control === "password" ? "password" : undefined;
   return (
     <FieldFrame variant={variant}>
-      <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
+      <label
+        htmlFor={inputId}
+        className={cn(variant === "card" && "block", type === "password" && "ph-no-capture")}
+        data-ph-no-capture={type === "password" ? true : undefined}
+      >
         {label}
         {variant === "card" ? (
           <DraftInput

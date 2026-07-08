@@ -5,10 +5,10 @@ import { cn } from "~/lib/utils";
 
 import { Skeleton } from "./ui/skeleton";
 
-export type DiffPanelMode = "inline" | "sheet" | "sidebar";
+export type DiffPanelMode = "inline" | "sheet" | "sidebar" | "viewer";
 
 function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
-  const shouldUseDragRegion = isElectron && mode !== "sheet";
+  const shouldUseDragRegion = isElectron && mode !== "sheet" && mode !== "viewer";
   return cn(
     "flex items-center justify-between gap-2 px-4",
     shouldUseDragRegion
@@ -22,12 +22,13 @@ export function DiffPanelShell(props: {
   header: ReactNode;
   children: ReactNode;
 }) {
-  const shouldUseDragRegion = isElectron && props.mode !== "sheet";
+  const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "viewer";
 
   return (
     <div
+      data-ph-no-capture
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        "ph-no-capture flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",

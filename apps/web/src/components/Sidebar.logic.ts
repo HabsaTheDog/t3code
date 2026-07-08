@@ -32,6 +32,8 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
+    | "Waiting"
+    | "Reviewing"
     | "Plan Ready";
   colorClass: string;
   dotClass: string;
@@ -41,6 +43,8 @@ export interface ThreadStatusPill {
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Waiting: 4,
+  Reviewing: 4,
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
@@ -52,6 +56,8 @@ type ThreadStatusInput = Pick<
   | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
+  | "activeRequiredDelegatedWorkCount"
+  | "pendingDelegatedReviewCount"
   | "interactionMode"
   | "latestTurn"
   | "session"
@@ -259,6 +265,20 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
   return visibleThreadIds.slice(0, Math.max(0, limit));
 }
 
+export function getQuickChatThreadSections<TThread>(
+  threads: readonly TThread[],
+  previewCount: number,
+): {
+  previewThreads: TThread[];
+  overflowThreads: TThread[];
+} {
+  const safePreviewCount = Math.max(0, previewCount);
+  return {
+    previewThreads: threads.slice(0, safePreviewCount),
+    overflowThreads: threads.slice(safePreviewCount),
+  };
+}
+
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
@@ -346,6 +366,24 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,
+    };
+  }
+
+  if (thread.pendingDelegatedReviewCount > 0) {
+    return {
+      label: "Reviewing",
+      colorClass: "text-fuchsia-600 dark:text-fuchsia-300/90",
+      dotClass: "bg-fuchsia-500 dark:bg-fuchsia-300/90",
+      pulse: true,
+    };
+  }
+
+  if (thread.activeRequiredDelegatedWorkCount > 0) {
+    return {
+      label: "Waiting",
+      colorClass: "text-cyan-600 dark:text-cyan-300/90",
+      dotClass: "bg-cyan-500 dark:bg-cyan-300/90",
+      pulse: true,
     };
   }
 

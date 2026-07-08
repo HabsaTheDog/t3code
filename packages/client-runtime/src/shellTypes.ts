@@ -6,8 +6,12 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-export interface EnvironmentScopedProjectShell extends OrchestrationProjectShell {
+export interface EnvironmentScopedProjectShell extends Omit<
+  OrchestrationProjectShell,
+  "projectKind"
+> {
   readonly environmentId: EnvironmentId;
+  readonly projectKind?: OrchestrationProjectShell["projectKind"];
 }
 
 export interface EnvironmentScopedThreadShell extends OrchestrationThreadShell {

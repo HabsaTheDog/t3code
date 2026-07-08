@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -28,6 +28,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readEnvironmentApi } from "~/environmentApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import type { ViewerTabSource } from "../workspaceViewerStore";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -59,7 +60,9 @@ interface PlanSidebarProps {
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
-  mode?: "sheet" | "sidebar";
+  mode?: "sheet" | "sidebar" | "viewer";
+  viewerThreadRef?: ScopedThreadRef;
+  onOpenViewerTab?: (source: ViewerTabSource) => void;
   onClose: () => void;
 }
 
@@ -72,6 +75,8 @@ const PlanSidebar = memo(function PlanSidebar({
   workspaceRoot,
   timestampFormat,
   mode = "sidebar",
+  viewerThreadRef,
+  onOpenViewerTab,
   onClose,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
@@ -183,7 +188,7 @@ const PlanSidebar = memo(function PlanSidebar({
             size="icon-xs"
             variant="ghost"
             onClick={onClose}
-            aria-label={`Close ${label.toLowerCase()} sidebar`}
+            aria-label={`Close ${label.toLowerCase()}`}
             className="text-muted-foreground/50 hover:text-foreground/70"
           >
             <PanelRightCloseIcon className="size-3.5" />
@@ -257,6 +262,8 @@ const PlanSidebar = memo(function PlanSidebar({
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
                     isStreaming={false}
+                    {...(viewerThreadRef ? { viewerThreadRef } : {})}
+                    {...(onOpenViewerTab ? { onOpenViewerTab } : {})}
                   />
                 </div>
               ) : null}

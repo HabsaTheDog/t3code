@@ -73,6 +73,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       port: 0,
       host: "127.0.0.1",
       cwd: process.cwd(),
+      quickChatWorkspaceRoot: join(baseDir, "quick-chats"),
       baseDir,
       ...derivedPaths,
       staticDir: undefined,

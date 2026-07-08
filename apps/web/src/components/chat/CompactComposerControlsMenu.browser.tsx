@@ -139,6 +139,8 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       interactionMode="default"
       planSidebarLabel="Plan"
       planSidebarOpen={false}
+      quizAccessMode="review-only"
+      quizAccessDisabled={false}
       runtimeMode="approval-required"
       showInteractionModeToggle
       traitsMenuContent={
@@ -154,6 +156,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       }
       onToggleInteractionMode={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
+      onQuizAccessModeChange={vi.fn()}
       onRuntimeModeChange={vi.fn()}
     />,
     { container: host },
@@ -168,6 +171,10 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
     [Symbol.asyncDispose]: cleanup,
     cleanup,
   };
+}
+
+async function openCategory(label: string) {
+  await page.getByText(label, { exact: true }).hover();
 }
 
 describe("CompactComposerControlsMenu", () => {
@@ -190,6 +197,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -208,6 +216,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       expect(document.body.textContent ?? "").not.toContain("Fast Mode");
@@ -223,6 +232,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -244,6 +254,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -264,6 +275,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -283,6 +295,7 @@ describe("CompactComposerControlsMenu", () => {
     });
 
     await page.getByLabelText("More composer controls").click();
+    await openCategory("Reasoning");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -301,10 +314,13 @@ describe("CompactComposerControlsMenu", () => {
         interactionMode="default"
         planSidebarLabel="Plan"
         planSidebarOpen={false}
+        quizAccessMode="review-only"
+        quizAccessDisabled={false}
         runtimeMode="approval-required"
         showInteractionModeToggle={false}
         onToggleInteractionMode={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
+        onQuizAccessModeChange={vi.fn()}
         onRuntimeModeChange={vi.fn()}
       />,
       { container: host },
@@ -317,12 +333,42 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).not.toContain("Mode");
       expect(text).not.toContain("Chat");
       expect(text).not.toContain("Plan");
-      expect(text).toContain("Access");
+      expect(text).toContain("Computer access");
+      expect(text).toContain("Quiz access");
+      expect(text).not.toContain("Supervised");
+      expect(text).not.toContain("Full access");
+    });
+
+    await openCategory("Computer access");
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
       expect(text).toContain("Supervised");
       expect(text).toContain("Full access");
     });
 
     await screen.unmount();
     host.remove();
+  });
+
+  it("keeps the setting categories ordered and opens quiz access on hover", async () => {
+    await using _ = await mountMenu();
+
+    await page.getByLabelText("More composer controls").click();
+
+    const text = document.body.textContent ?? "";
+    const categories = ["Reasoning", "Mode", "Computer access", "Quiz access"];
+    const positions = categories.map((category) => text.indexOf(category));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+
+    await openCategory("Quiz access");
+
+    await vi.waitFor(() => {
+      const submenuText = document.body.textContent ?? "";
+      expect(submenuText).toContain("Review previous attempts");
+      expect(submenuText).toContain("Ask before attempt");
+      expect(submenuText).toContain("Quiz assist");
+    });
   });
 });

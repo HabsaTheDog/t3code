@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EnvironmentId,
@@ -60,6 +61,7 @@ const rpcClientMock = {
   },
   filesystem: {
     browse: vi.fn(),
+    createPreviewTicket: vi.fn(),
   },
   sourceControl: {
     lookupRepository: vi.fn(),
@@ -94,6 +96,12 @@ const rpcClientMock = {
     getConfig: vi.fn(),
     refreshProviders: vi.fn(),
     updateProvider: vi.fn(),
+    getProviderSetupCapabilities: vi.fn(),
+    startProviderSetup: vi.fn(),
+    cancelProviderSetup: vi.fn(),
+    writeProviderSetupInput: vi.fn(),
+    redactConversationTurn: vi.fn(),
+    subscribeProviderSetupJob: vi.fn(),
     upsertKeybinding: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
@@ -234,6 +242,9 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setTheme: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    setViewerSurface: async () => true,
+    destroyViewerSurface: async () => undefined,
+    onViewerOpenTab: () => () => undefined,
     createCloudAuthRequest: async () => "t3code-dev://auth/callback?t3_state=test",
     getCloudAuthToken: async () => null,
     setCloudAuthToken: async () => true,
@@ -305,6 +316,7 @@ const baseServerConfig: ServerConfig = {
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",
+  quickChatWorkspaceRoot: "/tmp/t3-home/quick-chats",
   keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
   keybindings: [],
   issues: [],
@@ -641,6 +653,7 @@ describe("wsApi", () => {
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
@@ -704,6 +717,7 @@ describe("wsApi", () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings = {
+      ...DEFAULT_CLIENT_SETTINGS,
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,

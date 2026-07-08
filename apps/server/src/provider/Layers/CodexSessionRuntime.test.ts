@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, it } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
@@ -146,6 +146,93 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+
+  it("injects the saved personality when interaction mode is absent", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Review",
+        personalityPrompt: "Be strict about correctness and call me Alex.",
+      }),
+    );
+
+    assert.equal(params.collaborationMode?.mode, "default");
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /# User-defined agent behavior/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Be strict about correctness and call me Alex\./,
+    );
+  });
+
+  it("injects Study Buddy developer instructions when the fork environment is active", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Was ist morgen im Labor?",
+        cwd: "/tmp/selected-project",
+        environment: {
+          HOME: "/home/student",
+          STUDY_BUDDY_ROOT: "/study-buddy",
+          STUDY_BUDDY_T3_ROOT: "/study-buddy/t3code-fork",
+        },
+      }),
+    );
+
+    assert.equal(params.collaborationMode?.mode, "default");
+    assert.equal(params.collaborationMode?.settings.model, DEFAULT_MODEL);
+    assert.equal(params.collaborationMode?.settings.reasoning_effort, "medium");
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Study Buddy fork/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /\/home\/student\/\.agents\/skills\/study-buddy\/scripts\/study_buddy_task\.sh/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /\/tmp\/selected-project\/output\/<request-name>\/<timestamp>/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /\[PDF öffnen\]\(<\/absolute\/path\/document\.pdf>\)/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Never use a `file:\/\/` URL/,
+    );
+  });
+
+  it("passes the selected Codex model into Study Buddy wrapper instructions", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Erstelle einen Lernzettel",
+        cwd: "/tmp/selected-project",
+        model: "gpt-5-codex",
+        environment: {
+          HOME: "/home/student",
+          STUDY_BUDDY_ROOT: "/study-buddy",
+        },
+      }),
+    );
+
+    assert.equal(params.model, "gpt-5-codex");
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Codex model for Study Buddy runs: `gpt-5-codex`/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /doc "<prompt>" --codex-model "gpt-5-codex"/,
+    );
   });
 });
 

@@ -33,6 +33,7 @@ import {
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import type { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -68,6 +69,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+type DeferredFinalizationEntry = NonNullable<ProjectionThread["deferredFinalizations"]>[number];
 
 interface ProjectorDefinition {
   readonly name: ProjectorName;
@@ -175,6 +177,29 @@ function deriveHasActionableProposedPlan(input: {
 
   const latestPlan = sorted.at(-1) ?? null;
   return latestPlan !== null && latestPlan.implementedAt === null;
+}
+
+function upsertDelegatedWorkEntry(
+  existing: ProjectionThread["delegatedWork"],
+  next: ProjectionThread["delegatedWork"][number],
+): ProjectionThread["delegatedWork"] {
+  return [...existing.filter((entry) => entry.id !== next.id), next].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+  );
+}
+
+function upsertDeferredFinalizationEntry(
+  existing: ReadonlyArray<DeferredFinalizationEntry>,
+  next: DeferredFinalizationEntry,
+): ReadonlyArray<DeferredFinalizationEntry> {
+  return [
+    ...existing.filter((entry) => String(entry.turnId) !== String(next.turnId)),
+    next,
+  ].toSorted(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.turnId.localeCompare(right.turnId),
+  );
 }
 
 function retainProjectionMessagesAfterRevert(
@@ -468,6 +493,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             projectId: event.payload.projectId,
             title: event.payload.title,
             workspaceRoot: event.payload.workspaceRoot,
+            projectKind: event.payload.projectKind ?? "regular",
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
             createdAt: event.payload.createdAt,
@@ -488,6 +514,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(event.payload.workspaceRoot !== undefined
               ? { workspaceRoot: event.payload.workspaceRoot }
+              : {}),
+            ...(event.payload.projectKind !== undefined
+              ? { projectKind: event.payload.projectKind }
               : {}),
             ...(event.payload.defaultModelSelection !== undefined
               ? { defaultModelSelection: event.payload.defaultModelSelection }
@@ -585,6 +614,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            delegatedWork: [],
+            deferredFinalizations: [],
             deletedAt: null,
           });
           return;
@@ -703,6 +734,120 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
+        case "thread.delegated-work-upserted": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            delegatedWork: upsertDelegatedWorkEntry(
+              existingRow.value.delegatedWork,
+              event.payload.delegatedWork,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.deferred-finalization-upserted": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            deferredFinalizations: upsertDeferredFinalizationEntry(
+              existingRow.value.deferredFinalizations ?? [],
+              event.payload.deferredFinalization,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.deferred-finalization-released": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            deferredFinalizations: (existingRow.value.deferredFinalizations ?? []).map((entry) =>
+              String(entry.turnId) === String(event.payload.turnId)
+                ? {
+                    ...entry,
+                    state: "released" as const,
+                    releasedAt: event.payload.releasedAt,
+                    updatedAt: event.payload.releasedAt,
+                  }
+                : entry,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.delegated-work-reviewed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          const reviewedIds = new Set(event.payload.delegatedWorkIds.map(String));
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            delegatedWork: existingRow.value.delegatedWork.map((entry) =>
+              reviewedIds.has(entry.id)
+                ? {
+                    ...entry,
+                    reviewStatus: event.payload.reviewStatus,
+                    ...(event.payload.reviewNote !== undefined
+                      ? { reviewNote: event.payload.reviewNote }
+                      : {}),
+                    ...(event.payload.reviewerTurnId !== undefined
+                      ? { reviewerTurnId: event.payload.reviewerTurnId }
+                      : {}),
+                    reviewedAt: event.payload.reviewedAt,
+                    updatedAt: event.payload.reviewedAt,
+                  }
+                : entry,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.delegated-work-review-requested": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            deferredFinalizations: (existingRow.value.deferredFinalizations ?? []).map((entry) =>
+              String(entry.turnId) === String(event.payload.turnId)
+                ? {
+                    ...entry,
+                    state: "reviewing" as const,
+                    updatedAt: event.payload.createdAt,
+                  }
+                : entry,
+            ),
+            updatedAt: event.occurredAt,
+          });
           return;
         }
 

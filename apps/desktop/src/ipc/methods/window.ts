@@ -3,6 +3,7 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
+  DesktopViewerSurfaceInputSchema,
   PickFolderOptionsSchema,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,10 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
+import {
+  destroyDesktopViewerSurface,
+  setDesktopViewerSurface,
+} from "../../window/DesktopViewerSurfaceManager.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -132,4 +137,24 @@ export const openExternal = makeIpcMethod({
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
   }),
+});
+
+export const setViewerSurface = makeIpcMethod({
+  channel: IpcChannels.SET_VIEWER_SURFACE_CHANNEL,
+  payload: DesktopViewerSurfaceInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.setViewerSurface")(function* (input) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const owner = yield* electronWindow.focusedMainOrFirst;
+    return Option.isSome(owner) ? setDesktopViewerSurface(owner.value, input) : false;
+  }),
+});
+
+export const destroyViewerSurface = makeIpcMethod({
+  channel: IpcChannels.DESTROY_VIEWER_SURFACE_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.destroyViewerSurface")((surfaceId) =>
+    Effect.sync(() => destroyDesktopViewerSurface(surfaceId)),
+  ),
 });

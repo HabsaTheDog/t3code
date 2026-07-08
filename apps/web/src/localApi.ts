@@ -129,6 +129,26 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         rpcClient
           ? rpcClient.server.updateProvider(input)
           : Promise.reject(unavailableLocalBackendError()),
+      getProviderSetupCapabilities: () =>
+        rpcClient
+          ? rpcClient.server.getProviderSetupCapabilities()
+          : Promise.reject(unavailableLocalBackendError()),
+      startProviderSetup: (input) =>
+        rpcClient
+          ? rpcClient.server.startProviderSetup(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      cancelProviderSetup: (input) =>
+        rpcClient
+          ? rpcClient.server.cancelProviderSetup(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      writeProviderSetupInput: (input) =>
+        rpcClient
+          ? rpcClient.server.writeProviderSetupInput(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      subscribeProviderSetupJob: (input, listener) => {
+        if (!rpcClient) throw unavailableLocalBackendError();
+        return rpcClient.server.subscribeProviderSetupJob(input, listener);
+      },
       upsertKeybinding: (input) =>
         rpcClient
           ? rpcClient.server.upsertKeybinding(input)
@@ -162,6 +182,18 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
       signalProcess: (input) =>
         rpcClient
           ? rpcClient.server.signalProcess(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      getStudyBuddyConfiguration: () =>
+        rpcClient
+          ? rpcClient.server.getStudyBuddyConfiguration()
+          : Promise.reject(unavailableLocalBackendError()),
+      updateStudyBuddyConfiguration: (input) =>
+        rpcClient
+          ? rpcClient.server.updateStudyBuddyConfiguration(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      testStudyBuddyConnection: (input) =>
+        rpcClient
+          ? rpcClient.server.testStudyBuddyConnection(input)
           : Promise.reject(unavailableLocalBackendError()),
     },
   };

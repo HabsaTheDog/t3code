@@ -6,15 +6,15 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#161616" />
+    <meta name="theme-color" content="#fbfbfd" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#10172f" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#10172f" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <script>
       (() => {
-        const LIGHT_BACKGROUND = "#ffffff";
-        const DARK_BACKGROUND = "#161616";
+        const LIGHT_BACKGROUND = "#fbfbfd";
+        const DARK_BACKGROUND = "#10172f";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
@@ -45,8 +45,8 @@
       }
 
       body {
-        background: #ffffff;
-        color: #262626;
+        background: #fbfbfd;
+        color: #20263f;
         font-family:
           "DM Sans",
           -apple-system,
@@ -57,8 +57,8 @@
       }
 
       html.dark body {
-        background: #161616;
-        color: #f5f5f5;
+        background: #10172f;
+        color: #f7f8fb;
       }
 
       #boot-shell {
@@ -89,13 +89,13 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..800;1,9..40,300..800&display=swap"
       rel="stylesheet"
     />
-    <title>T3 Code (Alpha)</title>
+    <title>Study Buddy T3 Code</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="Study Buddy T3 Code splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="Study Buddy T3 Code" />
         </div>
       </div>
     </div>

@@ -63,6 +63,7 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly port: number;
   readonly host: string | undefined;
   readonly cwd: string;
+  readonly quickChatWorkspaceRoot: string;
   readonly baseDir: string;
   readonly staticDir: string | undefined;
   readonly devUrl: URL | undefined;
@@ -161,6 +162,9 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           otlpExportIntervalMs: 10_000,
           otlpServiceName: "t3-server",
           cwd,
+          quickChatWorkspaceRoot: yield* Effect.map(Path.Path, (path) =>
+            path.join(baseDir, "quick-chats"),
+          ),
           baseDir,
           ...derivedPaths,
           mode: "web",

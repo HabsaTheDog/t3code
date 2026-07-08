@@ -19,7 +19,12 @@ import type {
   VcsStatusResult,
 } from "./git.ts";
 import type { ReviewDiffPreviewInput, ReviewDiffPreviewResult } from "./review.ts";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
+import type {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreatePreviewTicketInput,
+  FilesystemPreviewTicket,
+} from "./filesystem.ts";
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -27,6 +32,16 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
+import type {
+  ProviderSetupCancelInput,
+  ProviderSetupCancelResult,
+  ProviderSetupCapability,
+  ProviderSetupJobEvent,
+  ProviderSetupStartInput,
+  ProviderSetupStartResult,
+  ProviderSetupWriteInput,
+  ProviderSetupWriteResult,
+} from "./providerSetup.ts";
 import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
@@ -52,6 +67,10 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import type {
+  ConversationTurnRedactionInput,
+  ConversationTurnRedactionResult,
+} from "./telemetry.ts";
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
 import * as Schema from "effect/Schema";
 import type {
@@ -80,6 +99,12 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type {
+  StudyBuddyConfiguration,
+  StudyBuddyConnectionTestInput,
+  StudyBuddyConnectionTestResult,
+  StudyBuddyUpdateConfigurationInput,
+} from "./studyBuddy.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -96,6 +121,22 @@ export interface ContextMenuItemSchemaType {
   readonly disabled?: boolean;
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
+
+export const DesktopViewerBoundsSchema = Schema.Struct({
+  x: Schema.Int,
+  y: Schema.Int,
+  width: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  height: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+});
+export type DesktopViewerBounds = typeof DesktopViewerBoundsSchema.Type;
+
+export const DesktopViewerSurfaceInputSchema = Schema.Struct({
+  surfaceId: Schema.String,
+  url: Schema.String,
+  bounds: DesktopViewerBoundsSchema,
+  visible: Schema.Boolean,
+});
+export type DesktopViewerSurfaceInput = typeof DesktopViewerSurfaceInputSchema.Type;
 
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
@@ -439,6 +480,9 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  setViewerSurface: (input: DesktopViewerSurfaceInput) => Promise<boolean>;
+  destroyViewerSurface: (surfaceId: string) => Promise<void>;
+  onViewerOpenTab: (listener: (url: string) => void) => () => void;
   createCloudAuthRequest: () => Promise<string>;
   getCloudAuthToken: () => Promise<string | null>;
   setCloudAuthToken: (token: string) => Promise<boolean>;
@@ -501,6 +545,14 @@ export interface LocalApi {
       readonly instanceId?: ProviderInstanceId;
     }) => Promise<ServerProviderUpdatedPayload>;
     updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
+    getProviderSetupCapabilities: () => Promise<ReadonlyArray<ProviderSetupCapability>>;
+    startProviderSetup: (input: ProviderSetupStartInput) => Promise<ProviderSetupStartResult>;
+    cancelProviderSetup: (input: ProviderSetupCancelInput) => Promise<ProviderSetupCancelResult>;
+    writeProviderSetupInput: (input: ProviderSetupWriteInput) => Promise<ProviderSetupWriteResult>;
+    subscribeProviderSetupJob: (
+      input: ProviderSetupCancelInput,
+      listener: (event: ProviderSetupJobEvent) => void,
+    ) => () => void;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
@@ -512,6 +564,13 @@ export interface LocalApi {
       input: ServerProcessResourceHistoryInput,
     ) => Promise<ServerProcessResourceHistoryResult>;
     signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
+    getStudyBuddyConfiguration: () => Promise<StudyBuddyConfiguration>;
+    updateStudyBuddyConfiguration: (
+      input: StudyBuddyUpdateConfigurationInput,
+    ) => Promise<StudyBuddyConfiguration>;
+    testStudyBuddyConnection: (
+      input: StudyBuddyConnectionTestInput,
+    ) => Promise<StudyBuddyConnectionTestResult>;
   };
 }
 
@@ -525,6 +584,11 @@ export interface LocalApi {
  * `environmentId` rather than reaching through the local desktop bridge.
  */
 export interface EnvironmentApi {
+  telemetry?: {
+    redactConversationTurn: (
+      input: ConversationTurnRedactionInput,
+    ) => Promise<ConversationTurnRedactionResult>;
+  };
   terminal: {
     open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
     attach: (
@@ -552,6 +616,9 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    createPreviewTicket: (
+      input: FilesystemCreatePreviewTicketInput,
+    ) => Promise<FilesystemPreviewTicket>;
   };
   sourceControl: {
     lookupRepository: (

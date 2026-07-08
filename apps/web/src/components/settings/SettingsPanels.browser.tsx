@@ -231,6 +231,7 @@ function createBaseServerConfig(): ServerConfig {
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",
+    quickChatWorkspaceRoot: "/tmp/t3-home/quick-chats",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
     issues: [],
@@ -459,6 +460,9 @@ const createDesktopBridgeStub = (overrides?: {
     setTheme: vi.fn().mockResolvedValue(undefined),
     showContextMenu: vi.fn().mockResolvedValue(null),
     openExternal: vi.fn().mockResolvedValue(true),
+    setViewerSurface: vi.fn().mockResolvedValue(true),
+    destroyViewerSurface: vi.fn().mockResolvedValue(undefined),
+    onViewerOpenTab: () => () => undefined,
     createCloudAuthRequest: vi.fn().mockResolvedValue("t3code-dev://auth/callback?t3_state=test"),
     getCloudAuthToken: vi.fn().mockResolvedValue(null),
     setCloudAuthToken: vi.fn().mockResolvedValue(true),
@@ -781,6 +785,30 @@ describe("GeneralSettingsPanel observability", () => {
         page.getByText(
           "Local trace file. Exporting OTEL traces to http://localhost:4318/v1/traces.",
         ),
+      )
+      .toBeInTheDocument();
+  });
+
+  it("shows the persistent personality editor in general settings", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        personalityPrompt: "Be direct and call me Alex.",
+      },
+    });
+
+    mounted = await renderWithTestRouter(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const editor = page.getByLabelText("Agent personality instructions");
+    await expect.element(editor).toHaveValue("Be direct and call me Alex.");
+    await expect
+      .element(
+        page.getByText("Saved when you leave the field. Applied when a new agent session starts."),
       )
       .toBeInTheDocument();
   });

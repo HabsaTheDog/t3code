@@ -17,7 +17,12 @@ import {
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
+  ThreadDeferredFinalizationReleasedPayload,
+  ThreadDeferredFinalizationUpsertedPayload,
   ThreadDeletedPayload,
+  ThreadDelegatedWorkUpsertedPayload,
+  ThreadDelegatedWorkReviewedPayload,
+  ThreadDelegatedWorkReviewRequestedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -29,6 +34,7 @@ import {
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
+type DeferredFinalizationEntry = NonNullable<OrchestrationThread["deferredFinalizations"]>[number];
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
 
@@ -138,6 +144,20 @@ function retainThreadProposedPlansAfterRevert(
   );
 }
 
+function retainThreadDelegatedWorkAfterRevert(
+  delegatedWork: ReadonlyArray<OrchestrationThread["delegatedWork"][number]>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<OrchestrationThread["delegatedWork"][number]> {
+  return delegatedWork.filter((entry) => retainedTurnIds.has(entry.parentTurnId));
+}
+
+function retainThreadDeferredFinalizationsAfterRevert(
+  deferredFinalizations: ReadonlyArray<DeferredFinalizationEntry>,
+  retainedTurnIds: ReadonlySet<string>,
+): ReadonlyArray<DeferredFinalizationEntry> {
+  return deferredFinalizations.filter((entry) => retainedTurnIds.has(entry.turnId));
+}
+
 function compareThreadActivities(
   left: OrchestrationThread["activities"][number],
   right: OrchestrationThread["activities"][number],
@@ -183,6 +203,7 @@ export function projectEvent(
             id: payload.projectId,
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
+            projectKind: payload.projectKind ?? "regular",
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -212,6 +233,9 @@ export function projectEvent(
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
+                    : {}),
+                  ...(payload.projectKind !== undefined
+                    ? { projectKind: payload.projectKind }
                     : {}),
                   ...(payload.defaultModelSelection !== undefined
                     ? { defaultModelSelection: payload.defaultModelSelection }
@@ -265,6 +289,8 @@ export function projectEvent(
             archivedAt: null,
             deletedAt: null,
             messages: [],
+            delegatedWork: [],
+            deferredFinalizations: [],
             activities: [],
             checkpoints: [],
             session: null,
@@ -499,6 +525,168 @@ export function projectEvent(
         };
       });
 
+    case "thread.delegated-work-upserted":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadDelegatedWorkUpsertedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const delegatedWork = [
+          ...thread.delegatedWork.filter((entry) => entry.id !== payload.delegatedWork.id),
+          payload.delegatedWork,
+        ].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        );
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            delegatedWork,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.deferred-finalization-upserted":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadDeferredFinalizationUpsertedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const deferredFinalizations = [
+          ...(thread.deferredFinalizations ?? []).filter(
+            (entry) => String(entry.turnId) !== String(payload.deferredFinalization.turnId),
+          ),
+          payload.deferredFinalization,
+        ].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.turnId.localeCompare(right.turnId),
+        );
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            deferredFinalizations,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.deferred-finalization-released":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadDeferredFinalizationReleasedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+
+        const deferredFinalizations = (thread.deferredFinalizations ?? []).map((entry) =>
+          String(entry.turnId) === String(payload.turnId)
+            ? {
+                ...entry,
+                state: "released" as const,
+                releasedAt: payload.releasedAt,
+                updatedAt: payload.releasedAt,
+              }
+            : entry,
+        );
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            deferredFinalizations,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.delegated-work-reviewed":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadDelegatedWorkReviewedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+        const reviewedIds = new Set(payload.delegatedWorkIds.map(String));
+        const delegatedWork = thread.delegatedWork.map((entry) =>
+          reviewedIds.has(entry.id)
+            ? {
+                ...entry,
+                reviewStatus: payload.reviewStatus,
+                ...(payload.reviewNote !== undefined ? { reviewNote: payload.reviewNote } : {}),
+                ...(payload.reviewerTurnId !== undefined
+                  ? { reviewerTurnId: payload.reviewerTurnId }
+                  : {}),
+                reviewedAt: payload.reviewedAt,
+                updatedAt: payload.reviewedAt,
+              }
+            : entry,
+        );
+
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            delegatedWork,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
+    case "thread.delegated-work-review-requested":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadDelegatedWorkReviewRequestedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+        if (!thread) {
+          return nextBase;
+        }
+        const deferredFinalizations = (thread.deferredFinalizations ?? []).map((entry) =>
+          String(entry.turnId) === String(payload.turnId)
+            ? {
+                ...entry,
+                state: "reviewing" as const,
+                updatedAt: payload.createdAt,
+              }
+            : entry,
+        );
+        return {
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            deferredFinalizations,
+            updatedAt: event.occurredAt,
+          }),
+        };
+      });
+
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -589,6 +777,14 @@ export function projectEvent(
             thread.proposedPlans,
             retainedTurnIds,
           ).slice(-200);
+          const delegatedWork = retainThreadDelegatedWorkAfterRevert(
+            thread.delegatedWork,
+            retainedTurnIds,
+          );
+          const deferredFinalizations = retainThreadDeferredFinalizationsAfterRevert(
+            thread.deferredFinalizations ?? [],
+            retainedTurnIds,
+          );
           const activities = retainThreadActivitiesAfterRevert(thread.activities, retainedTurnIds);
 
           const latestCheckpoint = checkpoints.at(-1) ?? null;
@@ -610,6 +806,8 @@ export function projectEvent(
               checkpoints,
               messages,
               proposedPlans,
+              delegatedWork,
+              deferredFinalizations,
               activities,
               latestTurn,
               updatedAt: event.occurredAt,

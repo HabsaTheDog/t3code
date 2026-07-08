@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type MessageId,
+  type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
 } from "@t3tools/contracts";
@@ -78,6 +79,7 @@ import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
+import type { ViewerTabSource } from "../../workspaceViewerStore";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -94,6 +96,8 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  viewerThreadRef?: ScopedThreadRef;
+  onOpenViewerTab?: (source: ViewerTabSource) => void;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -131,6 +135,8 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
+  viewerThreadRef?: ScopedThreadRef;
+  onOpenViewerTab?: (source: ViewerTabSource) => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
@@ -160,6 +166,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
+  viewerThreadRef,
+  onOpenViewerTab,
   markdownCwd,
   resolvedTheme,
   timestampFormat,
@@ -228,6 +236,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      ...(viewerThreadRef ? { viewerThreadRef } : {}),
+      ...(onOpenViewerTab ? { onOpenViewerTab } : {}),
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -240,6 +250,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      viewerThreadRef,
+      onOpenViewerTab,
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
@@ -266,7 +278,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   if (rows.length === 0 && !isWorking) {
     return (
-      <div className="flex h-full items-center justify-center">
+      <div className="ph-no-capture flex h-full items-center justify-center" data-ph-no-capture>
         <p className="text-sm text-muted-foreground/30">
           Send a message to start the conversation.
         </p>
@@ -288,7 +300,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           maintainScrollAtEndThreshold={0.1}
           maintainVisibleContentPosition
           onScroll={handleScroll}
-          className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+          className="ph-no-capture h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
           ListHeaderComponent={TIMELINE_LIST_HEADER}
           ListFooterComponent={TIMELINE_LIST_FOOTER}
         />
@@ -432,6 +444,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           cwd={ctx.markdownCwd}
           isStreaming={Boolean(row.message.streaming)}
           skills={ctx.skills}
+          {...(ctx.viewerThreadRef ? { viewerThreadRef: ctx.viewerThreadRef } : {})}
+          {...(ctx.onOpenViewerTab ? { onOpenViewerTab: ctx.onOpenViewerTab } : {})}
         />
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
@@ -609,16 +623,19 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
-  const { workspaceRoot } = use(TimelineRowCtx);
+  const ctx = use(TimelineRowCtx);
+  const { workspaceRoot } = ctx;
   const [isExpanded, setIsExpanded] = useState(false);
-  const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const displayEntries = groupedEntries;
+  const hasOverflow = displayEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
     hasOverflow && !isExpanded
-      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : groupedEntries;
-  const hiddenCount = groupedEntries.length - visibleEntries.length;
-  const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
-  const showHeader = hasOverflow || !onlyToolEntries;
+      ? displayEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+      : displayEntries;
+  const hiddenCount = displayEntries.length - visibleEntries.length;
+  const onlyToolEntries =
+    displayEntries.length > 0 && displayEntries.every((entry) => entry.tone === "tool");
+  const showHeader = displayEntries.length > 0 && (hasOverflow || !onlyToolEntries);
   const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
   return (
@@ -626,7 +643,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
-            {groupLabel} ({groupedEntries.length})
+            {groupLabel} ({displayEntries.length})
           </p>
           {hasOverflow && (
             <button
@@ -639,15 +656,17 @@ const WorkGroupSection = memo(function WorkGroupSection({
           )}
         </div>
       )}
-      <div className="space-y-0.5">
-        {visibleEntries.map((workEntry) => (
-          <SimpleWorkEntryRow
-            key={`work-row:${workEntry.id}`}
-            workEntry={workEntry}
-            workspaceRoot={workspaceRoot}
-          />
-        ))}
-      </div>
+      {visibleEntries.length > 0 && (
+        <div className="space-y-0.5">
+          {visibleEntries.map((workEntry) => (
+            <SimpleWorkEntryRow
+              key={`work-row:${workEntry.id}`}
+              workEntry={workEntry}
+              workspaceRoot={workspaceRoot}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 });

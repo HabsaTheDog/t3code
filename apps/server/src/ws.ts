@@ -22,6 +22,7 @@ import {
   type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
+  ConversationTurnRedactionError,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -35,10 +36,12 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  FilesystemPreviewError,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -66,6 +69,14 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import {
+  getProviderSetupCapabilities,
+  nodeProviderSetupProcessSpawner,
+  ProviderSetupJobRunner,
+  ProviderSetupRequestError,
+} from "./provider/setup/index.ts";
+import { readStoredStudyBuddyConfiguration } from "./custom-skills/moodle/studyBuddyConfig.ts";
+import { redactConversationTurn } from "./telemetry/ConversationRedaction.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
@@ -73,6 +84,7 @@ import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
+import { createFilesystemPreviewTicket } from "./workspace/previewTickets.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
 import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
 import { GitWorkflowService } from "./git/GitWorkflowService.ts";
@@ -87,6 +99,11 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscoveryLayer from "./sourceControl/SourceControlDiscovery.ts";
 import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
+import {
+  readStudyBuddyConfiguration,
+  updateStudyBuddyConfiguration,
+} from "./custom-skills/moodle/studyBuddyConfig.ts";
+import { testStudyBuddyConnection } from "./custom-skills/moodle/connectionTests.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -102,6 +119,8 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
+const isFilesystemPreviewError = Schema.is(FilesystemPreviewError);
+const isConversationTurnRedactionError = Schema.is(ConversationTurnRedactionError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -140,6 +159,11 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetProviderSetupCapabilities, AuthOrchestrationReadScope],
+  [WS_METHODS.serverStartProviderSetup, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCancelProviderSetup, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverWriteProviderSetupInput, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRedactConversationTurn, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
@@ -149,6 +173,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
   [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetStudyBuddyConfiguration, AuthOrchestrationReadScope],
+  [WS_METHODS.serverUpdateStudyBuddyConfiguration, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverTestStudyBuddyConnection, AuthOrchestrationOperateScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -158,6 +185,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.filesystemCreatePreviewTicket, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -181,6 +209,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeTerminalEvents, AuthTerminalOperateScope],
   [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeProviderSetupJob, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
 ]);
@@ -267,6 +296,25 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const runtimeContext = yield* Effect.context<never>();
+      const runPromise = Effect.runPromiseWith(runtimeContext);
+      const providerSetupRunner = new ProviderSetupJobRunner({
+        spawner: nodeProviderSetupProcessSpawner,
+        cwd: config.cwd,
+        refreshProviderStatus: () => runPromise(providerRegistry.refresh().pipe(Effect.asVoid)),
+      });
+      const providerSetupError = (cause: unknown): ProviderSetupError => {
+        if (cause instanceof ProviderSetupRequestError) {
+          return new ProviderSetupError({
+            code: cause.code,
+            message: cause.message,
+          });
+        }
+        return new ProviderSetupError({
+          code: "internal_error",
+          message: cause instanceof Error ? cause.message : "Provider setup failed.",
+        });
+      };
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -735,6 +783,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           environment,
           auth,
           cwd: config.cwd,
+          quickChatWorkspaceRoot: config.quickChatWorkspaceRoot,
           keybindingsConfigPath: config.keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
@@ -1008,6 +1057,96 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverGetProviderSetupCapabilities]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetProviderSetupCapabilities,
+            Effect.sync(() => getProviderSetupCapabilities()),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverStartProviderSetup]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverStartProviderSetup,
+            Effect.try({
+              try: () => ({ jobId: providerSetupRunner.start(input).jobId }),
+              catch: providerSetupError,
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCancelProviderSetup]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCancelProviderSetup,
+            Effect.sync(() => ({ canceled: providerSetupRunner.cancel(input.jobId) })),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverWriteProviderSetupInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverWriteProviderSetupInput,
+            Effect.promise(() =>
+              providerSetupRunner
+                .writeInput(input.jobId, input.input)
+                .then((accepted) => ({ accepted })),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRedactConversationTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverRedactConversationTurn,
+            Effect.gen(function* () {
+              const [thread, studyConfiguration, settings, threadEvents] = yield* Effect.all([
+                projectionSnapshotQuery.getThreadDetailById(input.threadId),
+                Effect.tryPromise({
+                  try: () => readStoredStudyBuddyConfiguration(config),
+                  catch: () =>
+                    new ConversationTurnRedactionError({
+                      message: "Conversation redaction configuration is unavailable.",
+                    }),
+                }),
+                serverSettings.getSettings.pipe(
+                  Effect.mapError(
+                    () =>
+                      new ConversationTurnRedactionError({
+                        message: "Provider secret configuration is unavailable.",
+                      }),
+                  ),
+                ),
+                orchestrationEngine.readEvents(0).pipe(
+                  Stream.filter(
+                    (event) =>
+                      event.aggregateKind === "thread" && event.aggregateId === input.threadId,
+                  ),
+                  Stream.runCollect,
+                  Effect.map((events) => Array.from(events)),
+                ),
+              ]);
+              if (Option.isNone(thread)) {
+                return yield* new ConversationTurnRedactionError({
+                  message: "Conversation turn was not found.",
+                });
+              }
+              const redacted = redactConversationTurn({
+                thread: thread.value,
+                turnId: input.turnId,
+                studyConfiguration,
+                serverSettings: settings,
+                events: threadEvents,
+              });
+              if (!redacted) {
+                return yield* new ConversationTurnRedactionError({
+                  message: "Conversation turn is not complete or exportable.",
+                });
+              }
+              return redacted;
+            }).pipe(
+              Effect.mapError((error) =>
+                isConversationTurnRedactionError(error)
+                  ? error
+                  : new ConversationTurnRedactionError({
+                      message: "Conversation redaction failed.",
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
           observeRpcEffect(
             WS_METHODS.serverUpsertKeybinding,
@@ -1077,6 +1216,30 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetStudyBuddyConfiguration]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetStudyBuddyConfiguration,
+            readStudyBuddyConfiguration(config),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverUpdateStudyBuddyConfiguration]: ({ patch }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateStudyBuddyConfiguration,
+            updateStudyBuddyConfiguration(config, patch),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverTestStudyBuddyConnection]: ({ target }) =>
+          observeRpcEffect(
+            WS_METHODS.serverTestStudyBuddyConnection,
+            testStudyBuddyConnection(config, target),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
             "rpc.aggregate": "cloud",
@@ -1180,6 +1343,32 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
                     message: cause.detail,
                     cause,
                   }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemCreatePreviewTicket]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemCreatePreviewTicket,
+            projectionSnapshotQuery.getSnapshot().pipe(
+              Effect.flatMap((snapshot) =>
+                Effect.tryPromise({
+                  try: () => createFilesystemPreviewTicket(input, snapshot),
+                  catch: (cause) =>
+                    new FilesystemPreviewError({
+                      message:
+                        cause instanceof Error ? cause.message : "Unable to create preview ticket.",
+                      cause,
+                    }),
+                }),
+              ),
+              Effect.mapError((cause) =>
+                isFilesystemPreviewError(cause)
+                  ? cause
+                  : new FilesystemPreviewError({
+                      message: "Unable to resolve preview scope.",
+                      cause,
+                    }),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -1401,6 +1590,21 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeProviderSetupJob]: (input) => {
+          const events = providerSetupRunner.events(input.jobId);
+          return observeRpcStream(
+            WS_METHODS.subscribeProviderSetupJob,
+            events
+              ? Stream.fromAsyncIterable(events, providerSetupError)
+              : Stream.fail(
+                  new ProviderSetupError({
+                    code: "job_not_found",
+                    message: "Provider setup job was not found.",
+                  }),
+                ),
+            { "rpc.aggregate": "server" },
+          );
+        },
         [WS_METHODS.subscribeServerLifecycle]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerLifecycle,

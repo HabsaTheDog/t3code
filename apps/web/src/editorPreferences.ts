@@ -33,3 +33,7 @@ export async function openInPreferredEditor(api: LocalApi, targetPath: string): 
   await api.shell.openInEditor(targetPath, editor);
   return editor;
 }
+
+export async function openInSystemApplication(api: LocalApi, targetPath: string): Promise<void> {
+  await api.shell.openInEditor(targetPath, "file-manager");
+}

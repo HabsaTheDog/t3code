@@ -118,6 +118,8 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { requestSetupRerun } from "../setup/setupCoordinator";
+import { telemetry } from "../telemetry/runtime";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
@@ -1061,6 +1063,18 @@ function OpenCommandPaletteDialog() {
     },
   });
 
+  actionItems.push({
+    kind: "action",
+    value: "action:run-setup",
+    searchTerms: ["run setup again", "onboarding", "privacy", "provider", "study buddy"],
+    title: "Run setup again",
+    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      setOpen(false);
+      requestSetupRerun();
+    },
+  });
+
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const activeGroups = currentView ? currentView.groups : rootGroups;
 
@@ -1479,6 +1493,13 @@ function OpenCommandPaletteDialog() {
 
     if (!item.keepOpen) {
       setOpen(false);
+    }
+
+    if (item.value.startsWith("action:")) {
+      void telemetry.capture({
+        event: "feature.used",
+        properties: { feature: item.value.slice("action:".length) },
+      });
     }
 
     void item.run().catch((error: unknown) => {

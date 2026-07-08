@@ -1,6 +1,6 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { PreviewFileKind, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -23,7 +23,7 @@ import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { openInPreferredEditor } from "../editorPreferences";
+import { openInPreferredEditor, openInSystemApplication } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -35,6 +35,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import type { ViewerTabSource } from "../workspaceViewerStore";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -62,6 +63,8 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  viewerThreadRef?: ScopedThreadRef;
+  onOpenViewerTab?: (source: ViewerTabSource) => void;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -284,13 +287,32 @@ interface MarkdownFileLinkProps {
   label: string;
   theme: "light" | "dark";
   className?: string | undefined;
+  viewerThreadRef?: ScopedThreadRef | undefined;
+  onOpenViewerTab?: ((source: ViewerTabSource) => void) | undefined;
 }
 
-const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const MARKDOWN_LINK_HREF_PATTERN =
+  /\[[^\]]*]\(\s*(<[^>\r\n]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\s*\)/g;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
 const MARKDOWN_FILE_LINK_LABEL_CLASS_NAME = "chat-markdown-file-link-label truncate";
+
+function previewFileKind(filePath: string): PreviewFileKind | null {
+  const extension = filePath.toLowerCase().match(/\.[^.\\/]+$/)?.[0] ?? "";
+  if (extension === ".pdf") return "pdf";
+  if (extension === ".html" || extension === ".htm") return "html";
+  if ([".avif", ".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"].includes(extension)) {
+    return "image";
+  }
+  if (extension === ".md" || extension === ".markdown") return "markdown";
+  if (
+    [".css", ".csv", ".json", ".log", ".text", ".txt", ".xml", ".yaml", ".yml"].includes(extension)
+  ) {
+    return "text";
+  }
+  return null;
+}
 
 function pathParentSegments(path: string): string[] {
   const normalized = path.replaceAll("\\", "/");
@@ -375,27 +397,49 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   label,
   theme,
   className,
+  viewerThreadRef,
+  onOpenViewerTab,
 }: MarkdownFileLinkProps) {
+  const opensWithSystemApplication = filePath.toLowerCase().endsWith(".pdf");
+  const kind = previewFileKind(filePath);
   const handleOpen = useCallback(() => {
     const api = readLocalApi();
     if (!api) {
       toastManager.add({
         type: "error",
-        title: "Open in editor is unavailable",
+        title: opensWithSystemApplication
+          ? "Opening this PDF is unavailable"
+          : "Open in editor is unavailable",
       });
       return;
     }
 
-    void openInPreferredEditor(api, targetPath).catch((error) => {
+    const openFile = opensWithSystemApplication
+      ? openInSystemApplication(api, filePath)
+      : openInPreferredEditor(api, targetPath);
+    void openFile.catch((error) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to open file",
+          title: opensWithSystemApplication ? "Unable to open PDF" : "Unable to open file",
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
     });
-  }, [targetPath]);
+  }, [filePath, opensWithSystemApplication, targetPath]);
+  const handleOpenInViewer = useCallback(() => {
+    if (!viewerThreadRef || !kind || !onOpenViewerTab) {
+      handleOpen();
+      return;
+    }
+    onOpenViewerTab({
+      kind: "file",
+      environmentId: viewerThreadRef.environmentId,
+      threadId: viewerThreadRef.threadId,
+      filePath: targetPath,
+      fileKind: kind,
+    });
+  }, [handleOpen, kind, onOpenViewerTab, targetPath, viewerThreadRef]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -439,14 +483,23 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "open", label: "Open in editor" },
+          {
+            id: "viewer",
+            label: "Open in viewer",
+            disabled: !kind || !viewerThreadRef || !onOpenViewerTab,
+          },
+          { id: "external", label: "Open externally" },
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
         ] as const,
         { x: event.clientX, y: event.clientY },
       );
 
-      if (clicked === "open") {
+      if (clicked === "viewer") {
+        handleOpenInViewer();
+        return;
+      }
+      if (clicked === "external") {
         handleOpen();
         return;
       }
@@ -458,7 +511,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpen,
+      handleOpenInViewer,
+      kind,
+      onOpenViewerTab,
+      targetPath,
+      viewerThreadRef,
+    ],
   );
 
   return (
@@ -471,7 +533,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              handleOpen();
+              if (!viewerThreadRef || !kind || !onOpenViewerTab) {
+                handleOpen();
+                return;
+              }
+              if (event.metaKey || event.ctrlKey) {
+                handleOpen();
+              } else {
+                handleOpenInViewer();
+              }
             }}
             onContextMenu={handleContextMenu}
           >
@@ -508,7 +578,9 @@ function areMarkdownFileLinkPropsEqual(
     previous.filePath === next.filePath &&
     previous.label === next.label &&
     previous.theme === next.theme &&
-    previous.className === next.className
+    previous.className === next.className &&
+    previous.viewerThreadRef === next.viewerThreadRef &&
+    previous.onOpenViewerTab === next.onOpenViewerTab
   );
 }
 
@@ -517,6 +589,8 @@ function ChatMarkdown({
   cwd,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  viewerThreadRef,
+  onOpenViewerTab,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -552,9 +626,62 @@ function ChatMarkdown({
       },
       a({ node: _node, href, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+          : null;
         if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          const isWebsite = Boolean(href && /^https?:\/\//i.test(href));
+          return (
+            <a
+              {...props}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                if (
+                  !isWebsite ||
+                  !href ||
+                  !viewerThreadRef ||
+                  !onOpenViewerTab ||
+                  event.metaKey ||
+                  event.ctrlKey
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                onOpenViewerTab({
+                  kind: "website",
+                  url: href,
+                });
+              }}
+              onContextMenu={(event) => {
+                if (!isWebsite || !href || !viewerThreadRef || !onOpenViewerTab) return;
+                event.preventDefault();
+                const api = readLocalApi();
+                if (!api) return;
+                void api.contextMenu
+                  .show(
+                    [
+                      { id: "viewer", label: "Open in viewer" },
+                      { id: "external", label: "Open externally" },
+                      { id: "copy", label: "Copy URL" },
+                    ] as const,
+                    { x: event.clientX, y: event.clientY },
+                  )
+                  .then((selected) => {
+                    if (selected === "viewer") {
+                      onOpenViewerTab({
+                        kind: "website",
+                        url: href,
+                      });
+                    }
+                    if (selected === "external") void api.shell.openExternal(href);
+                    if (selected === "copy") void navigator.clipboard.writeText(href);
+                  });
+              }}
+            />
+          );
         }
 
         const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
@@ -577,6 +704,8 @@ function ChatMarkdown({
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
             className={props.className}
+            viewerThreadRef={viewerThreadRef}
+            onOpenViewerTab={onOpenViewerTab}
           />
         );
       },
@@ -603,12 +732,15 @@ function ChatMarkdown({
       },
     }),
     [
+      cwd,
       diffThemeName,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
       resolvedTheme,
       skills,
+      onOpenViewerTab,
+      viewerThreadRef,
     ],
   );
 

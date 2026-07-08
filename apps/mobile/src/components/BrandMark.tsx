@@ -26,7 +26,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
             className="text-[17px] font-t3-bold text-foreground"
             style={{ letterSpacing: -0.4 }}
           >
-            T3 Code
+            Study Buddy
           </Text>
           <View className="rounded-full bg-subtle px-2 py-1">
             <Text
@@ -39,7 +39,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
         </View>
         {!compact ? (
           <Text className="text-[12px] font-medium text-foreground-muted">
-            Mobile control surface for your live coding environments
+            Mobile control surface for Study Buddy coding environments
           </Text>
         ) : null}
       </View>

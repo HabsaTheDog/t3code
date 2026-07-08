@@ -153,6 +153,19 @@ describe("ProviderSendTurnInput", () => {
   });
 });
 
+describe("ProviderSessionStartInput personality", () => {
+  it("accepts and normalizes persistent personality instructions", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      personalityPrompt: "  Be concise and call me Alex.  ",
+      runtimeMode: "full-access",
+    });
+
+    expect(parsed.personalityPrompt).toBe("Be concise and call me Alex.");
+  });
+});
+
 describe("providerInstanceId routing key (slice-2 invariant)", () => {
   it("decodes a ProviderSessionStartInput without providerInstanceId (legacy producer)", () => {
     const parsed = decodeProviderSessionStartInput({

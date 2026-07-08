@@ -7,6 +7,7 @@ import {
   type RelayClientInstallProgressEvent,
   type RelayClientStatus,
   type ServerSettingsPatch,
+  type StudyBuddyUpdateConfigurationInput,
   type VcsStatusResult,
   type VcsStatusStreamEvent,
   WS_METHODS,
@@ -85,6 +86,7 @@ export interface WsRpcClient {
   };
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
+    readonly createPreviewTicket: RpcUnaryMethod<typeof WS_METHODS.filesystemCreatePreviewTicket>;
   };
   readonly sourceControl: {
     readonly lookupRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlLookupRepository>;
@@ -134,6 +136,18 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverDiscoverSourceControl
     >;
     readonly updateProvider: RpcUnaryMethod<typeof WS_METHODS.serverUpdateProvider>;
+    readonly getProviderSetupCapabilities: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetProviderSetupCapabilities
+    >;
+    readonly startProviderSetup: RpcUnaryMethod<typeof WS_METHODS.serverStartProviderSetup>;
+    readonly cancelProviderSetup: RpcUnaryMethod<typeof WS_METHODS.serverCancelProviderSetup>;
+    readonly writeProviderSetupInput: RpcUnaryMethod<
+      typeof WS_METHODS.serverWriteProviderSetupInput
+    >;
+    readonly redactConversationTurn: RpcUnaryMethod<typeof WS_METHODS.serverRedactConversationTurn>;
+    readonly subscribeProviderSetupJob: RpcInputStreamMethod<
+      typeof WS_METHODS.subscribeProviderSetupJob
+    >;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
     readonly removeKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverRemoveKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
@@ -151,6 +165,15 @@ export interface WsRpcClient {
       typeof WS_METHODS.serverGetProcessResourceHistory
     >;
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
+    readonly getStudyBuddyConfiguration: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetStudyBuddyConfiguration
+    >;
+    readonly updateStudyBuddyConfiguration: (
+      input: StudyBuddyUpdateConfigurationInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateStudyBuddyConfiguration>>;
+    readonly testStudyBuddyConnection: RpcUnaryMethod<
+      typeof WS_METHODS.serverTestStudyBuddyConnection
+    >;
   };
   readonly cloud: {
     readonly getRelayClientStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.cloudGetRelayClientStatus>;
@@ -220,6 +243,8 @@ export function createWsRpcClient(
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),
+      createPreviewTicket: (input) =>
+        transport.request((client) => client[WS_METHODS.filesystemCreatePreviewTicket](input)),
     },
     sourceControl: {
       lookupRepository: (input) =>
@@ -294,6 +319,22 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverDiscoverSourceControl]({})),
       updateProvider: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpdateProvider](input)),
+      getProviderSetupCapabilities: () =>
+        transport.request((client) => client[WS_METHODS.serverGetProviderSetupCapabilities]({})),
+      startProviderSetup: (input) =>
+        transport.request((client) => client[WS_METHODS.serverStartProviderSetup](input)),
+      cancelProviderSetup: (input) =>
+        transport.request((client) => client[WS_METHODS.serverCancelProviderSetup](input)),
+      writeProviderSetupInput: (input) =>
+        transport.request((client) => client[WS_METHODS.serverWriteProviderSetupInput](input)),
+      redactConversationTurn: (input) =>
+        transport.request((client) => client[WS_METHODS.serverRedactConversationTurn](input)),
+      subscribeProviderSetupJob: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeProviderSetupJob](input),
+          listener,
+          subscriptionOptions(options, WS_METHODS.subscribeProviderSetupJob),
+        ),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),
       removeKeybinding: (input) =>
@@ -327,6 +368,14 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverGetProcessResourceHistory](input)),
       signalProcess: (input) =>
         transport.request((client) => client[WS_METHODS.serverSignalProcess](input)),
+      getStudyBuddyConfiguration: () =>
+        transport.request((client) => client[WS_METHODS.serverGetStudyBuddyConfiguration]({})),
+      updateStudyBuddyConfiguration: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.serverUpdateStudyBuddyConfiguration](input),
+        ),
+      testStudyBuddyConnection: (input) =>
+        transport.request((client) => client[WS_METHODS.serverTestStudyBuddyConnection](input)),
     },
     cloud: {
       getRelayClientStatus: () =>

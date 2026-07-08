@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   FolderPlusIcon,
+  MessageCirclePlusIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -67,7 +68,8 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectByRef,
-  selectProjectsAcrossEnvironments,
+  selectQuickChatThreadsAcrossEnvironments,
+  selectRegularProjectsAcrossEnvironments,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
   selectThreadByRef,
@@ -93,6 +95,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useQuickChatActions } from "../hooks/useQuickChatActions";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -167,6 +170,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  getQuickChatThreadSections,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -283,6 +287,8 @@ interface SidebarThreadRowProps {
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
   jumpLabel: string | null;
+  rowTestIdPrefix?: string;
+  archiveTestIdPrefix?: string;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
@@ -319,6 +325,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     orderedProjectThreadKeys,
     isActive,
     jumpLabel,
+    rowTestIdPrefix = "thread-row",
+    archiveTestIdPrefix = "thread-archive",
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
     renamingTitle,
@@ -550,7 +558,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         render={rowButtonRender}
         size="sm"
         isActive={isActive}
-        data-testid={`thread-row-${thread.id}`}
+        data-testid={`${rowTestIdPrefix}-${thread.id}`}
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
@@ -627,7 +635,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 ref={handleConfirmArchiveRef}
                 type="button"
                 data-thread-selection-safe
-                data-testid={`thread-archive-confirm-${thread.id}`}
+                data-testid={`${archiveTestIdPrefix}-confirm-${thread.id}`}
                 aria-label={`Confirm archive ${thread.title}`}
                 className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPropagationOnPointerDown}
@@ -641,7 +649,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   <button
                     type="button"
                     data-thread-selection-safe
-                    data-testid={`thread-archive-${thread.id}`}
+                    data-testid={`${archiveTestIdPrefix}-${thread.id}`}
                     aria-label={`Archive ${thread.title}`}
                     className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     onPointerDown={stopPropagationOnPointerDown}
@@ -658,7 +666,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <button
                           type="button"
                           data-thread-selection-safe
-                          data-testid={`thread-archive-${thread.id}`}
+                          data-testid={`${archiveTestIdPrefix}-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
                           className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                           onPointerDown={stopPropagationOnPointerDown}
@@ -2238,19 +2246,22 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
   );
 });
 
-function T3Wordmark() {
+function StudyBuddySidebarBrand() {
   return (
-    <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
-      />
-    </svg>
+    <>
+      <span className="flex size-8 shrink-0 items-center justify-center">
+        <img
+          alt=""
+          aria-hidden="true"
+          className="size-8 object-contain drop-shadow-[0_0_10px_rgba(223,187,99,0.18)]"
+          draggable={false}
+          src="/logo-highlight.png"
+        />
+      </span>
+      <span className="truncate text-[13px] font-semibold tracking-[0.03em] text-foreground">
+        Study Buddy
+      </span>
+    </>
   );
 }
 
@@ -2458,14 +2469,11 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
           render={
             <Link
               aria-label="Go to threads"
-              className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
+              className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+              <StudyBuddySidebarBrand />
+              <span className="ml-auto rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
               </span>
             </Link>
@@ -2517,6 +2525,417 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   );
 });
 
+const QuickChatThreadRow = memo(function QuickChatThreadRow({
+  thread,
+  routeThreadKey,
+  navigateToThread,
+  handleThreadContextMenu,
+  appSettingsConfirmThreadArchive,
+  renamingThreadKey,
+  renamingTitle,
+  setRenamingTitle,
+  renamingInputRef,
+  renamingCommittedRef,
+  confirmingArchiveThreadKey,
+  setConfirmingArchiveThreadKey,
+  confirmArchiveButtonRefs,
+  commitRename,
+  cancelRename,
+  attemptArchiveThread,
+}: {
+  thread: SidebarThreadSummary;
+  routeThreadKey: string | null;
+  navigateToThread: (threadRef: ScopedThreadRef) => void;
+  handleThreadContextMenu: (
+    thread: SidebarThreadSummary,
+    position: { x: number; y: number },
+  ) => Promise<void>;
+  appSettingsConfirmThreadArchive: boolean;
+  renamingThreadKey: string | null;
+  renamingTitle: string;
+  setRenamingTitle: (title: string) => void;
+  renamingInputRef: React.RefObject<HTMLInputElement | null>;
+  renamingCommittedRef: React.RefObject<boolean>;
+  confirmingArchiveThreadKey: string | null;
+  setConfirmingArchiveThreadKey: React.Dispatch<React.SetStateAction<string | null>>;
+  confirmArchiveButtonRefs: React.RefObject<Map<string, HTMLButtonElement>>;
+  commitRename: (
+    threadRef: ScopedThreadRef,
+    newTitle: string,
+    originalTitle: string,
+  ) => Promise<void>;
+  cancelRename: () => void;
+  attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+}) {
+  const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const threadKey = scopedThreadKey(threadRef);
+  const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
+  const handleThreadClick = useCallback(
+    (_event: React.MouseEvent, target: ScopedThreadRef) => {
+      clearSelection();
+      navigateToThread(target);
+    },
+    [clearSelection, navigateToThread],
+  );
+  const handleContextMenu = useCallback(
+    (_target: ScopedThreadRef, position: { x: number; y: number }) =>
+      handleThreadContextMenu(thread, position),
+    [handleThreadContextMenu, thread],
+  );
+  const handleMultiSelectContextMenu = useCallback(async () => undefined, []);
+  const openPrLink = useCallback(() => undefined, []);
+
+  return (
+    <SidebarThreadRow
+      thread={thread}
+      projectCwd={null}
+      orderedProjectThreadKeys={[threadKey]}
+      isActive={routeThreadKey === threadKey}
+      jumpLabel={null}
+      rowTestIdPrefix="quick-chat-row"
+      archiveTestIdPrefix="quick-chat-archive"
+      appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
+      renamingThreadKey={renamingThreadKey}
+      renamingTitle={renamingTitle}
+      setRenamingTitle={setRenamingTitle}
+      renamingInputRef={renamingInputRef}
+      renamingCommittedRef={renamingCommittedRef}
+      confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+      setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+      confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+      handleThreadClick={handleThreadClick}
+      navigateToThread={navigateToThread}
+      handleMultiSelectContextMenu={handleMultiSelectContextMenu}
+      handleThreadContextMenu={handleContextMenu}
+      clearSelection={clearSelection}
+      commitRename={commitRename}
+      cancelRename={cancelRename}
+      attemptArchiveThread={attemptArchiveThread}
+      openPrLink={openPrLink}
+    />
+  );
+});
+
+const QuickChatSection = memo(function QuickChatSection({
+  quickChatThreads,
+  routeThreadKey,
+  isCreatingQuickChat,
+  createQuickChat,
+  navigateToThread,
+  archiveThread,
+  deleteThread,
+  threadPreviewCount,
+  attachThreadListAutoAnimateRef,
+}: {
+  quickChatThreads: readonly SidebarThreadSummary[];
+  routeThreadKey: string | null;
+  isCreatingQuickChat: boolean;
+  createQuickChat: () => Promise<void>;
+  navigateToThread: (threadRef: ScopedThreadRef) => void;
+  archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
+  deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  threadPreviewCount: SidebarThreadPreviewCount;
+  attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { isMobile, setOpenMobile } = useSidebar();
+  const confirmThreadDelete = useSettings<boolean>((settings) => settings.confirmThreadDelete);
+  const confirmThreadArchive = useSettings<boolean>((settings) => settings.confirmThreadArchive);
+  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
+  const [renamingTitle, setRenamingTitle] = useState("");
+  const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
+  const renamingInputRef = useRef<HTMLInputElement | null>(null);
+  const renamingCommittedRef = useRef(false);
+  const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
+    threadId: ThreadId;
+  }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Thread ID copied",
+        description: ctx.threadId,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error.message,
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Path copied",
+        description: ctx.path,
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error.message,
+        }),
+      );
+    },
+  });
+  const quickChatButtonRender = useMemo(() => <button type="button" />, []);
+  const toggleButtonRender = useMemo(() => <button type="button" />, []);
+  const { previewThreads, overflowThreads } = useMemo(
+    () => getQuickChatThreadSections(quickChatThreads, threadPreviewCount),
+    [quickChatThreads, threadPreviewCount],
+  );
+  const renderedThreads = isExpanded ? quickChatThreads : previewThreads;
+  const hasOverflowingThreads = overflowThreads.length > 0;
+
+  const handleCreateQuickChat = useCallback(() => {
+    void createQuickChat()
+      .then(() => {
+        if (isMobile) {
+          setOpenMobile(false);
+        }
+      })
+      .catch((error) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to create Quick Chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      });
+  }, [createQuickChat, isMobile, setOpenMobile]);
+
+  const handleToggle = useCallback(() => {
+    setIsExpanded((current) => !current);
+  }, []);
+
+  const cancelRename = useCallback(() => {
+    setRenamingThreadKey(null);
+    renamingInputRef.current = null;
+  }, []);
+
+  const commitRename = useCallback(
+    async (threadRef: ScopedThreadRef, newTitle: string, originalTitle: string) => {
+      const threadKey = scopedThreadKey(threadRef);
+      const finishRename = () => {
+        setRenamingThreadKey((current) => {
+          if (current !== threadKey) return current;
+          renamingInputRef.current = null;
+          return null;
+        });
+      };
+      const trimmed = newTitle.trim();
+      if (trimmed.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Thread title cannot be empty",
+        });
+        finishRename();
+        return;
+      }
+      if (trimmed === originalTitle) {
+        finishRename();
+        return;
+      }
+      const api = readEnvironmentApi(threadRef.environmentId);
+      if (!api) {
+        finishRename();
+        return;
+      }
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: threadRef.threadId,
+          title: trimmed,
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename Quick Chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      finishRename();
+    },
+    [],
+  );
+
+  const attemptArchiveThread = useCallback(
+    async (threadRef: ScopedThreadRef) => {
+      try {
+        await archiveThread(threadRef);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive Quick Chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [archiveThread],
+  );
+
+  const handleThreadContextMenu = useCallback(
+    async (thread: SidebarThreadSummary, position: { x: number; y: number }) => {
+      try {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await api.contextMenu.show(
+          [
+            { id: "rename", label: "Rename thread" },
+            { id: "mark-unread", label: "Mark unread" },
+            { id: "copy-path", label: "Copy Path" },
+            { id: "copy-thread-id", label: "Copy Thread ID" },
+            { id: "delete", label: "Delete", destructive: true },
+          ],
+          position,
+        );
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        const threadKey = scopedThreadKey(threadRef);
+        if (clicked === "rename") {
+          setRenamingThreadKey(threadKey);
+          setRenamingTitle(thread.title);
+          renamingCommittedRef.current = false;
+          return;
+        }
+        if (clicked === "mark-unread") {
+          markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+          return;
+        }
+        if (clicked === "copy-path") {
+          const project = selectProjectByRef(
+            useStore.getState(),
+            scopeProjectRef(thread.environmentId, thread.projectId),
+          );
+          const workspacePath = thread.worktreePath ?? project?.cwd ?? null;
+          if (!workspacePath) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Path unavailable",
+                description: "This Quick Chat does not have a workspace path to copy.",
+              }),
+            );
+            return;
+          }
+          copyPathToClipboard(workspacePath, { path: workspacePath });
+          return;
+        }
+        if (clicked === "copy-thread-id") {
+          copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+          return;
+        }
+        if (clicked !== "delete") return;
+        if (confirmThreadDelete) {
+          const confirmed = await api.dialogs.confirm(
+            [
+              `Delete Quick Chat "${thread.title}"?`,
+              "This permanently clears conversation history and removes its workspace folder.",
+            ].join("\n"),
+          );
+          if (!confirmed) return;
+        }
+        await deleteThread(threadRef);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to delete Quick Chat",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [
+      confirmThreadDelete,
+      copyPathToClipboard,
+      copyThreadIdToClipboard,
+      deleteThread,
+      markThreadUnread,
+    ],
+  );
+
+  return (
+    <SidebarGroup className="px-2 pb-2 pt-0">
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            render={quickChatButtonRender}
+            size="sm"
+            className="gap-2 px-2 py-1.5 text-muted-foreground/80 hover:bg-accent hover:text-foreground"
+            disabled={isCreatingQuickChat}
+            data-testid="quick-chat-button"
+            onClick={handleCreateQuickChat}
+          >
+            <MessageCirclePlusIcon
+              className={`size-3.5 shrink-0 ${isCreatingQuickChat ? "animate-pulse" : ""}`}
+            />
+            <span className="min-w-0 flex-1 truncate text-left text-xs">Quick Chat</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        {quickChatThreads.length > 0 && (
+          <SidebarMenuItem>
+            <SidebarMenuSub
+              ref={attachThreadListAutoAnimateRef}
+              className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
+            >
+              {renderedThreads.map((thread) => (
+                <QuickChatThreadRow
+                  key={scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}
+                  thread={thread}
+                  routeThreadKey={routeThreadKey}
+                  navigateToThread={navigateToThread}
+                  handleThreadContextMenu={handleThreadContextMenu}
+                  appSettingsConfirmThreadArchive={confirmThreadArchive}
+                  renamingThreadKey={renamingThreadKey}
+                  renamingTitle={renamingTitle}
+                  setRenamingTitle={setRenamingTitle}
+                  renamingInputRef={renamingInputRef}
+                  renamingCommittedRef={renamingCommittedRef}
+                  confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+                  setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+                  confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+                  commitRename={commitRename}
+                  cancelRename={cancelRename}
+                  attemptArchiveThread={attemptArchiveThread}
+                />
+              ))}
+              {hasOverflowingThreads && (
+                <SidebarMenuSubItem className="w-full">
+                  <SidebarMenuSubButton
+                    render={toggleButtonRender}
+                    data-thread-selection-safe
+                    size="sm"
+                    className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                    aria-expanded={isExpanded}
+                    data-testid="quick-chat-list-toggle"
+                    onClick={handleToggle}
+                  >
+                    <span>{isExpanded ? "Show less" : "Show more"}</span>
+                  </SidebarMenuSubButton>
+                </SidebarMenuSubItem>
+              )}
+            </SidebarMenuSub>
+          </SidebarMenuItem>
+        )}
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+});
+
 interface SidebarProjectsContentProps {
   showArm64IntelBuildWarning: boolean;
   arm64IntelBuildWarningDescription: string | null;
@@ -2538,6 +2957,10 @@ interface SidebarProjectsContentProps {
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
+  quickChatThreads: readonly SidebarThreadSummary[];
+  isCreatingQuickChat: boolean;
+  createQuickChat: () => Promise<void>;
+  navigateToThread: (threadRef: ScopedThreadRef) => void;
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
@@ -2579,6 +3002,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleNewThread,
     archiveThread,
     deleteThread,
+    quickChatThreads,
+    isCreatingQuickChat,
+    createQuickChat,
+    navigateToThread,
     sortedProjects,
     expandedThreadListsByProject,
     activeRouteProjectKey,
@@ -2669,6 +3096,17 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </Alert>
         </SidebarGroup>
       ) : null}
+      <QuickChatSection
+        quickChatThreads={quickChatThreads}
+        routeThreadKey={routeThreadKey}
+        isCreatingQuickChat={isCreatingQuickChat}
+        createQuickChat={createQuickChat}
+        navigateToThread={navigateToThread}
+        archiveThread={archiveThread}
+        deleteThread={deleteThread}
+        threadPreviewCount={threadPreviewCount}
+        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+      />
       <SidebarGroup className="px-2 py-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -2788,8 +3226,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function Sidebar() {
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const projects = useStore(useShallow(selectRegularProjectsAcrossEnvironments));
   const sidebarThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const quickChatThreads = useStore(useShallow(selectQuickChatThreadsAcrossEnvironments));
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -2803,6 +3242,7 @@ export default function Sidebar() {
   const sidebarThreadPreviewCount = useSettings((s) => s.sidebarThreadPreviewCount);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
+  const { createQuickChat, isCreatingQuickChat } = useQuickChatActions();
   const { archiveThread, deleteThread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
   const routeThreadRef = useParams({
@@ -3442,6 +3882,10 @@ export default function Sidebar() {
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
             deleteThread={deleteThread}
+            quickChatThreads={quickChatThreads}
+            isCreatingQuickChat={isCreatingQuickChat}
+            createQuickChat={createQuickChat}
+            navigateToThread={navigateToThread}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
             activeRouteProjectKey={activeRouteProjectKey}

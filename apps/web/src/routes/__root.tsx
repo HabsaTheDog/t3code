@@ -30,7 +30,7 @@ import {
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
-import { useSettings } from "../hooks/useSettings";
+import { useClientSettingsHydrated, useSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -55,7 +55,7 @@ import {
   startEnvironmentConnectionService,
   useSavedEnvironmentRegistryStore,
 } from "../environments/runtime";
-import { configureClientTracing } from "../observability/clientTracing";
+import { configureClientTracing, disableClientTracing } from "../observability/clientTracing";
 import {
   ensurePrimaryEnvironmentReady,
   getPrimaryKnownEnvironment,
@@ -63,11 +63,23 @@ import {
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { CONSENT_VERSION, SetupGate } from "../setup/SetupWizard";
+import { telemetry } from "../telemetry/runtime";
+import { ConversationTelemetryBridge } from "../telemetry/ConversationTelemetryBridge";
+import { AnalyticsTelemetryBridge } from "../telemetry/AnalyticsTelemetryBridge";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
   beforeLoad: async ({ location }) => {
+    if (location.pathname === "/privacy") {
+      return {
+        authGateState: {
+          status: "hosted-static",
+        } as const,
+      };
+    }
+
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -114,6 +126,10 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  if (pathname === "/privacy") {
+    return <Outlet />;
+  }
+
   if (pathname === "/pair") {
     return <Outlet />;
   }
@@ -133,7 +149,10 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
-        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+        <TelemetryBootstrap pathname={pathname} />
+        <AnalyticsTelemetryBridge />
+        <ConversationTelemetryBridge />
+        {primaryEnvironmentAuthenticated ? <ConsentGatedTracingBootstrap /> : null}
         {primaryEnvironmentAuthenticated ? <ServerStateBootstrap /> : null}
         <EnvironmentConnectionManagerBootstrap />
         <RelayClientInstallDialog />
@@ -144,13 +163,78 @@ function RootRouteView() {
         {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}
         {primaryEnvironmentAuthenticated ? <SlowRpcAckToastCoordinator /> : null}
         {primaryEnvironmentAuthenticated ? (
-          <WebSocketConnectionSurface>{appShell}</WebSocketConnectionSurface>
+          <WebSocketConnectionSurface>
+            <SetupGate>{appShell}</SetupGate>
+          </WebSocketConnectionSurface>
         ) : (
-          appShell
+          <SetupGate>{appShell}</SetupGate>
         )}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function ConsentGatedTracingBootstrap() {
+  const enabled = useSettings(
+    (settings) =>
+      settings.consentVersion === CONSENT_VERSION && settings.analyticsConsent === "accepted",
+  );
+  return enabled ? <AuthenticatedTracingBootstrap /> : null;
+}
+
+function safeRouteName(pathname: string): string {
+  if (pathname === "/") return "home";
+  if (pathname.startsWith("/settings/")) return pathname.split("/").slice(0, 3).join("/");
+  if (pathname.startsWith("/settings")) return "/settings";
+  if (pathname.startsWith("/pair")) return "/pair";
+  if (pathname.startsWith("/chat") || pathname.startsWith("/_chat")) return "chat";
+  return "application";
+}
+
+let appStartedCaptured = false;
+
+function TelemetryBootstrap({ pathname }: { pathname: string }) {
+  const hydrated = useClientSettingsHydrated();
+  const settings = useSettings();
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const consentCurrent = settings.consentVersion === CONSENT_VERSION;
+    const analyticsConsent = consentCurrent ? settings.analyticsConsent : "unset";
+    const conversationConsent = consentCurrent ? settings.conversationConsent : "unset";
+    void (async () => {
+      await telemetry.hydrate({
+        hydrated: true,
+        installationId: settings.installationId || null,
+        analyticsConsent,
+        conversationConsent,
+        analyticsEnabledAt: consentCurrent ? settings.analyticsEnabledAt : null,
+        conversationEnabledAt: consentCurrent ? settings.conversationEnabledAt : null,
+        clearUnconsentedQueue:
+          !consentCurrent &&
+          (settings.analyticsConsent === "accepted" || settings.conversationConsent === "accepted"),
+      });
+      if (analyticsConsent !== "accepted") return;
+      if (!appStartedCaptured) {
+        appStartedCaptured = await telemetry.capture({ event: "app.started" });
+      }
+      await telemetry.capture({
+        event: "route.viewed",
+        properties: { route: safeRouteName(pathname) },
+      });
+    })();
+  }, [
+    hydrated,
+    pathname,
+    settings.analyticsConsent,
+    settings.analyticsEnabledAt,
+    settings.consentVersion,
+    settings.conversationConsent,
+    settings.conversationEnabledAt,
+    settings.installationId,
+  ]);
+
+  return null;
 }
 
 function HostedStaticEnvironmentBootstrap() {
@@ -265,6 +349,9 @@ function ServerStateBootstrap() {
 function AuthenticatedTracingBootstrap() {
   useEffect(() => {
     void configureClientTracing();
+    return () => {
+      void disableClientTracing();
+    };
   }, []);
 
   return null;

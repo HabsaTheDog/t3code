@@ -146,3 +146,6 @@ export async function __resetClientTracingForTests() {
 
   await disposeTracerRuntime(runtime, scope);
 }
+
+/** Stops export immediately when analytics consent is withdrawn. */
+export const disableClientTracing = __resetClientTracingForTests;

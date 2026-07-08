@@ -85,7 +85,18 @@ class BackendProcessSpawnError extends Data.TaggedError("BackendProcessSpawnErro
   }
 }
 
-type BackendProcessError = BackendProcessBootstrapEncodeError | BackendProcessSpawnError;
+class BackendProcessReadinessError extends Data.TaggedError("BackendProcessReadinessError")<{
+  readonly cause: BackendTimeoutError | PlatformError.PlatformError;
+}> {
+  override get message() {
+    return this.cause.message;
+  }
+}
+
+type BackendProcessError =
+  | BackendProcessBootstrapEncodeError
+  | BackendProcessSpawnError
+  | BackendProcessReadinessError;
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly readinessTimeout?: Duration.Duration;
@@ -184,11 +195,11 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
   const client = (yield* HttpClient.HttpClient).pipe(
     HttpClient.filterStatusOk,
     HttpClient.transformResponse(Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
-    HttpClient.retry(Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL)),
   );
 
   yield* client.get(readinessUrl).pipe(
     Effect.asVoid,
+    Effect.retry(Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL)),
     Effect.timeout(timeout),
     Effect.mapError(() => new BackendTimeoutError({ url: readinessUrl })),
   );
@@ -265,16 +276,32 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
     yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
   }
-  yield* waitForHttpReady(
+
+  const waitForReadiness = waitForHttpReady(
     options.httpBaseUrl,
     options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
   ).pipe(
     Effect.tap(() => options.onReady?.() ?? Effect.void),
-    Effect.catch((error) => options.onReadinessFailure?.(error) ?? Effect.void),
-    Effect.forkScoped,
+    Effect.tapError((error) => options.onReadinessFailure?.(error) ?? Effect.void),
+    Effect.as("ready" as const),
+    Effect.mapError(
+      (cause) => new BackendProcessReadinessError({ cause: cause as BackendTimeoutError | PlatformError.PlatformError }),
+    ),
   );
 
-  return describeProcessExit(yield* Effect.result(handle.exitCode));
+  const waitForExit = Effect.result(handle.exitCode).pipe(
+    Effect.map((result) => ({ kind: "exit" as const, result })),
+  );
+
+  const readinessOrExit = yield* Effect.raceFirst(
+    waitForReadiness.pipe(Effect.map((kind) => ({ kind } as const))),
+    waitForExit,
+  );
+  if (readinessOrExit.kind === "ready") {
+    return describeProcessExit(yield* Effect.result(handle.exitCode));
+  }
+
+  return describeProcessExit(readinessOrExit.result);
 });
 
 const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(function* () {

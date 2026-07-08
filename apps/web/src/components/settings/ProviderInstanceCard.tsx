@@ -301,7 +301,7 @@ function ProviderEnvironmentSection(props: {
   };
 
   return (
-    <div className="grid gap-2">
+    <div className="ph-no-capture grid gap-2" data-ph-no-capture>
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-medium text-foreground">Environment variables</span>
         <Button

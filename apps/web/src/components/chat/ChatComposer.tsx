@@ -53,6 +53,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { ensureLocalApi } from "../../localApi";
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -90,6 +91,7 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
+  ShieldCheckIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -105,6 +107,11 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import {
+  isQuizAccessMode,
+  QUIZ_ACCESS_MODE_OPTIONS,
+  type QuizAccessMode,
+} from "../settings/StudyBuddySettings.logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -134,6 +141,7 @@ const runtimeModeConfig: Record<
 };
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+const DEFAULT_COMPOSER_QUIZ_ACCESS_MODE: QuizAccessMode = "review-only";
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="popover-popup"]',
   '[data-slot="menu-popup"]',
@@ -141,6 +149,71 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
+
+function useStudyBuddyQuizAccessMode(scheduleComposerFocus: () => void) {
+  const [mode, setMode] = useState<QuizAccessMode>(DEFAULT_COMPOSER_QUIZ_ACCESS_MODE);
+  const [available, setAvailable] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let canceled = false;
+    async function loadQuizAccessMode() {
+      try {
+        const config = await ensureLocalApi().server.getStudyBuddyConfiguration();
+        if (canceled) return;
+        const nextMode = config.quiz.accessMode;
+        setMode(isQuizAccessMode(nextMode) ? nextMode : DEFAULT_COMPOSER_QUIZ_ACCESS_MODE);
+        setAvailable(true);
+      } catch {
+        if (!canceled) {
+          setAvailable(false);
+        }
+      }
+    }
+    void loadQuizAccessMode();
+    return () => {
+      canceled = true;
+    };
+  }, []);
+
+  const updateMode = useCallback(
+    async (nextMode: QuizAccessMode) => {
+      setMode(nextMode);
+      setIsSaving(true);
+      try {
+        const config = await ensureLocalApi().server.getStudyBuddyConfiguration();
+        await ensureLocalApi().server.updateStudyBuddyConfiguration({
+          patch: {
+            quiz: {
+              ...config.quiz,
+              accessMode: nextMode,
+            },
+          },
+        });
+        setAvailable(true);
+      } catch (error) {
+        setAvailable(false);
+        toastManager.add({
+          type: "error",
+          title: "Quiz access was not saved",
+          description:
+            error instanceof Error ? error.message : "Study Buddy settings are unavailable.",
+        });
+      } finally {
+        setIsSaving(false);
+        scheduleComposerFocus();
+      }
+    },
+    [scheduleComposerFocus],
+  );
+
+  return {
+    mode,
+    available,
+    isSaving,
+    updateMode,
+  };
+}
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -178,15 +251,21 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  quizAccessMode: QuizAccessMode;
+  quizAccessDisabled: boolean;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onQuizAccessModeChange: (mode: QuizAccessMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
+  const quizAccessOption = QUIZ_ACCESS_MODE_OPTIONS.find(
+    (option) => option.value === props.quizAccessMode,
+  );
 
   return (
     <>
@@ -248,6 +327,46 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               </SelectItem>
             );
           })}
+        </SelectPopup>
+      </Select>
+
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+      <Select
+        value={props.quizAccessMode}
+        onValueChange={(value) => {
+          if (isQuizAccessMode(value)) {
+            props.onQuizAccessModeChange(value);
+          }
+        }}
+      >
+        <SelectTrigger
+          variant="ghost"
+          size="sm"
+          className="font-medium"
+          aria-label="Quiz access mode"
+          title={quizAccessOption?.description}
+          disabled={props.quizAccessDisabled}
+        >
+          <ShieldCheckIcon className="size-4" />
+          <SelectValue>{quizAccessOption?.label ?? "Quiz access"}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup alignItemWithTrigger={false}>
+          {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value} className="min-w-72 py-2">
+              <div className="grid min-w-0 gap-0.5">
+                <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                  <ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  {option.label}
+                </span>
+                {option.description ? (
+                  <span className="text-muted-foreground text-xs leading-4">
+                    {option.description}
+                  </span>
+                ) : null}
+              </div>
+            </SelectItem>
+          ))}
         </SelectPopup>
       </Select>
 
@@ -553,6 +672,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
   } = props;
+
+  const quizAccess = useStudyBuddyQuizAccessMode(scheduleComposerFocus);
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -1936,7 +2057,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <form
       ref={composerFormRef}
       onSubmit={submitComposer}
-      className="mx-auto w-full min-w-0 max-w-208"
+      className="ph-no-capture mx-auto w-full min-w-0 max-w-208"
+      data-ph-no-capture
       data-chat-composer-form="true"
     >
       <div
@@ -2337,11 +2459,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     interactionMode={interactionMode}
                     planSidebarLabel={planSidebarLabel}
                     planSidebarOpen={planSidebarOpen}
+                    quizAccessMode={quizAccess.mode}
+                    quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                     traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
+                    onQuizAccessModeChange={quizAccess.updateMode}
                     onRuntimeModeChange={handleRuntimeModeChange}
                   />
                 ) : (
@@ -2356,11 +2481,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      quizAccessMode={quizAccess.mode}
+                      quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
+                      onQuizAccessModeChange={quizAccess.updateMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                     />
                   </>

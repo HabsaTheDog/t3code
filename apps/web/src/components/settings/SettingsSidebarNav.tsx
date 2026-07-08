@@ -4,9 +4,12 @@ import {
   ArrowLeftIcon,
   BotIcon,
   CloudIcon,
+  ExternalLinkIcon,
+  GraduationCapIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
+  ShieldCheckIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
@@ -28,6 +31,8 @@ export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/privacy"
+  | "/settings/study-buddy"
   | "/settings/source-control"
   | "/settings/cloud"
   | "/settings/connections"
@@ -39,7 +44,9 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
   badgeLabel?: string;
 }> = [
+  { label: "Study Buddy", to: "/settings/study-buddy", icon: GraduationCapIcon },
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Privacy & Data", to: "/settings/privacy", icon: ShieldCheckIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
@@ -116,7 +123,21 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       </SidebarContent>
 
       <SidebarSeparator />
-      <SidebarFooter className="p-2">
+      <SidebarFooter className="gap-2 p-2">
+        <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
+          <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/60">
+            Acknowledgements
+          </p>
+          <a
+            className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            href="https://github.com/pingdotgg/t3code"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Built with T3 Code
+            <ExternalLinkIcon className="size-3" aria-hidden="true" />
+          </a>
+        </div>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

@@ -7,6 +7,9 @@ const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>()
 
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
+    telemetry: {
+      redactConversationTurn: rpcClient.server.redactConversationTurn,
+    },
     terminal: {
       open: (input) => rpcClient.terminal.open(input as never),
       attach: (input, callback, options) =>
@@ -24,6 +27,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     filesystem: {
       browse: rpcClient.filesystem.browse,
+      createPreviewTicket: rpcClient.filesystem.createPreviewTicket,
     },
     sourceControl: {
       lookupRepository: rpcClient.sourceControl.lookupRepository,

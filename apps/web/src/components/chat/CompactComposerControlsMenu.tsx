@@ -1,6 +1,21 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import {
+  BrainCircuitIcon,
+  EllipsisIcon,
+  ListTodoIcon,
+  LockIcon,
+  LockOpenIcon,
+  MessageCircleIcon,
+  MonitorCogIcon,
+  PenLineIcon,
+  ShieldCheckIcon,
+} from "lucide-react";
+import {
+  isQuizAccessMode,
+  QUIZ_ACCESS_MODE_OPTIONS,
+  type QuizAccessMode,
+} from "../settings/StudyBuddySettings.logic";
 import { Button } from "../ui/button";
 import {
   Menu,
@@ -9,19 +24,35 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator as MenuDivider,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
+
+const runtimeModeOptions: ReadonlyArray<{
+  value: RuntimeMode;
+  label: string;
+  icon: typeof LockIcon;
+}> = [
+  { value: "approval-required", label: "Supervised", icon: LockIcon },
+  { value: "auto-accept-edits", label: "Auto-accept edits", icon: PenLineIcon },
+  { value: "full-access", label: "Full access", icon: LockOpenIcon },
+];
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
   interactionMode: ProviderInteractionMode;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  quizAccessMode: QuizAccessMode;
+  quizAccessDisabled: boolean;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode: () => void;
   onTogglePlanSidebar: () => void;
+  onQuizAccessModeChange: (mode: QuizAccessMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
@@ -38,41 +69,97 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       >
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
-      <MenuPopup align="start">
+      <MenuPopup align="start" className="min-w-48">
         {props.traitsMenuContent ? (
-          <>
-            {props.traitsMenuContent}
-            <MenuDivider />
-          </>
+          <MenuSub>
+            <MenuSubTrigger>
+              <BrainCircuitIcon className="size-4 text-muted-foreground" />
+              Reasoning
+            </MenuSubTrigger>
+            <MenuSubPopup className="min-w-44">{props.traitsMenuContent}</MenuSubPopup>
+          </MenuSub>
         ) : null}
         {props.showInteractionModeToggle ? (
-          <>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
+          <MenuSub>
+            <MenuSubTrigger>
+              <MessageCircleIcon className="size-4 text-muted-foreground" />
+              Mode
+            </MenuSubTrigger>
+            <MenuSubPopup className="min-w-40">
+              <MenuRadioGroup
+                value={props.interactionMode}
+                onValueChange={(value) => {
+                  if (!value || value === props.interactionMode) return;
+                  props.onToggleInteractionMode();
+                }}
+              >
+                <MenuRadioItem value="default">
+                  <span className="flex items-center gap-2">
+                    <MessageCircleIcon className="size-4 text-muted-foreground" />
+                    Chat
+                  </span>
+                </MenuRadioItem>
+                <MenuRadioItem value="plan">
+                  <span className="flex items-center gap-2">
+                    <ListTodoIcon className="size-4 text-muted-foreground" />
+                    Plan
+                  </span>
+                </MenuRadioItem>
+              </MenuRadioGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
+        <MenuSub>
+          <MenuSubTrigger>
+            <MonitorCogIcon className="size-4 text-muted-foreground" />
+            Computer access
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-52">
             <MenuRadioGroup
-              value={props.interactionMode}
+              value={props.runtimeMode}
               onValueChange={(value) => {
-                if (!value || value === props.interactionMode) return;
-                props.onToggleInteractionMode();
+                if (!value || value === props.runtimeMode) return;
+                props.onRuntimeModeChange(value as RuntimeMode);
               }}
             >
-              <MenuRadioItem value="default">Chat</MenuRadioItem>
-              <MenuRadioItem value="plan">Plan</MenuRadioItem>
+              {runtimeModeOptions.map((option) => {
+                const OptionIcon = option.icon;
+                return (
+                  <MenuRadioItem key={option.value} value={option.value}>
+                    <span className="flex items-center gap-2">
+                      <OptionIcon className="size-4 text-muted-foreground" />
+                      {option.label}
+                    </span>
+                  </MenuRadioItem>
+                );
+              })}
             </MenuRadioGroup>
-            <MenuDivider />
-          </>
-        ) : null}
-        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
-        <MenuRadioGroup
-          value={props.runtimeMode}
-          onValueChange={(value) => {
-            if (!value || value === props.runtimeMode) return;
-            props.onRuntimeModeChange(value as RuntimeMode);
-          }}
-        >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
-        </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger disabled={props.quizAccessDisabled}>
+            <ShieldCheckIcon className="size-4 text-muted-foreground" />
+            Quiz access
+          </MenuSubTrigger>
+          <MenuSubPopup className="min-w-52">
+            <MenuRadioGroup
+              value={props.quizAccessMode}
+              onValueChange={(value) => {
+                if (!isQuizAccessMode(value) || value === props.quizAccessMode) return;
+                props.onQuizAccessModeChange(value);
+              }}
+            >
+              {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
+                <MenuRadioItem key={option.value} value={option.value}>
+                  <span className="flex items-center gap-2">
+                    <ShieldCheckIcon className="size-4 text-muted-foreground" />
+                    {option.label}
+                  </span>
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuSubPopup>
+        </MenuSub>
         {props.activePlan ? (
           <>
             <MenuDivider />

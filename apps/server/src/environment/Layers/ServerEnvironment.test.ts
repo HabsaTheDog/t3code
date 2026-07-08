@@ -31,6 +31,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
     cwd: process.cwd(),
+    quickChatWorkspaceRoot: nodePath.join(baseDir, "quick-chats"),
     baseDir,
     mode: "web",
     autoBootstrapProjectFromCwd: false,

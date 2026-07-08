@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type OrchestrationThread,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -52,7 +53,8 @@ type ProviderIntentEvent = Extract<
       | "thread.turn-interrupt-requested"
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
-      | "thread.session-stop-requested";
+      | "thread.session-stop-requested"
+      | "thread.delegated-work-review-requested";
   }
 >;
 
@@ -184,6 +186,9 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const studyBuddyForkActive = Boolean(
+    process.env.STUDY_BUDDY_ROOT || process.env.STUDY_BUDDY_T3_ROOT,
+  );
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -417,14 +422,18 @@ const make = Effect.gen(function* () {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      providerService.startSession(threadId, {
-        threadId,
-        ...(preferredProvider ? { provider: preferredProvider } : {}),
-        providerInstanceId: desiredInstanceId,
-        ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-        modelSelection: desiredModelSelection,
-        ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-        runtimeMode: desiredRuntimeMode,
+      Effect.gen(function* () {
+        const { personalityPrompt } = yield* serverSettingsService.getSettings;
+        return yield* providerService.startSession(threadId, {
+          threadId,
+          ...(preferredProvider ? { provider: preferredProvider } : {}),
+          providerInstanceId: desiredInstanceId,
+          ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+          modelSelection: desiredModelSelection,
+          ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(personalityPrompt ? { personalityPrompt } : {}),
+          runtimeMode: desiredRuntimeMode,
+        });
       });
 
     const bindSessionToThread = (session: ProviderSession) =>
@@ -469,8 +478,9 @@ const make = Effect.gen(function* () {
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "unsupported";
       const previousModelSelection = threadModelSelections.get(threadId);
       const shouldRestartForModelSelectionChange =
-        preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
+        (preferredProvider === "claudeAgent" ||
+          (preferredProvider === "codex" && studyBuddyForkActive)) &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
 
       if (
@@ -944,6 +954,103 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const buildDelegatedWorkReviewPrompt = (input: {
+    readonly thread: OrchestrationThread;
+    readonly turnId: TurnId;
+  }): string => {
+    const deferred = (input.thread.deferredFinalizations ?? []).find(
+      (entry) =>
+        String(entry.turnId) === String(input.turnId) &&
+        (entry.state === "waiting" || entry.state === "reviewing"),
+    );
+    const delegatedWork = input.thread.delegatedWork.filter(
+      (entry) => String(entry.parentTurnId) === String(input.turnId) && entry.required,
+    );
+    const originalUserMessage =
+      [...input.thread.messages]
+        .reverse()
+        .find((message) => message.role === "user" && message.turnId === null)?.text ??
+      input.thread.messages.find((message) => message.role === "user")?.text ??
+      "";
+    const delegatedSummary = delegatedWork
+      .map((entry) =>
+        [
+          `- ${entry.task}`,
+          `  id: ${entry.id}`,
+          `  status: ${entry.status}`,
+          `  reviewStatus: ${entry.reviewStatus}`,
+          entry.lastProgress ? `  lastProgress: ${entry.lastProgress}` : null,
+          entry.result ? `  result: ${entry.result}` : null,
+          entry.error ? `  error: ${entry.error}` : null,
+        ]
+          .filter((line): line is string => line !== null)
+          .join("\n"),
+      )
+      .join("\n");
+
+    return [
+      "Internal delegated-work review required.",
+      "",
+      "Review the completed subagent/delegated work before producing the final user-visible answer.",
+      "Use only facts supported by the delegated work, tool output, or the conversation.",
+      "If any delegated work is wrong, incomplete, timed out, or inconsistent, correct it, ignore it, rerun only if necessary, or clearly state the limitation.",
+      "Do not claim that work completed successfully unless the status/result supports that.",
+      "",
+      "Original user request:",
+      originalUserMessage || "(not available)",
+      "",
+      "Hidden draft final answer from before delegated work completed:",
+      deferred?.draftFinalText?.trim() || "(none)",
+      "",
+      "Delegated work records:",
+      delegatedSummary || "(none)",
+      "",
+      "Produce the final answer now. Do not mention this internal review prompt.",
+    ].join("\n");
+  };
+
+  const processDelegatedWorkReviewRequested = Effect.fn(
+    "processDelegatedWorkReviewRequested",
+  )(function* (event: Extract<ProviderIntentEvent, { type: "thread.delegated-work-review-requested" }>) {
+    const thread = yield* resolveThread(event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+    const deferred = (thread.deferredFinalizations ?? []).find(
+      (entry) =>
+        String(entry.turnId) === String(event.payload.turnId) &&
+        (entry.state === "waiting" || entry.state === "reviewing"),
+    );
+    if (!deferred || deferred.reviewTurnId !== undefined) {
+      return;
+    }
+
+    const reviewPrompt = buildDelegatedWorkReviewPrompt({
+      thread,
+      turnId: event.payload.turnId,
+    });
+    const sendTurnRequest = yield* buildSendTurnRequestForThread({
+      threadId: event.payload.threadId,
+      messageText: reviewPrompt,
+      createdAt: event.payload.createdAt,
+    });
+
+    const result = yield* providerService.sendTurn(sendTurnRequest);
+    yield* orchestrationEngine.dispatch({
+      type: "thread.deferred-finalization.upsert",
+      commandId: yield* serverCommandId("delegated-work-review-turn-set"),
+      threadId: event.payload.threadId,
+      deferredFinalization: {
+        ...deferred,
+        state: "reviewing",
+        reviewTurnId: result.turnId,
+        updatedAt: event.payload.createdAt,
+        reason: "pending_delegated_review",
+      },
+      createdAt: event.payload.createdAt,
+    });
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -984,6 +1091,9 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.delegated-work-review-requested":
+        yield* processDelegatedWorkReviewRequested(event);
+        return;
     }
   });
 
@@ -1010,7 +1120,8 @@ const make = Effect.gen(function* () {
         event.type === "thread.turn-interrupt-requested" ||
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
-        event.type === "thread.session-stop-requested"
+        event.type === "thread.session-stop-requested" ||
+        event.type === "thread.delegated-work-review-requested"
       ) {
         return yield* worker.enqueue(event);
       }

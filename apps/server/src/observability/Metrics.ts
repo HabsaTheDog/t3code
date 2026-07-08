@@ -42,6 +42,55 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
   },
 );
 
+export const orchestrationDelegatedWorkStartedTotal = Metric.counter(
+  "t3_orchestration_delegated_work_started_total",
+  {
+    description: "Total delegated work items started.",
+  },
+);
+
+export const orchestrationDelegatedWorkTerminalTotal = Metric.counter(
+  "t3_orchestration_delegated_work_terminal_total",
+  {
+    description: "Total delegated work items reaching a terminal status.",
+  },
+);
+
+export const orchestrationDelegatedWorkTimeoutTotal = Metric.counter(
+  "t3_orchestration_delegated_work_timeout_total",
+  {
+    description: "Total delegated work items timed out by the stale-work reaper.",
+  },
+);
+
+export const orchestrationDelegatedWorkRejectedTotal = Metric.counter(
+  "t3_orchestration_delegated_work_rejected_total",
+  {
+    description: "Total delegated work items rejected during parent review.",
+  },
+);
+
+export const orchestrationDeferredFinalizationTotal = Metric.counter(
+  "t3_orchestration_deferred_finalization_total",
+  {
+    description: "Total deferred finalization lifecycle events.",
+  },
+);
+
+export const orchestrationDelegatedWorkWaitDuration = Metric.timer(
+  "t3_orchestration_delegated_work_wait_duration",
+  {
+    description: "Duration spent waiting for delegated work before finalization.",
+  },
+);
+
+export const orchestrationDelegatedReviewDuration = Metric.timer(
+  "t3_orchestration_delegated_review_duration",
+  {
+    description: "Duration spent in delegated-work parent review continuations.",
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });

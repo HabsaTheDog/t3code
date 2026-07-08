@@ -33,6 +33,11 @@ import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { resolveStaticDir, ServerConfig } from "./config.ts";
 import { BrowserTraceCollector } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
+import {
+  PREVIEW_ROUTE_PREFIX,
+  previewResponseHeaders,
+  readFilesystemPreviewTicket,
+} from "./workspace/previewTickets.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   annotateEnvironmentRequest,
@@ -225,6 +230,93 @@ export const attachmentsRouteLayer = HttpRouter.add(
       EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
     }),
   ),
+);
+
+function parseSingleByteRange(
+  value: string | undefined,
+  size: number,
+): { start: number; end: number } | "invalid" | null {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match) return "invalid";
+  const startText = match[1] ?? "";
+  const endText = match[2] ?? "";
+  if (!startText && !endText) return "invalid";
+
+  if (!startText) {
+    const suffixLength = Number.parseInt(endText, 10);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid";
+    return { start: Math.max(0, size - suffixLength), end: Math.max(0, size - 1) };
+  }
+
+  const start = Number.parseInt(startText, 10);
+  const requestedEnd = endText ? Number.parseInt(endText, 10) : size - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    start >= size ||
+    requestedEnd < start
+  ) {
+    return "invalid";
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
+}
+
+export const filesystemPreviewRouteLayer = HttpRouter.add(
+  "GET",
+  `${PREVIEW_ROUTE_PREFIX}*`,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const token = url.value.pathname.slice(PREVIEW_ROUTE_PREFIX.length);
+    if (!/^[A-Za-z0-9_-]{32,}$/.test(token)) {
+      return HttpServerResponse.text("Invalid preview ticket", { status: 400 });
+    }
+    const ticket = readFilesystemPreviewTicket(token);
+    if (!ticket) {
+      return HttpServerResponse.text("Preview ticket expired or not found", { status: 404 });
+    }
+
+    const range = parseSingleByteRange(request.headers.range, ticket.size);
+    const headers = previewResponseHeaders(ticket);
+    if (range === "invalid") {
+      return HttpServerResponse.empty({
+        status: 416,
+        headers: { ...headers, "Content-Range": `bytes */${ticket.size}` },
+      });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const data = yield* fileSystem
+      .readFile(ticket.absolutePath)
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!data) {
+      return HttpServerResponse.text("Preview file is no longer available", { status: 404 });
+    }
+
+    if (range) {
+      return HttpServerResponse.uint8Array(data.subarray(range.start, range.end + 1), {
+        status: 206,
+        contentType: ticket.mimeType,
+        headers: {
+          ...headers,
+          "Content-Length": String(range.end - range.start + 1),
+          "Content-Range": `bytes ${range.start}-${range.end}/${ticket.size}`,
+        },
+      });
+    }
+
+    return HttpServerResponse.uint8Array(data, {
+      status: 200,
+      contentType: ticket.mimeType,
+      headers: { ...headers, "Content-Length": String(ticket.size) },
+    });
+  }),
 );
 
 export const projectFaviconRouteLayer = HttpRouter.add(

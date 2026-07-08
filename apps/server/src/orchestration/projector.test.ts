@@ -92,9 +92,136 @@ describe("orchestration projector", () => {
         deletedAt: null,
         messages: [],
         proposedPlans: [],
+        delegatedWork: [],
+        deferredFinalizations: [],
         activities: [],
         checkpoints: [],
         session: null,
+      },
+    ]);
+  });
+
+  it("projects delegated work lifecycle updates into the parent thread ledger", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const progressAt = "2026-01-01T00:01:00.000Z";
+    const completedAt = "2026-01-01T00:05:00.000Z";
+    const afterCreate = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-parent",
+          occurredAt: createdAt,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-parent",
+            projectId: "project-1",
+            title: "parent",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const afterProgress = await Effect.runPromise(
+      projectEvent(
+        afterCreate,
+        makeEvent({
+          sequence: 2,
+          type: "thread.delegated-work-upserted",
+          aggregateKind: "thread",
+          aggregateId: "thread-parent",
+          occurredAt: progressAt,
+          commandId: "cmd-work-progress",
+          payload: {
+            threadId: "thread-parent",
+            delegatedWork: {
+              id: "child-task-1",
+              parentTurnId: "turn-parent",
+              task: "Inspect unresolved review comments",
+              status: "progress",
+              required: true,
+              childThreadId: "thread-child",
+              childSessionId: null,
+              lastProgress: "Fetched unresolved threads",
+              result: null,
+              error: null,
+              createdAt,
+              updatedAt: progressAt,
+              completedAt: null,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterProgress.threads[0]?.delegatedWork).toHaveLength(1);
+    expect(afterProgress.threads[0]?.delegatedWork[0]?.lastProgress).toBe(
+      "Fetched unresolved threads",
+    );
+
+    const afterComplete = await Effect.runPromise(
+      projectEvent(
+        afterProgress,
+        makeEvent({
+          sequence: 3,
+          type: "thread.delegated-work-upserted",
+          aggregateKind: "thread",
+          aggregateId: "thread-parent",
+          occurredAt: completedAt,
+          commandId: "cmd-work-complete",
+          payload: {
+            threadId: "thread-parent",
+            delegatedWork: {
+              id: "child-task-1",
+              parentTurnId: "turn-parent",
+              task: "Inspect unresolved review comments",
+              status: "completed",
+              required: true,
+              childThreadId: "thread-child",
+              childSessionId: null,
+              lastProgress: "Fetched unresolved threads",
+              result: "All actionable comments are addressed.",
+              error: null,
+              createdAt,
+              updatedAt: completedAt,
+              completedAt,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(afterComplete.threads[0]?.updatedAt).toBe(completedAt);
+    expect(afterComplete.threads[0]?.delegatedWork).toEqual([
+      {
+        id: "child-task-1",
+        parentTurnId: "turn-parent",
+        task: "Inspect unresolved review comments",
+        status: "completed",
+        required: true,
+        blockingPolicy: "required",
+        origin: "unknown",
+        reviewStatus: "not_required",
+        childThreadId: "thread-child",
+        childSessionId: null,
+        lastProgress: "Fetched unresolved threads",
+        result: "All actionable comments are addressed.",
+        error: null,
+        createdAt,
+        updatedAt: completedAt,
+        completedAt,
       },
     ]);
   });

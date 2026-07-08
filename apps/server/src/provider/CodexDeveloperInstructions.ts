@@ -131,4 +131,112 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+## Delegated Work
+
+When you delegate work to another model, subagent, or background task, treat that work as part of the current turn until it reaches a terminal state. Do not produce a final answer that summarizes delegated work as complete while required delegated work is still running, only reporting progress, or has no observed result.
+
+In progress updates and final answers, summarize only observed child state: started, running, progress text, completed result, failed, canceled, timed out, or blocked. If delegated work has not produced a result yet, say that it is still pending rather than inferring an outcome.
+
+Before presenting completed delegated work as a conclusion, review it against the user's request and the local evidence you have. If a child result is irrelevant, contradictory, incomplete, or low quality, do not pass it through as fact; either correct it yourself, re-run or ask for follow-up work, or explicitly report that the delegated result was unusable.
 </collaboration_mode>`;
+
+export interface StudyBuddyDeveloperInstructionsInput {
+  readonly cwd?: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly model?: string;
+}
+
+function trimEnv(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function buildStudyBuddyDeveloperInstructions(
+  input: StudyBuddyDeveloperInstructionsInput = {},
+): string | undefined {
+  const environment = input.environment ?? process.env;
+  const studyBuddyRoot = trimEnv(environment.STUDY_BUDDY_ROOT);
+  const studyBuddyT3Root = trimEnv(environment.STUDY_BUDDY_T3_ROOT);
+  if (!studyBuddyRoot && !studyBuddyT3Root) {
+    return undefined;
+  }
+
+  const home = trimEnv(environment.HOME);
+  const wrapper =
+    trimEnv(environment.STUDY_BUDDY_TASK_WRAPPER) ??
+    (home ? `${home}/.agents/skills/study-buddy/scripts/study_buddy_task.sh` : undefined);
+  const selectedWorkspace =
+    trimEnv(input.cwd) ?? trimEnv(environment.T3CODE_CWD) ?? trimEnv(environment.PWD);
+  const outputHint = selectedWorkspace
+    ? `${selectedWorkspace}/output/<request-name>/<timestamp>`
+    : "the wrapper-reported run folder";
+  const command = wrapper ?? "study_buddy_task.sh";
+  const model = trimEnv(input.model) ?? trimEnv(environment.STUDY_BUDDY_CODEX_MODEL);
+
+  return `<study_buddy_context># Study Buddy
+
+This T3 Code instance is running the Study Buddy fork. These rules apply in every selected project directory, even when that directory does not contain a Study Buddy \`AGENTS.md\`.
+
+## Core Rule
+
+For FH Technikum Wien, Moodle, CIS, course-material, study-document, lab, quiz, timetable, attendance, exam, deadline, room, or assignment requests, use the local Study Buddy Moodle/CIS tooling instead of answering from memory.
+
+## Tooling
+
+- Wrapper: \`${command}\`
+- Study Buddy root: \`${studyBuddyRoot ?? "unknown"}\`
+- T3 fork root: \`${studyBuddyT3Root ?? "unknown"}\`
+- Selected workspace: \`${selectedWorkspace ?? "unknown"}\`
+- Codex model for Study Buddy runs: \`${model ?? "Codex default"}\`
+- Expected artifact output: \`${outputHint}\`
+
+Call the wrapper by absolute path when available. It is designed to work from any current working directory.
+
+## Routing
+
+- Broad Moodle requests: \`${command} prompt "<user prompt>"${model ? ` --codex-model "${model}"` : ""}\`
+- Moodle + CIS requests: \`${command} combined "<user prompt>"${model ? ` --codex-model "${model}"` : ""}\`
+- Study documents, Zusammenfassungen, Lernzettel, Stoffuebersichten: \`${command} doc "<prompt>"${model ? ` --codex-model "${model}"` : ""}\`
+- Formelsammlung, formula sheet, cheat sheet, Spickzettel: \`${command} cheat-sheet "<prompt>"${model ? ` --codex-model "${model}"` : ""}\`
+- Assignment/task extraction: \`${command} assignment-brief "<prompt>"${model ? ` --codex-model "${model}"` : ""}\`
+- Quiz/test assistance: \`${command} prompt "<exact quiz prompt>" --auto-answer${model ? ` --codex-model "${model}"` : ""}\`
+
+For dates, schedules, rooms, exams, and deadlines, prefer the personal calendar. One complete direct result from calendar, CIS, or Moodle is sufficient; do not launch a second run merely to corroborate it. Use CIS directly for attendance or administrative LV information. Fall back only when the primary source is unavailable, has no match, or lacks a requested field.
+
+## Safety And Output
+
+- Never submit final Moodle quiz/exam attempts or accept final submission confirmations.
+- Use the user's exact course words and aliases when calling the wrapper.
+- After every Study Buddy run, inspect generated artifacts such as \`document.typ\`, \`moodle_raw.txt\`, \`source_coverage.json\`, \`quiz-review.json\`, or subagent packets before answering.
+- Cite Moodle/CIS pages, PDFs, assignments, slides, or generated source artifacts in study outputs and summaries.
+- For every successfully generated PDF, the final answer must contain a Markdown link whose destination is the verified absolute local path, for example \`[PDF öffnen](</absolute/path/document.pdf>)\`. Keep angle brackets around the destination so paths with spaces remain valid.
+- Never use a \`file://\` URL, never percent-encode the local path, and never return only a plain-text path. T3 Code turns the absolute-path Markdown link into an openable local-file control.
+- Do not treat missing local files or missing local \`AGENTS.md\` as missing Moodle/CIS information.
+</study_buddy_context>`;
+}
+
+export function appendStudyBuddyDeveloperInstructions(
+  baseInstructions: string,
+  input: StudyBuddyDeveloperInstructionsInput = {},
+): string {
+  const studyBuddyInstructions = buildStudyBuddyDeveloperInstructions(input);
+  return studyBuddyInstructions
+    ? `${baseInstructions}\n\n${studyBuddyInstructions}`
+    : baseInstructions;
+}
+
+export function appendPersonalityDeveloperInstructions(
+  baseInstructions: string,
+  personalityPrompt: string | undefined,
+): string {
+  const prompt = personalityPrompt?.trim();
+  if (!prompt) {
+    return baseInstructions;
+  }
+  return `${baseInstructions}\n\n<user_personality>
+# User-defined agent behavior
+
+${prompt}
+</user_personality>`;
+}

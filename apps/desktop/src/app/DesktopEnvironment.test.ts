@@ -61,6 +61,8 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/dev/logs");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
+      assert.equal(environment.branding.baseName, "Study Buddy");
+      assert.equal(environment.branding.displayName, "Study Buddy (Dev)");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");

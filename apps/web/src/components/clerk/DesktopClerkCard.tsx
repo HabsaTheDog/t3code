@@ -15,7 +15,10 @@ export function DesktopClerkCard({
   footerAction?: ReactNode;
 }) {
   return (
-    <div className="isolate w-full max-w-[25rem] overflow-hidden rounded-xl border border-border/80 bg-card text-card-foreground shadow-[0_12px_28px_rgba(0,0,0,0.12)]">
+    <div
+      className="ph-no-capture isolate w-full max-w-[25rem] overflow-hidden rounded-xl border border-border/80 bg-card text-card-foreground shadow-[0_12px_28px_rgba(0,0,0,0.12)]"
+      data-ph-no-capture
+    >
       <div className="relative -m-px flex flex-col gap-8 rounded-lg border border-border/80 bg-card px-10 py-8 text-center">
         {children}
       </div>

@@ -840,7 +840,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   }
 
   return (
-    <div className={accessRowClassName(presentation)}>
+    <div className={cn("ph-no-capture", accessRowClassName(presentation))} data-ph-no-capture>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">

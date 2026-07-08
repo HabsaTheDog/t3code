@@ -38,6 +38,8 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
+  appendPersonalityDeveloperInstructions,
+  appendStudyBuddyDeveloperInstructions,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
@@ -103,6 +105,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly personalityPrompt?: string;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -319,28 +322,47 @@ function runtimeModeToTurnSandboxPolicy(
 }
 
 function buildCodexCollaborationMode(input: {
+  readonly cwd?: string;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly interactionMode?: ProviderInteractionMode;
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
+  readonly personalityPrompt?: string;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
-  if (input.interactionMode === undefined) {
+  const modeInstructions =
+    input.interactionMode === "plan"
+      ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+      : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+  const developerInstructions = appendPersonalityDeveloperInstructions(
+    appendStudyBuddyDeveloperInstructions(modeInstructions, {
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.environment ? { environment: input.environment } : {}),
+      ...(input.model ? { model: input.model } : {}),
+    }),
+    input.personalityPrompt,
+  );
+
+  if (
+    input.interactionMode === undefined &&
+    developerInstructions === CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS
+  ) {
     return undefined;
   }
+
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   return {
-    mode: input.interactionMode,
+    mode: input.interactionMode ?? "default",
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions:
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions: developerInstructions,
     },
   };
 }
 
 export function buildTurnStartParams(input: {
+  readonly cwd?: string;
+  readonly environment?: NodeJS.ProcessEnv;
   readonly threadId: string;
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
@@ -352,6 +374,7 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly personalityPrompt?: string;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -369,9 +392,12 @@ export function buildTurnStartParams(input: {
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   const collaborationMode = buildCodexCollaborationMode({
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.environment ? { environment: input.environment } : {}),
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.personalityPrompt ? { personalityPrompt: input.personalityPrompt } : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
@@ -714,9 +740,19 @@ export const makeCodexSessionRuntime = (
     // `child_process.spawn`; `expandHomePath` lets a configured
     // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
+    const baseEnvironment = options.environment ?? process.env;
+    const studyBuddyActive = Boolean(
+      baseEnvironment.STUDY_BUDDY_ROOT || baseEnvironment.STUDY_BUDDY_T3_ROOT,
+    );
     const env = {
-      ...(options.environment ?? process.env),
+      ...baseEnvironment,
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+      ...(studyBuddyActive
+        ? {
+            STUDY_BUDDY_WORKSPACE: options.cwd,
+            ...(options.model ? { STUDY_BUDDY_CODEX_MODEL: options.model } : {}),
+          }
+        : {}),
     };
     const child = yield* spawner
       .spawn(
@@ -1259,6 +1295,8 @@ export const makeCodexSessionRuntime = (
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
           const params = yield* buildTurnStartParams({
+            cwd: options.cwd,
+            environment: env,
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
             ...(input.input ? { prompt: input.input } : {}),
@@ -1267,6 +1305,7 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(options.personalityPrompt ? { personalityPrompt: options.personalityPrompt } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

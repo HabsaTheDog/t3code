@@ -4,16 +4,20 @@ import { page } from "vite-plus/test/browser";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
-const { openInPreferredEditorMock, readLocalApiMock } = vi.hoisted(() => ({
-  openInPreferredEditorMock: vi.fn(async () => "vscode"),
-  readLocalApiMock: vi.fn(() => ({
-    server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
-    shell: { openInEditor: vi.fn(async () => undefined) },
-  })),
-}));
+const { openInPreferredEditorMock, openInSystemApplicationMock, readLocalApiMock } = vi.hoisted(
+  () => ({
+    openInPreferredEditorMock: vi.fn(async () => "vscode"),
+    openInSystemApplicationMock: vi.fn(async () => undefined),
+    readLocalApiMock: vi.fn(() => ({
+      server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
+      shell: { openInEditor: vi.fn(async () => undefined) },
+    })),
+  }),
+);
 
 vi.mock("../editorPreferences", () => ({
   openInPreferredEditor: openInPreferredEditorMock,
+  openInSystemApplication: openInSystemApplicationMock,
 }));
 
 vi.mock("../localApi", () => ({
@@ -28,6 +32,7 @@ import ChatMarkdown from "./ChatMarkdown";
 describe("ChatMarkdown", () => {
   afterEach(() => {
     openInPreferredEditorMock.mockClear();
+    openInSystemApplicationMock.mockClear();
     readLocalApiMock.mockClear();
     localStorage.clear();
     document.body.innerHTML = "";
@@ -134,6 +139,21 @@ describe("ChatMarkdown", () => {
       await expect.element(link).toBeInTheDocument();
       await expect.element(link).toHaveAttribute("href", "https://openai.com/docs");
       await expect.element(link).toHaveAttribute("target", "_blank");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("opens an absolute PDF path with spaces in the system PDF application", async () => {
+    const filePath = "/home/student/Study Buddy/output/exam guide/document.pdf";
+    const screen = await render(
+      <ChatMarkdown text={`[PDF öffnen](<${filePath}>)`} cwd="/home/student/Study Buddy" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "document.pdf" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", filePath);
     } finally {
       await screen.unmount();
     }

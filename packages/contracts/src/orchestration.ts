@@ -197,10 +197,14 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProjectKind = Schema.Literals(["regular", "quick-chat"]);
+export type ProjectKind = typeof ProjectKind.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  projectKind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -311,6 +315,113 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const OrchestrationDelegatedWorkId = TrimmedNonEmptyString;
+export type OrchestrationDelegatedWorkId = typeof OrchestrationDelegatedWorkId.Type;
+
+export const OrchestrationDelegatedWorkStatus = Schema.Literals([
+  "created",
+  "running",
+  "progress",
+  "completed",
+  "failed",
+  "blocked",
+  "timed_out",
+  "canceled",
+]);
+export type OrchestrationDelegatedWorkStatus = typeof OrchestrationDelegatedWorkStatus.Type;
+
+export const OrchestrationDelegatedWorkBlockingPolicy = Schema.Literals([
+  "required",
+  "optional",
+  "background",
+]);
+export type OrchestrationDelegatedWorkBlockingPolicy =
+  typeof OrchestrationDelegatedWorkBlockingPolicy.Type;
+
+export const OrchestrationDelegatedWorkOrigin = Schema.Literals([
+  "codex-task",
+  "study-buddy",
+  "tool",
+  "unknown",
+]);
+export type OrchestrationDelegatedWorkOrigin = typeof OrchestrationDelegatedWorkOrigin.Type;
+
+export const OrchestrationDelegatedWorkReviewStatus = Schema.Literals([
+  "not_required",
+  "pending",
+  "accepted",
+  "rejected",
+  "superseded",
+]);
+export type OrchestrationDelegatedWorkReviewStatus =
+  typeof OrchestrationDelegatedWorkReviewStatus.Type;
+
+export const OrchestrationDelegatedWork = Schema.Struct({
+  id: OrchestrationDelegatedWorkId,
+  parentTurnId: TurnId,
+  task: TrimmedNonEmptyString,
+  status: OrchestrationDelegatedWorkStatus,
+  required: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  blockingPolicy: OrchestrationDelegatedWorkBlockingPolicy.pipe(
+    Schema.withDecodingDefault(Effect.succeed("required" as const)),
+  ),
+  taskType: Schema.optional(TrimmedNonEmptyString),
+  origin: OrchestrationDelegatedWorkOrigin.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unknown" as const)),
+  ),
+  reviewStatus: OrchestrationDelegatedWorkReviewStatus.pipe(
+    Schema.withDecodingDefault(Effect.succeed("not_required" as const)),
+  ),
+  reviewNote: Schema.optional(Schema.String),
+  reviewedAt: Schema.optional(IsoDateTime),
+  reviewerTurnId: Schema.optional(TurnId),
+  lastProgressHash: Schema.optional(TrimmedNonEmptyString),
+  lastProgressAt: Schema.optional(IsoDateTime),
+  timedOutAt: Schema.optional(IsoDateTime),
+  childThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  childSessionId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  lastProgress: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  result: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  error: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type OrchestrationDelegatedWork = typeof OrchestrationDelegatedWork.Type;
+
+export const OrchestrationDeferredFinalizationState = Schema.Literals([
+  "waiting",
+  "reviewing",
+  "released",
+  "expired",
+]);
+export type OrchestrationDeferredFinalizationState =
+  typeof OrchestrationDeferredFinalizationState.Type;
+
+export const OrchestrationDeferredFinalizationReason = Schema.Literals([
+  "required_delegated_work_active",
+  "pending_delegated_review",
+]);
+export type OrchestrationDeferredFinalizationReason =
+  typeof OrchestrationDeferredFinalizationReason.Type;
+
+export const OrchestrationDeferredFinalization = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  state: OrchestrationDeferredFinalizationState,
+  cachedAssistantCompletion: Schema.optional(Schema.Unknown),
+  cachedTurnCompletion: Schema.optional(Schema.Unknown),
+  draftFinalText: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+  releasedAt: Schema.optional(IsoDateTime),
+  reviewTurnId: Schema.optional(TurnId),
+  reason: OrchestrationDeferredFinalizationReason,
+});
+export type OrchestrationDeferredFinalization = typeof OrchestrationDeferredFinalization.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -350,6 +461,10 @@ export const OrchestrationThread = Schema.Struct({
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  delegatedWork: Schema.Array(OrchestrationDelegatedWork).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  deferredFinalizations: Schema.optional(Schema.Array(OrchestrationDeferredFinalization)),
   activities: Schema.Array(OrchestrationThreadActivity),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
@@ -368,6 +483,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  projectKind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -396,6 +512,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  activeDelegatedWorkCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  activeRequiredDelegatedWorkCount: Schema.optional(NonNegativeInt),
+  pendingDelegatedReviewCount: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -457,6 +576,7 @@ export const ProjectCreateCommand = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  projectKind: Schema.optional(ProjectKind),
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
@@ -468,6 +588,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  projectKind: Schema.optional(ProjectKind),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
@@ -721,6 +842,52 @@ const ThreadProposedPlanUpsertCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadDelegatedWorkUpsertCommand = Schema.Struct({
+  type: Schema.Literal("thread.delegated-work.upsert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  delegatedWork: OrchestrationDelegatedWork,
+  createdAt: IsoDateTime,
+});
+
+const ThreadDeferredFinalizationUpsertCommand = Schema.Struct({
+  type: Schema.Literal("thread.deferred-finalization.upsert"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  deferredFinalization: OrchestrationDeferredFinalization,
+  createdAt: IsoDateTime,
+});
+
+const ThreadDeferredFinalizationReleasedCommand = Schema.Struct({
+  type: Schema.Literal("thread.deferred-finalization.release"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  releasedAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
+const ThreadDelegatedWorkReviewCommand = Schema.Struct({
+  type: Schema.Literal("thread.delegated-work.review"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  delegatedWorkIds: Schema.Array(OrchestrationDelegatedWorkId),
+  reviewStatus: OrchestrationDelegatedWorkReviewStatus,
+  reviewNote: Schema.optional(Schema.String),
+  reviewerTurnId: Schema.optional(TurnId),
+  reviewedAt: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
+const ThreadDelegatedWorkReviewRequestCommand = Schema.Struct({
+  type: Schema.Literal("thread.delegated-work-review.request"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadTurnDiffCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.diff.complete"),
   commandId: CommandId,
@@ -756,6 +923,11 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadProposedPlanUpsertCommand,
+  ThreadDelegatedWorkUpsertCommand,
+  ThreadDeferredFinalizationUpsertCommand,
+  ThreadDeferredFinalizationReleasedCommand,
+  ThreadDelegatedWorkReviewCommand,
+  ThreadDelegatedWorkReviewRequestCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
@@ -789,6 +961,11 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.session-stop-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
+  "thread.delegated-work-upserted",
+  "thread.deferred-finalization-upserted",
+  "thread.deferred-finalization-released",
+  "thread.delegated-work-reviewed",
+  "thread.delegated-work-review-requested",
   "thread.turn-diff-completed",
   "thread.activity-appended",
 ]);
@@ -802,6 +979,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
+  projectKind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
@@ -813,6 +991,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  projectKind: Schema.optional(ProjectKind),
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
@@ -842,6 +1021,9 @@ export const ThreadCreatedPayload = Schema.Struct({
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
   deletedAt: IsoDateTime,
+  projectId: Schema.optional(ProjectId),
+  projectKind: Schema.optional(ProjectKind),
+  projectWorkspaceRoot: Schema.optional(Schema.String),
 });
 
 export const ThreadArchivedPayload = Schema.Struct({
@@ -947,6 +1129,38 @@ export const ThreadSessionSetPayload = Schema.Struct({
 export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
   threadId: ThreadId,
   proposedPlan: OrchestrationProposedPlan,
+});
+
+export const ThreadDelegatedWorkUpsertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  delegatedWork: OrchestrationDelegatedWork,
+});
+
+export const ThreadDeferredFinalizationUpsertedPayload = Schema.Struct({
+  threadId: ThreadId,
+  deferredFinalization: OrchestrationDeferredFinalization,
+});
+
+export const ThreadDeferredFinalizationReleasedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  releasedAt: IsoDateTime,
+});
+
+export const ThreadDelegatedWorkReviewedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  delegatedWorkIds: Schema.Array(OrchestrationDelegatedWorkId),
+  reviewStatus: OrchestrationDelegatedWorkReviewStatus,
+  reviewNote: Schema.optional(Schema.String),
+  reviewerTurnId: Schema.optional(TurnId),
+  reviewedAt: IsoDateTime,
+});
+
+export const ThreadDelegatedWorkReviewRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  createdAt: IsoDateTime,
 });
 
 export const ThreadTurnDiffCompletedPayload = Schema.Struct({
@@ -1086,6 +1300,31 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.proposed-plan-upserted"),
     payload: ThreadProposedPlanUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.delegated-work-upserted"),
+    payload: ThreadDelegatedWorkUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.deferred-finalization-upserted"),
+    payload: ThreadDeferredFinalizationUpsertedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.deferred-finalization-released"),
+    payload: ThreadDeferredFinalizationReleasedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.delegated-work-reviewed"),
+    payload: ThreadDelegatedWorkReviewedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.delegated-work-review-requested"),
+    payload: ThreadDelegatedWorkReviewRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

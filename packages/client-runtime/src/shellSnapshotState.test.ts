@@ -26,6 +26,7 @@ const BASE_SNAPSHOT: OrchestrationShellSnapshot = {
       id: ProjectId.make("project-1"),
       title: "Project",
       workspaceRoot: "/repo",
+      projectKind: "regular",
       repositoryIdentity: null,
       defaultModelSelection: null,
       scripts: [],

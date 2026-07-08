@@ -96,6 +96,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  setViewerSurface: (input) => ipcRenderer.invoke(IpcChannels.SET_VIEWER_SURFACE_CHANNEL, input),
+  destroyViewerSurface: (surfaceId) =>
+    ipcRenderer.invoke(IpcChannels.DESTROY_VIEWER_SURFACE_CHANNEL, surfaceId),
+  onViewerOpenTab: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, url: unknown) => {
+      if (typeof url === "string") listener(url);
+    };
+    ipcRenderer.on(IpcChannels.VIEWER_OPEN_TAB_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.VIEWER_OPEN_TAB_CHANNEL, wrappedListener);
+    };
+  },
   createCloudAuthRequest: () => ipcRenderer.invoke(IpcChannels.CREATE_CLOUD_AUTH_REQUEST_CHANNEL),
   getCloudAuthToken: () => ipcRenderer.invoke(IpcChannels.GET_CLOUD_AUTH_TOKEN_CHANNEL),
   setCloudAuthToken: (token: string) =>

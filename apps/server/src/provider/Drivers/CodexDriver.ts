@@ -45,6 +45,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
+  normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -56,11 +57,56 @@ const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+
+function isCodexStandaloneInstallCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  const standaloneInstallDirectories = [
+    "/.local/bin/",
+    "/programs/openai/codex/bin/",
+    "/packages/standalone/",
+  ];
+  return (
+    standaloneInstallDirectories.some((directory) => normalized.includes(directory)) &&
+    (normalized.endsWith("/codex") ||
+      normalized.endsWith("/codex.exe") ||
+      normalized.endsWith("/codex.cmd") ||
+      normalized.endsWith("/codex.bat") ||
+      normalized.includes("/packages/standalone/"))
+  );
+}
+
+// Standalone Codex installs are upgraded by rerunning the installer, not by
+// invoking `codex update`.
+const CODEX_STANDALONE_INSTALL_UPDATE_COMMAND =
+  process.platform === "win32"
+    ? {
+        executable: "powershell.exe",
+        args: [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
+        ],
+        lockKey: "codex-installer",
+      }
+    : {
+        executable: "sh",
+        args: [
+          "-lc",
+          "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+        ],
+        lockKey: "codex-installer",
+      };
+
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
   homebrewFormula: "codex",
-  nativeUpdate: null,
+  nativeUpdate: {
+    ...CODEX_STANDALONE_INSTALL_UPDATE_COMMAND,
+    isCommandPath: isCodexStandaloneInstallCommandPath,
+  },
 });
 
 /**

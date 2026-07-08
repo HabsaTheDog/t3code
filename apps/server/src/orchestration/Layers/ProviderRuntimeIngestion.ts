@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -12,10 +13,12 @@ import {
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
+  type OrchestrationDelegatedWork,
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  type ServerSettingsError,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -24,13 +27,16 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
+import type { OrchestrationDispatchError } from "../Errors.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -38,6 +44,13 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  increment,
+  orchestrationDeferredFinalizationTotal,
+  orchestrationDelegatedWorkRejectedTotal,
+  orchestrationDelegatedWorkStartedTotal,
+  orchestrationDelegatedWorkTerminalTotal,
+} from "../../observability/Metrics.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
@@ -55,6 +68,18 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
+const ACTIVE_DELEGATED_WORK_STATUSES = new Set<OrchestrationDelegatedWork["status"]>([
+  "created",
+  "running",
+  "progress",
+]);
+const TERMINAL_DELEGATED_WORK_STATUSES = new Set<OrchestrationDelegatedWork["status"]>([
+  "completed",
+  "failed",
+  "blocked",
+  "timed_out",
+  "canceled",
+]);
 
 type TurnStartRequestedDomainEvent = Extract<
   OrchestrationEvent,
@@ -71,12 +96,183 @@ type RuntimeIngestionInput =
       event: TurnStartRequestedDomainEvent;
     };
 
+type ProviderRuntimeIngestionProcessError =
+  | OrchestrationDispatchError
+  | PlatformError.PlatformError
+  | ProjectionRepositoryError
+  | ServerSettingsError;
+
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
   return value === undefined ? undefined : TurnId.make(String(value));
 }
 
 function toApprovalRequestId(value: string | undefined): ApprovalRequestId | undefined {
   return value === undefined ? undefined : ApprovalRequestId.make(value);
+}
+
+function isDelegatedTaskRuntimeEvent(
+  event: ProviderRuntimeEvent,
+): event is Extract<
+  ProviderRuntimeEvent,
+  { type: "task.started" | "task.progress" | "task.completed" }
+> {
+  return (
+    event.type === "task.started" || event.type === "task.progress" || event.type === "task.completed"
+  );
+}
+
+function taskLabelFromRuntimeEvent(
+  event: Extract<ProviderRuntimeEvent, { type: "task.started" | "task.progress" | "task.completed" }>,
+): string {
+  if (event.type === "task.started") {
+    return event.payload.description?.trim() || event.payload.taskType?.trim() || "Task";
+  }
+  if (event.type === "task.progress") {
+    return event.payload.description?.trim() || event.payload.summary?.trim() || "Task";
+  }
+  return event.payload.summary?.trim() || "Task";
+}
+
+function hashProgress(value: string | null): string | undefined {
+  if (value === null || value.trim().length === 0) {
+    return undefined;
+  }
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (Math.imul(31, hash) + value.charCodeAt(index)) | 0;
+  }
+  return `p:${Math.abs(hash)}`;
+}
+
+function classifyDelegatedTask(event: Extract<ProviderRuntimeEvent, { type: "task.started" | "task.progress" | "task.completed" }>): {
+  readonly blockingPolicy: OrchestrationDelegatedWork["blockingPolicy"];
+  readonly origin: OrchestrationDelegatedWork["origin"];
+  readonly taskType?: string;
+} {
+  const rawTaskType =
+    event.type === "task.started" && event.payload.taskType
+      ? event.payload.taskType.trim()
+      : undefined;
+  const text = `${rawTaskType ?? ""} ${taskLabelFromRuntimeEvent(event)}`.toLowerCase();
+  const origin = text.includes("study buddy") || text.includes("moodle") ? "study-buddy" : "codex-task";
+  if (
+    /\b(cleanup|index|telemetry|metric|metrics)\b/.test(text)
+  ) {
+    return { blockingPolicy: "background", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
+  }
+  if (
+    /\b(visual|enrichment|summarization|summary-only|secondary)\b/.test(text)
+  ) {
+    return { blockingPolicy: "optional", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
+  }
+  return { blockingPolicy: "required", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
+}
+
+function delegatedWorkFromRuntimeTaskEvent(input: {
+  readonly event: Extract<
+    ProviderRuntimeEvent,
+    { type: "task.started" | "task.progress" | "task.completed" }
+  >;
+  readonly parentTurnId: TurnId;
+  readonly existing: OrchestrationDelegatedWork | undefined;
+}): OrchestrationDelegatedWork {
+  const { event, existing, parentTurnId } = input;
+  const task = existing?.task ?? taskLabelFromRuntimeEvent(event);
+  const classification = classifyDelegatedTask(event);
+  const blockingPolicy = existing?.blockingPolicy ?? classification.blockingPolicy;
+  const required = existing?.required ?? blockingPolicy === "required";
+  const nextProgress =
+    event.type === "task.started"
+      ? (event.payload.description ?? null)
+      : event.type === "task.progress"
+        ? (event.payload.summary ?? event.payload.description ?? existing?.lastProgress ?? null)
+        : existing?.lastProgress ?? null;
+  const base = {
+    id: String(event.payload.taskId),
+    parentTurnId,
+    task,
+    required,
+    blockingPolicy,
+    ...(existing?.taskType ?? classification.taskType
+      ? { taskType: existing?.taskType ?? classification.taskType }
+      : {}),
+    origin: existing?.origin ?? classification.origin,
+    reviewStatus: existing?.reviewStatus ?? "not_required",
+    ...(existing?.reviewNote !== undefined ? { reviewNote: existing.reviewNote } : {}),
+    ...(existing?.reviewedAt !== undefined ? { reviewedAt: existing.reviewedAt } : {}),
+    ...(existing?.reviewerTurnId !== undefined ? { reviewerTurnId: existing.reviewerTurnId } : {}),
+    ...(nextProgress !== null ? { lastProgressHash: hashProgress(nextProgress) } : {}),
+    ...(nextProgress !== null ? { lastProgressAt: event.createdAt } : {}),
+    ...(existing?.timedOutAt !== undefined ? { timedOutAt: existing.timedOutAt } : {}),
+    childThreadId: existing?.childThreadId ?? null,
+    childSessionId: existing?.childSessionId ?? null,
+    lastProgress: existing?.lastProgress ?? null,
+    result: existing?.result ?? null,
+    error: existing?.error ?? null,
+    createdAt: existing?.createdAt ?? event.createdAt,
+    updatedAt: event.createdAt,
+    completedAt: existing?.completedAt ?? null,
+  } satisfies Omit<OrchestrationDelegatedWork, "status">;
+
+  if (event.type === "task.started") {
+    return {
+      ...base,
+      status: "running",
+      lastProgress: nextProgress,
+      completedAt: null,
+    };
+  }
+
+  if (event.type === "task.progress") {
+    return {
+      ...base,
+      status: "progress",
+      lastProgress: nextProgress,
+      completedAt: null,
+    };
+  }
+
+  const status =
+    event.payload.status === "failed"
+      ? "failed"
+      : event.payload.status === "stopped"
+        ? "canceled"
+        : "completed";
+  return {
+    ...base,
+    status,
+    reviewStatus: required ? "pending" : "not_required",
+    result: status === "completed" ? (event.payload.summary ?? base.result) : base.result,
+    error: status !== "completed" ? (event.payload.summary ?? base.error) : base.error,
+    completedAt: event.createdAt,
+  };
+}
+
+function activeRequiredDelegatedWorkForTurn(
+  delegatedWork: ReadonlyArray<OrchestrationDelegatedWork>,
+  turnId: TurnId,
+): ReadonlyArray<OrchestrationDelegatedWork> {
+  return delegatedWork.filter(
+    (entry) =>
+      entry.required &&
+      entry.blockingPolicy === "required" &&
+      String(entry.parentTurnId) === String(turnId) &&
+      ACTIVE_DELEGATED_WORK_STATUSES.has(entry.status),
+  );
+}
+
+function pendingRequiredDelegatedReviewForTurn(
+  delegatedWork: ReadonlyArray<OrchestrationDelegatedWork>,
+  turnId: TurnId,
+): ReadonlyArray<OrchestrationDelegatedWork> {
+  return delegatedWork.filter(
+    (entry) =>
+      entry.required &&
+      entry.blockingPolicy === "required" &&
+      String(entry.parentTurnId) === String(turnId) &&
+      TERMINAL_DELEGATED_WORK_STATUSES.has(entry.status) &&
+      entry.reviewStatus === "pending",
+  );
 }
 
 function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
@@ -445,6 +641,9 @@ function runtimeEventToActivities(
     }
 
     case "task.progress": {
+      const detail = truncateDetail(event.payload.summary ?? event.payload.description);
+      const turnId = toTurnId(event.turnId) ?? null;
+      const progressHash = hashProgress(detail) ?? "empty";
       return [
         {
           id: event.eventId,
@@ -454,12 +653,13 @@ function runtimeEventToActivities(
           summary: "Reasoning update",
           payload: {
             taskId: event.payload.taskId,
-            detail: truncateDetail(event.payload.summary ?? event.payload.description),
+            detail,
+            progressHash,
             ...(event.payload.summary ? { summary: truncateDetail(event.payload.summary) } : {}),
             ...(event.payload.lastToolName ? { lastToolName: event.payload.lastToolName } : {}),
             ...(event.payload.usage !== undefined ? { usage: event.payload.usage } : {}),
           },
-          turnId: toTurnId(event.turnId) ?? null,
+          turnId,
           ...maybeSequence,
         },
       ];
@@ -616,6 +816,8 @@ const make = Effect.gen(function* () {
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
     );
+  const serverCommandId = (tag: string) =>
+    crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -806,6 +1008,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const peekBufferedAssistantText = (messageId: MessageId) =>
+    Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
+      Effect.map((existingText) => Option.getOrElse(existingText, () => "")),
+    );
+
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
@@ -835,6 +1042,42 @@ const make = Effect.gen(function* () {
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
+
+  const appendDelegatedWorkWaitingActivity = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly activeDelegatedWork: ReadonlyArray<OrchestrationDelegatedWork>;
+    readonly stage: "assistant-completion" | "turn-completion";
+  }) =>
+    providerCommandId(input.event, `delegated-work-waiting-${input.stage}`).pipe(
+      Effect.flatMap((commandId) =>
+        orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: EventId.make(`${input.event.eventId}:delegated-work-waiting:${input.stage}`),
+          createdAt: input.event.createdAt,
+          tone: "info",
+          kind: "delegated-work.waiting",
+          summary: "Waiting for delegated work",
+          payload: {
+            turnId: input.turnId,
+            stage: input.stage,
+            activeDelegatedWork: input.activeDelegatedWork.map((entry) => ({
+              id: entry.id,
+              task: entry.task,
+              status: entry.status,
+              lastProgress: entry.lastProgress,
+            })),
+          },
+          turnId: input.turnId,
+          },
+          createdAt: input.event.createdAt,
+        }),
+      ),
+    );
 
   const flushBufferedAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1181,8 +1424,129 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
+  const releaseDeferredFinalizationForTurn = (
+    threadId: ThreadId,
+    turnId: TurnId,
+  ): Effect.Effect<boolean, ProviderRuntimeIngestionProcessError, never> =>
     Effect.gen(function* () {
+      const detailedThread = yield* resolveThreadDetail(threadId);
+      const activeDelegatedWork = activeRequiredDelegatedWorkForTurn(
+        detailedThread?.delegatedWork ?? [],
+        turnId,
+      );
+      if (activeDelegatedWork.length > 0) {
+        return false;
+      }
+
+      const deferred = (detailedThread?.deferredFinalizations ?? []).find(
+        (entry) =>
+          String(entry.turnId) === String(turnId) &&
+          (entry.state === "waiting" || entry.state === "reviewing"),
+      );
+      if (!deferred) {
+        return false;
+      }
+
+      const pendingReviews = pendingRequiredDelegatedReviewForTurn(
+        detailedThread?.delegatedWork ?? [],
+        turnId,
+      );
+      if (pendingReviews.length > 0) {
+        if (deferred.state !== "reviewing") {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.deferred-finalization.upsert",
+            commandId: yield* serverCommandId("deferred-finalization-reviewing"),
+            threadId,
+            deferredFinalization: {
+              ...deferred,
+              state: "reviewing",
+              reason: "pending_delegated_review",
+              updatedAt: deferred.updatedAt,
+            },
+            createdAt: deferred.updatedAt,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.delegated-work-review.request",
+            commandId: yield* serverCommandId("delegated-work-review-request"),
+            threadId,
+            turnId,
+            createdAt: deferred.updatedAt,
+          });
+        }
+        return true;
+      }
+
+      if (deferred.cachedAssistantCompletion !== undefined) {
+        yield* processRuntimeEvent(deferred.cachedAssistantCompletion as ProviderRuntimeEvent);
+      }
+      if (deferred.cachedTurnCompletion !== undefined) {
+        yield* processRuntimeEvent(deferred.cachedTurnCompletion as ProviderRuntimeEvent);
+      }
+      yield* orchestrationEngine.dispatch({
+        type: "thread.deferred-finalization.release",
+        commandId: yield* serverCommandId("deferred-finalization-release"),
+        threadId,
+        turnId,
+        releasedAt: deferred.updatedAt,
+        createdAt: deferred.updatedAt,
+      });
+      return true;
+    });
+
+  const deferCompletionForDelegatedWork = (input: {
+    readonly event: ProviderRuntimeEvent;
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+    readonly activeDelegatedWork: ReadonlyArray<OrchestrationDelegatedWork>;
+    readonly stage: "assistant-completion" | "turn-completion";
+  }): Effect.Effect<void, ProviderRuntimeIngestionProcessError, never> =>
+    Effect.gen(function* () {
+      const detailedThread = yield* resolveThreadDetail(input.threadId);
+      const existing = (detailedThread?.deferredFinalizations ?? []).find(
+        (entry) => String(entry.turnId) === String(input.turnId) && entry.state !== "released",
+      );
+      const draftFinalText =
+        input.stage === "assistant-completion" && "itemId" in input.event && input.event.itemId
+          ? yield* peekBufferedAssistantText(MessageId.make(`assistant:${input.event.itemId}`))
+          : existing?.draftFinalText;
+      yield* orchestrationEngine.dispatch({
+        type: "thread.deferred-finalization.upsert",
+        commandId: yield* providerCommandId(input.event, `deferred-finalization-${input.stage}`),
+        threadId: input.threadId,
+        deferredFinalization: {
+          threadId: input.threadId,
+          turnId: input.turnId,
+          state: existing?.state ?? "waiting",
+          ...(input.stage === "assistant-completion"
+            ? { cachedAssistantCompletion: input.event }
+            : existing?.cachedAssistantCompletion !== undefined
+              ? { cachedAssistantCompletion: existing.cachedAssistantCompletion }
+              : {}),
+          ...(input.stage === "turn-completion"
+            ? { cachedTurnCompletion: input.event }
+            : existing?.cachedTurnCompletion !== undefined
+              ? { cachedTurnCompletion: existing.cachedTurnCompletion }
+              : {}),
+          ...(draftFinalText !== undefined && draftFinalText.length > 0 ? { draftFinalText } : {}),
+          createdAt: existing?.createdAt ?? input.event.createdAt,
+          updatedAt: input.event.createdAt,
+          ...(existing?.releasedAt !== undefined ? { releasedAt: existing.releasedAt } : {}),
+          ...(existing?.reviewTurnId !== undefined ? { reviewTurnId: existing.reviewTurnId } : {}),
+          reason: "required_delegated_work_active",
+        },
+        createdAt: input.event.createdAt,
+      });
+      yield* increment(orchestrationDeferredFinalizationTotal, {
+        outcome: "deferred",
+        stage: input.stage,
+      });
+      yield* appendDelegatedWorkWaitingActivity(input);
+    });
+
+  function processRuntimeEvent(
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void, ProviderRuntimeIngestionProcessError, never> {
+    return Effect.gen(function* () {
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 
@@ -1234,6 +1598,31 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
           : null;
+
+      if (
+        event.type === "turn.completed" &&
+        shouldApplyThreadLifecycle &&
+        normalizeRuntimeTurnState(event.payload.state) === "completed"
+      ) {
+        const completionTurnId = eventTurnId ?? activeTurnId ?? undefined;
+        if (completionTurnId !== undefined) {
+          const detailedThread = yield* getLoadedThreadDetail();
+          const activeDelegatedWork = activeRequiredDelegatedWorkForTurn(
+            detailedThread?.delegatedWork ?? [],
+            completionTurnId,
+          );
+          if (activeDelegatedWork.length > 0) {
+            yield* deferCompletionForDelegatedWork({
+              event,
+              threadId: thread.id,
+              turnId: completionTurnId,
+              activeDelegatedWork,
+              stage: "turn-completion",
+            });
+            return;
+          }
+        }
+      }
 
       if (
         event.type === "session.started" ||
@@ -1437,6 +1826,27 @@ const make = Effect.gen(function* () {
           : undefined;
 
       if (assistantCompletion) {
+        const completionTurnId = toTurnId(event.turnId);
+        if (completionTurnId !== undefined) {
+          const detailedThread = yield* getLoadedThreadDetail();
+          const activeDelegatedWork = activeRequiredDelegatedWorkForTurn(
+            detailedThread?.delegatedWork ?? [],
+            completionTurnId,
+          );
+          if (activeDelegatedWork.length > 0) {
+            yield* deferCompletionForDelegatedWork({
+              event,
+              threadId: thread.id,
+              turnId: completionTurnId,
+              activeDelegatedWork,
+              stage: "assistant-completion",
+            });
+            return;
+          }
+        }
+      }
+
+      if (assistantCompletion) {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const turnId = toTurnId(event.turnId);
@@ -1534,6 +1944,67 @@ const make = Effect.gen(function* () {
             turnId,
             updatedAt: now,
           });
+
+          const reviewDeferredFinalization = (detailedThread?.deferredFinalizations ?? []).find(
+            (entry) =>
+              entry.state === "reviewing" &&
+              entry.reviewTurnId !== undefined &&
+              String(entry.reviewTurnId) === String(turnId),
+          );
+          if (reviewDeferredFinalization) {
+            const pendingReviews = pendingRequiredDelegatedReviewForTurn(
+              detailedThread?.delegatedWork ?? [],
+              reviewDeferredFinalization.turnId,
+            );
+            if (pendingReviews.length > 0) {
+              const acceptedReviews = pendingReviews.filter((entry) => entry.status === "completed");
+              const rejectedReviews = pendingReviews.filter((entry) => entry.status !== "completed");
+              if (acceptedReviews.length > 0) {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.delegated-work.review",
+                  commandId: yield* providerCommandId(event, "delegated-work-review-accepted"),
+                  threadId: thread.id,
+                  turnId: reviewDeferredFinalization.turnId,
+                  delegatedWorkIds: acceptedReviews.map((entry) => entry.id),
+                  reviewStatus: "accepted",
+                  reviewNote:
+                    "Parent review continuation completed; completed delegated output was incorporated or verified in the final answer.",
+                  reviewerTurnId: turnId,
+                  reviewedAt: now,
+                  createdAt: now,
+                });
+              }
+              if (rejectedReviews.length > 0) {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.delegated-work.review",
+                  commandId: yield* providerCommandId(event, "delegated-work-review-rejected"),
+                  threadId: thread.id,
+                  turnId: reviewDeferredFinalization.turnId,
+                  delegatedWorkIds: rejectedReviews.map((entry) => entry.id),
+                  reviewStatus: "rejected",
+                  reviewNote:
+                    "Parent review continuation completed; failed, canceled, blocked, or timed-out delegated work was not treated as valid output.",
+                  reviewerTurnId: turnId,
+                  reviewedAt: now,
+                  createdAt: now,
+                });
+                yield* increment(orchestrationDelegatedWorkRejectedTotal, {
+                  count: String(rejectedReviews.length),
+                });
+              }
+              yield* increment(orchestrationDeferredFinalizationTotal, {
+                outcome: "reviewed",
+              });
+            }
+            yield* orchestrationEngine.dispatch({
+              type: "thread.deferred-finalization.release",
+              commandId: yield* providerCommandId(event, "delegated-work-review-release"),
+              threadId: thread.id,
+              turnId: reviewDeferredFinalization.turnId,
+              releasedAt: now,
+              createdAt: now,
+            });
+          }
         }
       }
 
@@ -1616,6 +2087,42 @@ const make = Effect.gen(function* () {
         }
       }
 
+      if (isDelegatedTaskRuntimeEvent(event)) {
+        const parentTurnId = eventTurnId ?? activeTurnId ?? undefined;
+        if (parentTurnId !== undefined) {
+          const detailedThread = yield* getLoadedThreadDetail();
+          const existingDelegatedWork = detailedThread?.delegatedWork.find(
+            (entry) => entry.id === String(event.payload.taskId),
+          );
+          const nextDelegatedWork = delegatedWorkFromRuntimeTaskEvent({
+            event,
+            parentTurnId,
+            existing: existingDelegatedWork,
+          });
+          yield* orchestrationEngine.dispatch({
+            type: "thread.delegated-work.upsert",
+            commandId: yield* providerCommandId(event, "thread-delegated-work-upsert"),
+            threadId: thread.id,
+            delegatedWork: nextDelegatedWork,
+            createdAt: now,
+          });
+          if (event.type === "task.started") {
+            yield* increment(orchestrationDelegatedWorkStartedTotal, {
+              required: String(nextDelegatedWork.required),
+              blockingPolicy: nextDelegatedWork.blockingPolicy,
+            });
+          }
+          if (event.type === "task.completed") {
+            yield* increment(orchestrationDelegatedWorkTerminalTotal, {
+              status: nextDelegatedWork.status,
+              required: String(nextDelegatedWork.required),
+              reviewStatus: nextDelegatedWork.reviewStatus,
+            });
+            yield* releaseDeferredFinalizationForTurn(thread.id, parentTurnId);
+          }
+        }
+      }
+
       const activities = runtimeEventToActivities(event);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
@@ -1631,6 +2138,7 @@ const make = Effect.gen(function* () {
         ),
       ).pipe(Effect.asVoid);
     });
+  }
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 

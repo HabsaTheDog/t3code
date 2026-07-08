@@ -5,6 +5,8 @@ import {
   MessageId,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  OrchestrationDeferredFinalization,
+  OrchestrationDelegatedWork,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
@@ -77,6 +79,10 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    delegatedWork: Schema.fromJsonString(Schema.Array(OrchestrationDelegatedWork)),
+    deferredFinalizations: Schema.fromJsonString(
+      Schema.Array(OrchestrationDeferredFinalization),
+    ),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -180,6 +186,34 @@ function computeSnapshotSequence(
   return Number.isFinite(minSequence) ? minSequence : 0;
 }
 
+function countActiveDelegatedWork(
+  delegatedWork: ReadonlyArray<OrchestrationDelegatedWork>,
+): number {
+  return delegatedWork.filter(
+    (entry) =>
+      entry.status === "created" ||
+      entry.status === "running" ||
+      entry.status === "progress",
+  ).length;
+}
+
+function countActiveRequiredDelegatedWork(
+  delegatedWork: ReadonlyArray<OrchestrationDelegatedWork>,
+): number {
+  return delegatedWork.filter(
+    (entry) =>
+      entry.required &&
+      entry.blockingPolicy === "required" &&
+      (entry.status === "created" || entry.status === "running" || entry.status === "progress"),
+  ).length;
+}
+
+function countPendingDelegatedReviews(
+  delegatedWork: ReadonlyArray<OrchestrationDelegatedWork>,
+): number {
+  return delegatedWork.filter((entry) => entry.reviewStatus === "pending").length;
+}
+
 function mapLatestTurn(
   row: Schema.Schema.Type<typeof ProjectionLatestTurnDbRowSchema>,
 ): OrchestrationLatestTurn {
@@ -231,6 +265,7 @@ function mapProjectShellRow(
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    projectKind: row.projectKind,
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
@@ -305,6 +340,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          project_kind AS "projectKind",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -337,6 +373,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          delegated_work_json AS "delegatedWork",
+          deferred_finalization_json AS "deferredFinalizations",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -365,6 +403,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          delegated_work_json AS "delegatedWork",
+          deferred_finalization_json AS "deferredFinalizations",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -395,6 +435,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          delegated_work_json AS "delegatedWork",
+          deferred_finalization_json AS "deferredFinalizations",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -666,6 +708,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          project_kind AS "projectKind",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -688,6 +731,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          project_kind AS "projectKind",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -757,6 +801,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          delegated_work_json AS "delegatedWork",
+          deferred_finalization_json AS "deferredFinalizations",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1164,6 +1210,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 id: row.projectId,
                 title: row.title,
                 workspaceRoot: row.workspaceRoot,
+                projectKind: row.projectKind,
                 repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 scripts: row.scripts,
@@ -1188,6 +1235,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+                delegatedWork: row.delegatedWork,
+                deferredFinalizations: row.deferredFinalizations,
                 activities: activitiesByThread.get(row.threadId) ?? [],
                 checkpoints: checkpointsByThread.get(row.threadId) ?? [],
                 session: sessionsByThread.get(row.threadId) ?? null,
@@ -1287,6 +1336,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   id: row.projectId,
                   title: row.title,
                   workspaceRoot: row.workspaceRoot,
+                  projectKind: row.projectKind,
                   defaultModelSelection: row.defaultModelSelection,
                   scripts: row.scripts,
                   createdAt: row.createdAt,
@@ -1386,6 +1436,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+                  delegatedWork: row.delegatedWork,
+                  deferredFinalizations: row.deferredFinalizations,
                   activities: [],
                   checkpoints: [],
                   session: sessionByThread.get(row.threadId) ?? null,
@@ -1517,6 +1569,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                       hasPendingApprovals: row.pendingApprovalCount > 0,
                       hasPendingUserInput: row.pendingUserInputCount > 0,
                       hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      activeDelegatedWorkCount: countActiveDelegatedWork(row.delegatedWork),
+                      activeRequiredDelegatedWorkCount: countActiveRequiredDelegatedWork(
+                        row.delegatedWork,
+                      ),
+                      pendingDelegatedReviewCount: countPendingDelegatedReviews(row.delegatedWork),
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -1651,6 +1708,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  activeDelegatedWorkCount: countActiveDelegatedWork(row.delegatedWork),
+                  activeRequiredDelegatedWorkCount: countActiveRequiredDelegatedWork(
+                    row.delegatedWork,
+                  ),
+                  pendingDelegatedReviewCount: countPendingDelegatedReviews(row.delegatedWork),
                 }),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
@@ -1722,6 +1784,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     id: option.value.projectId,
                     title: option.value.title,
                     workspaceRoot: option.value.workspaceRoot,
+                    projectKind: option.value.projectKind,
                     repositoryIdentity,
                     defaultModelSelection: option.value.defaultModelSelection,
                     scripts: option.value.scripts,
@@ -1891,6 +1954,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
+        activeDelegatedWorkCount: countActiveDelegatedWork(threadRow.value.delegatedWork),
+        activeRequiredDelegatedWorkCount: countActiveRequiredDelegatedWork(
+          threadRow.value.delegatedWork,
+        ),
+        pendingDelegatedReviewCount: countPendingDelegatedReviews(threadRow.value.delegatedWork),
       } satisfies OrchestrationThreadShell);
     });
 
@@ -1997,6 +2065,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           return message;
         }),
         proposedPlans: proposedPlanRows.map(mapProposedPlanRow),
+        delegatedWork: threadRow.value.delegatedWork,
+        deferredFinalizations: threadRow.value.deferredFinalizations,
         activities: activityRows.map((row) => {
           const activity = {
             id: row.activityId,

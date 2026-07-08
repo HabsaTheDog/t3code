@@ -976,23 +976,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
-  if (!cursorSettings.enabled) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: "Cursor is disabled in T3 Code settings.",
-      },
-    });
-  }
-
-  // Single `agent about` probe: returns version + auth status in one call.
+  // Probe even while disabled so setup can accurately offer Install versus
+  // Authenticate without enabling Cursor as the selected runtime provider.
   const aboutProbe = yield* runCursorAboutCommand(cursorSettings, environment).pipe(
     Effect.timeoutOption(ABOUT_TIMEOUT_MS),
     Effect.result,

@@ -120,6 +120,18 @@ function persistClientSettings(settings: ClientSettings): void {
     });
 }
 
+export async function persistClientSettingsDurably(
+  patch: ClientSettingsPatch,
+): Promise<ClientSettings> {
+  const next = {
+    ...getClientSettingsSnapshot(),
+    ...patch,
+  };
+  await ensureLocalApi().persistence.setClientSettings(next);
+  replaceClientSettingsSnapshot(next);
+  return next;
+}
+
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
@@ -217,8 +229,11 @@ export function useUpdateSettings() {
     updateSettings(DEFAULT_UNIFIED_SETTINGS);
   }, [updateSettings]);
 
+  const updateClientSettingsDurably = useCallback(persistClientSettingsDurably, []);
+
   return {
     updateSettings,
+    updateClientSettingsDurably,
     resetSettings,
   };
 }

@@ -192,6 +192,7 @@ const makeDefaultOrchestrationReadModel = () => {
         session: null,
         activities: [],
         proposedPlans: [],
+        delegatedWork: [],
         checkpoints: [],
         deletedAt: null,
       },
@@ -221,6 +222,7 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    activeDelegatedWorkCount: 0,
     ...overrides,
   };
 };
@@ -367,6 +369,7 @@ const buildAppUnderTest = (options?: {
 }) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-router-test-" });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
     const devUrl = options?.config?.devUrl;
@@ -386,6 +389,7 @@ const buildAppUnderTest = (options?: {
       port: 0,
       host: "127.0.0.1",
       cwd: process.cwd(),
+      quickChatWorkspaceRoot: path.join(baseDir, "quick-chats"),
       baseDir,
       ...derivedPaths,
       staticDir: undefined,
@@ -5424,6 +5428,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             session: null,
             activities: [],
             proposedPlans: [],
+            delegatedWork: [],
             checkpoints: [],
             deletedAt: null,
           },

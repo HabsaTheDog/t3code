@@ -52,6 +52,7 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import { DraftTextarea } from "../ui/draft-textarea";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -79,6 +80,7 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useServerObservability, useServerProviders } from "../../rpc/serverState";
+import { requestSetupRerun } from "../../setup/setupCoordinator";
 
 const THEME_OPTIONS = [
   {
@@ -410,6 +412,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.personalityPrompt !== DEFAULT_UNIFIED_SETTINGS.personalityPrompt
+        ? ["Personality"]
+        : []),
       ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
       Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
         ? ["Automatic Git fetch interval"]
@@ -439,6 +444,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
+      settings.personalityPrompt,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       theme,
@@ -463,6 +469,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      personalityPrompt: DEFAULT_UNIFIED_SETTINGS.personalityPrompt,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -519,6 +526,15 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
+        <SettingsRow
+          title="Setup assistant"
+          description="Run the guided privacy, provider, and Study Buddy setup again without erasing existing configuration."
+          control={
+            <Button size="sm" variant="outline" onClick={requestSetupRerun}>
+              Run setup again
+            </Button>
+          }
+        />
         <SettingsRow
           title="Theme"
           description="Choose how T3 Code looks across the app."
@@ -891,6 +907,37 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
+
+        <SettingsRow
+          title="Personality"
+          description="Add persistent instructions for how agents should communicate and behave. Plain text and Markdown are supported."
+          resetAction={
+            settings.personalityPrompt !== DEFAULT_UNIFIED_SETTINGS.personalityPrompt ? (
+              <SettingResetButton
+                label="personality"
+                onClick={() =>
+                  updateSettings({
+                    personalityPrompt: DEFAULT_UNIFIED_SETTINGS.personalityPrompt,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="pt-3 pb-4">
+            <DraftTextarea
+              value={settings.personalityPrompt}
+              onCommit={(personalityPrompt) => updateSettings({ personalityPrompt })}
+              placeholder={"Example: Be direct and strict about technical quality. Call me Alex."}
+              aria-label="Agent personality instructions"
+              className="min-h-36 resize-y font-mono text-xs leading-relaxed"
+              spellCheck
+            />
+            <p className="mt-2 text-[11px] text-muted-foreground/70">
+              Saved when you leave the field. Applied when a new agent session starts.
+            </p>
+          </div>
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="About">

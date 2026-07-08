@@ -41,6 +41,18 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 
+  it("decodes an absolute PDF path normalized by the Markdown renderer", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/home/student/Study%20Buddy/output/exam%20guide/document.pdf",
+        "/home/student/Study Buddy",
+      ),
+    ).toMatchObject({
+      filePath: "/home/student/Study Buddy/output/exam guide/document.pdf",
+      basename: "document.pdf",
+    });
+  });
+
   it("resolves relative file paths against cwd", () => {
     expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
       "/Users/julius/project/src/processRunner.ts:71",

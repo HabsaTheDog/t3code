@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  type ClientSettings,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -12,6 +16,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
+  ...DEFAULT_CLIENT_SETTINGS,
   autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
@@ -104,6 +109,40 @@ describe("DesktopClientSettings", () => {
         );
       }),
     ),
+  );
+
+  it.effect("preserves privacy and onboarding settings across an Electron restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-client-settings-restart-test-",
+      });
+      const privacySettings: ClientSettings = {
+        ...clientSettings,
+        installationId: "00000000-0000-4000-8000-000000000001",
+        analyticsConsent: "accepted",
+        conversationConsent: "rejected",
+        consentVersion: 1,
+        consentUpdatedAt: "2026-06-29T08:00:00.000Z",
+        analyticsEnabledAt: "2026-06-29T08:00:00.000Z",
+        conversationEnabledAt: null,
+        onboardingVersion: 1,
+        onboardingStatus: "in-progress",
+        onboardingCurrentStep: "provider",
+      };
+
+      yield* Effect.gen(function* () {
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* settings.set(privacySettings);
+      }).pipe(Effect.provide(makeLayer(baseDir)));
+
+      const afterRestart = yield* Effect.gen(function* () {
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        return yield* settings.get;
+      }).pipe(Effect.provide(makeLayer(baseDir)));
+
+      assert.deepEqual(afterRestart, Option.some(privacySettings));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("loads lenient direct client settings documents", () =>

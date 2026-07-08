@@ -63,6 +63,10 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return;
       const { thread, threadRef } = resolved;
+      const threadProject = selectProjectByRef(
+        useStore.getState(),
+        scopeProjectRef(thread.environmentId, thread.projectId),
+      );
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
         throw new Error("Cannot archive a running thread.");
       }
@@ -78,13 +82,17 @@ export function useThreadActions() {
       });
 
       if (shouldNavigateToDraft) {
-        await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
+        if (threadProject?.projectKind === "quick-chat") {
+          await router.navigate({ to: "/", replace: true });
+        } else {
+          await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
+        }
       }
 
       await archiveCommand;
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     },
-    [getCurrentRouteThreadRef, resolveThreadTarget],
+    [getCurrentRouteThreadRef, resolveThreadTarget, router],
   );
 
   const unarchiveThread = useCallback(async (target: ScopedThreadRef) => {

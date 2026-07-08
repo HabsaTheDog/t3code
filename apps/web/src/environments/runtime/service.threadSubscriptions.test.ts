@@ -110,6 +110,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     },
     filesystem: {
       browse: vi.fn(),
+      createPreviewTicket: vi.fn(),
     },
     sourceControl: {
       lookupRepository: vi.fn(),
@@ -143,6 +144,12 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       refreshProviders: vi.fn(),
       discoverSourceControl: vi.fn(),
       updateProvider: vi.fn(),
+      getProviderSetupCapabilities: vi.fn(),
+      startProviderSetup: vi.fn(),
+      cancelProviderSetup: vi.fn(),
+      writeProviderSetupInput: vi.fn(),
+      redactConversationTurn: vi.fn(),
+      subscribeProviderSetupJob: vi.fn(() => () => undefined),
       upsertKeybinding: vi.fn(),
       removeKeybinding: vi.fn(),
       getSettings: vi.fn(),
@@ -154,6 +161,9 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       getProcessDiagnostics: vi.fn(),
       getProcessResourceHistory: vi.fn(),
       signalProcess: vi.fn(),
+      getStudyBuddyConfiguration: vi.fn(),
+      updateStudyBuddyConfiguration: vi.fn(),
+      testStudyBuddyConnection: vi.fn(),
     },
   };
   return {

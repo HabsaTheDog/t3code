@@ -1,12 +1,15 @@
 import type {
   EnvironmentId,
   ModelSelection,
+  OrchestrationDeferredFinalization,
+  OrchestrationDelegatedWork,
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
+  ProjectKind,
   ThreadId,
   ProjectId,
   TurnId,
@@ -86,6 +89,7 @@ export interface Project {
   environmentId: EnvironmentId;
   name: string;
   cwd: string;
+  projectKind?: ProjectKind;
   repositoryIdentity?: RepositoryIdentity | null;
   defaultModelSelection: ModelSelection | null;
   createdAt?: string | undefined;
@@ -115,6 +119,8 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  delegatedWork: OrchestrationDelegatedWork[];
+  deferredFinalizations: OrchestrationDeferredFinalization[];
 }
 
 export interface ThreadShell {
@@ -156,6 +162,9 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  activeDelegatedWorkCount: number;
+  activeRequiredDelegatedWorkCount: number;
+  pendingDelegatedReviewCount: number;
 }
 
 export interface ThreadSession {

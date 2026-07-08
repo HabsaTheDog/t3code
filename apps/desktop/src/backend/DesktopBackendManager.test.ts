@@ -280,6 +280,112 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("retries transport readiness failures before reporting the backend ready", () =>
+    Effect.gen(function* () {
+      const requestUrls: Array<string> = [];
+      let readyCount = 0;
+      const firstRequest = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const exited = yield* Queue.unbounded<void>();
+
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              exitCode: Deferred.await(ready).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+
+      const managerLayer = makeManagerLayer({
+        spawnerLayer,
+        httpClientLayer: httpClientLayer((request) =>
+          Effect.gen(function* () {
+            requestUrls.push(request.url);
+            yield* Deferred.succeed(firstRequest, void 0);
+            if (requestUrls.length === 1) {
+              yield* Effect.fail(new Error("connect ECONNREFUSED 127.0.0.1:3773"));
+            }
+            return responseForRequest(request, 200);
+          }),
+        ),
+        desktopWindow: {
+          handleBackendReady: Effect.sync(() => {
+            readyCount += 1;
+          }).pipe(Effect.andThen(Deferred.succeed(ready, void 0))),
+        },
+        backendOutputLog: {
+          writeSessionBoundary: ({ phase }) =>
+            phase === "END" ? Queue.offer(exited, void 0).pipe(Effect.asVoid) : Effect.void,
+        },
+      });
+
+      yield* Effect.gen(function* () {
+        const manager = yield* DesktopBackendManager.DesktopBackendManager;
+        yield* manager.start;
+        yield* Deferred.await(firstRequest);
+
+        assert.equal(readyCount, 0);
+        assert.deepEqual(requestUrls, ["http://127.0.0.1:3773/.well-known/t3/environment"]);
+
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Queue.take(exited);
+
+        assert.equal(readyCount, 1);
+        assert.deepEqual(requestUrls, [
+          "http://127.0.0.1:3773/.well-known/t3/environment",
+          "http://127.0.0.1:3773/.well-known/t3/environment",
+        ]);
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managerLayer)));
+    }),
+  );
+
+  it.effect("restarts when backend readiness never succeeds", () =>
+    Effect.gen(function* () {
+      const starts = yield* Queue.unbounded<number>();
+      let startCount = 0;
+
+      const closed = yield* Deferred.make<void>();
+
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            startCount += 1;
+            yield* Queue.offer(starts, startCount);
+            const scope = yield* Scope.Scope;
+            const close = Deferred.succeed(closed, void 0).pipe(Effect.asVoid);
+            yield* Scope.addFinalizer(scope, close);
+            return makeProcess({
+              exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              kill: () => close,
+            });
+          }),
+        ),
+      );
+
+      const managerLayer = makeManagerLayer({
+        spawnerLayer,
+        httpClientLayer: httpClientLayer(() => Effect.never),
+      });
+
+      yield* Effect.gen(function* () {
+        const manager = yield* DesktopBackendManager.DesktopBackendManager;
+        yield* manager.start;
+
+        assert.equal(yield* Queue.take(starts), 1);
+
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* TestClock.adjust(Duration.millis(500));
+
+        assert.equal(yield* Queue.take(starts), 2);
+        yield* manager.stop();
+      }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managerLayer)));
+    }),
+  );
+
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
     Effect.gen(function* () {
       let startCount = 0;

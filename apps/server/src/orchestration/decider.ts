@@ -124,6 +124,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           title: command.title,
           workspaceRoot: command.workspaceRoot,
+          projectKind: command.projectKind ?? "regular",
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
           createdAt: command.createdAt,
@@ -151,6 +152,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
+          ...(command.projectKind !== undefined ? { projectKind: command.projectKind } : {}),
           ...(command.defaultModelSelection !== undefined
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
@@ -246,10 +248,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
+      });
+      const project = yield* requireProject({
+        readModel,
+        command,
+        projectId: thread.projectId,
       });
       const occurredAt = yield* nowIso;
       return {
@@ -263,6 +270,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           deletedAt: occurredAt,
+          projectId: project.id,
+          projectKind: project.projectKind ?? "regular",
+          projectWorkspaceRoot: project.workspaceRoot,
         },
       };
     }
@@ -671,6 +681,118 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           proposedPlan: command.proposedPlan,
+        },
+      };
+    }
+
+    case "thread.delegated-work.upsert": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.delegated-work-upserted",
+        payload: {
+          threadId: command.threadId,
+          delegatedWork: command.delegatedWork,
+        },
+      };
+    }
+
+    case "thread.deferred-finalization.upsert": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.deferred-finalization-upserted",
+        payload: {
+          threadId: command.threadId,
+          deferredFinalization: command.deferredFinalization,
+        },
+      };
+    }
+
+    case "thread.deferred-finalization.release": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.deferred-finalization-released",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          releasedAt: command.releasedAt,
+        },
+      };
+    }
+
+    case "thread.delegated-work.review": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.delegated-work-reviewed",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          delegatedWorkIds: command.delegatedWorkIds,
+          reviewStatus: command.reviewStatus,
+          ...(command.reviewNote !== undefined ? { reviewNote: command.reviewNote } : {}),
+          ...(command.reviewerTurnId !== undefined ? { reviewerTurnId: command.reviewerTurnId } : {}),
+          reviewedAt: command.reviewedAt,
+        },
+      };
+    }
+
+    case "thread.delegated-work-review.request": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.delegated-work-review-requested",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          createdAt: command.createdAt,
         },
       };
     }

@@ -22,8 +22,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("switches desktop packaging product names to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
+  it("keeps Study Buddy branding for stable builds and switches to nightly for nightly builds", () => {
+    assert.equal(resolveDesktopProductName("0.0.17"), "Study Buddy T3 Code");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
   });
 

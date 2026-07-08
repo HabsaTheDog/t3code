@@ -166,7 +166,8 @@ export function SshPasswordPromptDialog() {
         </DialogHeader>
         <DialogPanel className="space-y-3" scrollFade={false}>
           <form
-            className="space-y-3"
+            className="ph-no-capture space-y-3"
+            data-ph-no-capture
             id={formId}
             onSubmit={(event) => {
               event.preventDefault();

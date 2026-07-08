@@ -7,6 +7,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
   OrchestrationCommand,
+  OrchestrationDelegatedWork,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
@@ -15,6 +16,7 @@ import {
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
+  ThreadDelegatedWorkUpsertedPayload,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
@@ -37,6 +39,10 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationDelegatedWork = Schema.decodeUnknownEffect(OrchestrationDelegatedWork);
+const decodeThreadDelegatedWorkUpsertedPayload = Schema.decodeUnknownEffect(
+  ThreadDelegatedWorkUpsertedPayload,
+);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -533,6 +539,47 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
       threadId: "thread-1",
       planId: "plan-1",
     });
+  }),
+);
+
+it.effect("decodes delegated work records and internal upsert commands", () =>
+  Effect.gen(function* () {
+    const delegatedWork = yield* decodeOrchestrationDelegatedWork({
+      id: "child-task-1",
+      parentTurnId: "turn-parent",
+      task: "Inspect unresolved PR comments",
+      status: "running",
+      childThreadId: "thread-child",
+      lastProgress: "Fetched review threads",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:01:00.000Z",
+    });
+
+    assert.strictEqual(delegatedWork.required, true);
+    assert.strictEqual(delegatedWork.completedAt, null);
+    assert.strictEqual(delegatedWork.error, null);
+
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.delegated-work.upsert",
+      commandId: "cmd-delegated-work",
+      threadId: "thread-parent",
+      delegatedWork,
+      createdAt: "2026-01-01T00:01:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.delegated-work.upsert");
+
+    const eventPayload = yield* decodeThreadDelegatedWorkUpsertedPayload({
+      threadId: "thread-parent",
+      delegatedWork: {
+        ...delegatedWork,
+        status: "completed",
+        result: "All review comments addressed.",
+        completedAt: "2026-01-01T00:05:00.000Z",
+        updatedAt: "2026-01-01T00:05:00.000Z",
+      },
+    });
+    assert.strictEqual(eventPayload.delegatedWork.status, "completed");
+    assert.strictEqual(eventPayload.delegatedWork.result, "All review comments addressed.");
   }),
 );
 

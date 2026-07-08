@@ -12,6 +12,9 @@ import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
+  FilesystemCreatePreviewTicketInput,
+  FilesystemPreviewTicket,
+  FilesystemPreviewError,
 } from "./filesystem.ts";
 import {
   GitActionProgressEvent,
@@ -59,6 +62,17 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProviderSetupCancelInput,
+  ProviderSetupCancelResult,
+  ProviderSetupCapability,
+  ProviderSetupError,
+  ProviderSetupJobEvent,
+  ProviderSetupStartInput,
+  ProviderSetupStartResult,
+  ProviderSetupWriteInput,
+  ProviderSetupWriteResult,
+} from "./providerSetup.ts";
+import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
@@ -85,6 +99,11 @@ import {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import {
+  ConversationTurnRedactionError,
+  ConversationTurnRedactionInput,
+  ConversationTurnRedactionResult,
+} from "./telemetry.ts";
 import {
   ServerConfigStreamEvent,
   ServerConfig,
@@ -114,6 +133,13 @@ import {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import {
+  StudyBuddyConfiguration,
+  StudyBuddyConfigurationError,
+  StudyBuddyConnectionTestInput,
+  StudyBuddyConnectionTestResult,
+  StudyBuddyUpdateConfigurationInput,
+} from "./studyBuddy.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -129,6 +155,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemCreatePreviewTicket: "filesystem.createPreviewTicket",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -161,6 +188,10 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverGetProviderSetupCapabilities: "server.getProviderSetupCapabilities",
+  serverStartProviderSetup: "server.startProviderSetup",
+  serverCancelProviderSetup: "server.cancelProviderSetup",
+  serverWriteProviderSetupInput: "server.writeProviderSetupInput",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
@@ -170,6 +201,10 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  serverGetStudyBuddyConfiguration: "server.getStudyBuddyConfiguration",
+  serverUpdateStudyBuddyConfiguration: "server.updateStudyBuddyConfiguration",
+  serverTestStudyBuddyConnection: "server.testStudyBuddyConnection",
+  serverRedactConversationTurn: "server.redactConversationTurn",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -185,6 +220,7 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribeServerConfig: "subscribeServerConfig",
+  subscribeProviderSetupJob: "subscribeProviderSetupJob",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
 } as const;
@@ -226,6 +262,42 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
 });
+
+export const WsServerGetProviderSetupCapabilitiesRpc = Rpc.make(
+  WS_METHODS.serverGetProviderSetupCapabilities,
+  {
+    payload: Schema.Struct({}),
+    success: Schema.Array(ProviderSetupCapability),
+    error: EnvironmentAuthorizationError,
+  },
+);
+
+export const WsServerStartProviderSetupRpc = Rpc.make(WS_METHODS.serverStartProviderSetup, {
+  payload: ProviderSetupStartInput,
+  success: ProviderSetupStartResult,
+  error: Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerCancelProviderSetupRpc = Rpc.make(WS_METHODS.serverCancelProviderSetup, {
+  payload: ProviderSetupCancelInput,
+  success: ProviderSetupCancelResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsServerRedactConversationTurnRpc = Rpc.make(WS_METHODS.serverRedactConversationTurn, {
+  payload: ConversationTurnRedactionInput,
+  success: ConversationTurnRedactionResult,
+  error: Schema.Union([ConversationTurnRedactionError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerWriteProviderSetupInputRpc = Rpc.make(
+  WS_METHODS.serverWriteProviderSetupInput,
+  {
+    payload: ProviderSetupWriteInput,
+    success: ProviderSetupWriteResult,
+    error: EnvironmentAuthorizationError,
+  },
+);
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
@@ -271,6 +343,33 @@ export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess,
   success: ServerSignalProcessResult,
   error: EnvironmentAuthorizationError,
 });
+
+export const WsServerGetStudyBuddyConfigurationRpc = Rpc.make(
+  WS_METHODS.serverGetStudyBuddyConfiguration,
+  {
+    payload: Schema.Struct({}),
+    success: StudyBuddyConfiguration,
+    error: Schema.Union([StudyBuddyConfigurationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUpdateStudyBuddyConfigurationRpc = Rpc.make(
+  WS_METHODS.serverUpdateStudyBuddyConfiguration,
+  {
+    payload: StudyBuddyUpdateConfigurationInput,
+    success: StudyBuddyConfiguration,
+    error: Schema.Union([StudyBuddyConfigurationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerTestStudyBuddyConnectionRpc = Rpc.make(
+  WS_METHODS.serverTestStudyBuddyConnection,
+  {
+    payload: StudyBuddyConnectionTestInput,
+    success: StudyBuddyConnectionTestResult,
+    error: Schema.Union([StudyBuddyConfigurationError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsCloudGetRelayClientStatusRpc = Rpc.make(WS_METHODS.cloudGetRelayClientStatus, {
   payload: Schema.Struct({}),
@@ -331,6 +430,15 @@ export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   success: FilesystemBrowseResult,
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
+
+export const WsFilesystemCreatePreviewTicketRpc = Rpc.make(
+  WS_METHODS.filesystemCreatePreviewTicket,
+  {
+    payload: FilesystemCreatePreviewTicketInput,
+    success: FilesystemPreviewTicket,
+    error: Schema.Union([FilesystemPreviewError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsSubscribeVcsStatusRpc = Rpc.make(WS_METHODS.subscribeVcsStatus, {
   payload: VcsStatusInput,
@@ -531,6 +639,13 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
   stream: true,
 });
 
+export const WsSubscribeProviderSetupJobRpc = Rpc.make(WS_METHODS.subscribeProviderSetupJob, {
+  payload: ProviderSetupCancelInput,
+  success: ProviderSetupJobEvent,
+  error: Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecycle, {
   payload: Schema.Struct({}),
   success: ServerLifecycleStreamEvent,
@@ -549,6 +664,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerGetProviderSetupCapabilitiesRpc,
+  WsServerStartProviderSetupRpc,
+  WsServerCancelProviderSetupRpc,
+  WsServerWriteProviderSetupInputRpc,
+  WsServerRedactConversationTurnRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
@@ -558,6 +678,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsServerGetStudyBuddyConfigurationRpc,
+  WsServerUpdateStudyBuddyConfigurationRpc,
+  WsServerTestStudyBuddyConnectionRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
@@ -567,6 +690,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemCreatePreviewTicketRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,
@@ -590,6 +714,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeTerminalMetadataRpc,
   WsSubscribeServerConfigRpc,
+  WsSubscribeProviderSetupJobRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsOrchestrationDispatchCommandRpc,

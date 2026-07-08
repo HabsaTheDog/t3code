@@ -226,6 +226,7 @@ function mapProject(
     environmentId,
     name: project.title,
     cwd: project.workspaceRoot,
+    projectKind: project.projectKind ?? "regular",
     repositoryIdentity: project.repositoryIdentity ?? null,
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)
@@ -259,6 +260,8 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    delegatedWork: thread.delegatedWork.map((entry) => ({ ...entry })),
+    deferredFinalizations: (thread.deferredFinalizations ?? []).map((entry) => ({ ...entry })),
   };
 }
 
@@ -309,6 +312,9 @@ function mapThreadShell(
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    activeDelegatedWorkCount: thread.activeDelegatedWorkCount,
+    activeRequiredDelegatedWorkCount: thread.activeRequiredDelegatedWorkCount ?? 0,
+    pendingDelegatedReviewCount: thread.pendingDelegatedReviewCount ?? 0,
   };
   return {
     shell,
@@ -1169,6 +1175,7 @@ function applyEnvironmentOrchestrationEvent(
           id: event.payload.projectId,
           title: event.payload.title,
           workspaceRoot: event.payload.workspaceRoot,
+          projectKind: event.payload.projectKind ?? "regular",
           repositoryIdentity: event.payload.repositoryIdentity ?? null,
           defaultModelSelection: event.payload.defaultModelSelection,
           scripts: event.payload.scripts,
@@ -1223,6 +1230,9 @@ function applyEnvironmentOrchestrationEvent(
         ...project,
         ...(event.payload.title !== undefined ? { name: event.payload.title } : {}),
         ...(event.payload.workspaceRoot !== undefined ? { cwd: event.payload.workspaceRoot } : {}),
+        ...(event.payload.projectKind !== undefined
+          ? { projectKind: event.payload.projectKind }
+          : {}),
         ...(event.payload.repositoryIdentity !== undefined
           ? { repositoryIdentity: event.payload.repositoryIdentity ?? null }
           : {}),
@@ -1278,6 +1288,8 @@ function applyEnvironmentOrchestrationEvent(
           deletedAt: null,
           messages: [],
           proposedPlans: [],
+          delegatedWork: [],
+          deferredFinalizations: [],
           activities: [],
           checkpoints: [],
           session: null,
@@ -1525,6 +1537,91 @@ function applyEnvironmentOrchestrationEvent(
         };
       });
 
+    case "thread.delegated-work-upserted":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        delegatedWork: [
+          ...thread.delegatedWork.filter((entry) => entry.id !== event.payload.delegatedWork.id),
+          { ...event.payload.delegatedWork },
+        ].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+        ),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.deferred-finalization-upserted":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        deferredFinalizations: [
+          ...thread.deferredFinalizations.filter(
+            (entry) =>
+              String(entry.turnId) !== String(event.payload.deferredFinalization.turnId),
+          ),
+          { ...event.payload.deferredFinalization },
+        ].toSorted(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            String(left.turnId).localeCompare(String(right.turnId)),
+        ),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.deferred-finalization-released":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        deferredFinalizations: thread.deferredFinalizations.map((entry) =>
+          String(entry.turnId) === String(event.payload.turnId)
+            ? {
+                ...entry,
+                state: "released",
+                releasedAt: event.payload.releasedAt,
+                updatedAt: event.payload.releasedAt,
+              }
+            : entry,
+        ),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.delegated-work-reviewed": {
+      const reviewedIds = new Set(event.payload.delegatedWorkIds.map(String));
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        delegatedWork: thread.delegatedWork.map((entry) =>
+          reviewedIds.has(entry.id)
+            ? {
+                ...entry,
+                reviewStatus: event.payload.reviewStatus,
+                ...(event.payload.reviewNote !== undefined
+                  ? { reviewNote: event.payload.reviewNote }
+                  : {}),
+                ...(event.payload.reviewerTurnId !== undefined
+                  ? { reviewerTurnId: event.payload.reviewerTurnId }
+                  : {}),
+                reviewedAt: event.payload.reviewedAt,
+                updatedAt: event.payload.reviewedAt,
+              }
+            : entry,
+        ),
+        updatedAt: event.occurredAt,
+      }));
+    }
+
+    case "thread.delegated-work-review-requested":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        deferredFinalizations: thread.deferredFinalizations.map((entry) =>
+          String(entry.turnId) === String(event.payload.turnId)
+            ? {
+                ...entry,
+                state: "reviewing",
+                updatedAt: event.payload.createdAt,
+              }
+            : entry,
+        ),
+        updatedAt: event.occurredAt,
+      }));
+
     case "thread.turn-diff-completed":
       return updateThreadState(state, event.payload.threadId, (thread) => {
         const checkpoint = mapTurnDiffSummary({
@@ -1759,6 +1856,18 @@ export function selectProjectsAcrossEnvironments(state: AppState): Project[] {
   );
 }
 
+export function selectRegularProjectsAcrossEnvironments(state: AppState): Project[] {
+  return selectProjectsAcrossEnvironments(state).filter(
+    (project) => project.projectKind !== "quick-chat",
+  );
+}
+
+export function selectQuickChatProjectsAcrossEnvironments(state: AppState): Project[] {
+  return selectProjectsAcrossEnvironments(state).filter(
+    (project) => project.projectKind === "quick-chat",
+  );
+}
+
 export function selectThreadsAcrossEnvironments(state: AppState): Thread[] {
   return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
     getThreads(environmentState),
@@ -1782,6 +1891,25 @@ export function selectSidebarThreadsAcrossEnvironments(state: AppState): Sidebar
       return thread && thread.environmentId === environmentId ? [thread] : [];
     }),
   );
+}
+
+export function selectQuickChatThreadsAcrossEnvironments(state: AppState): SidebarThreadSummary[] {
+  const quickProjectKeys = new Set(
+    selectQuickChatProjectsAcrossEnvironments(state).map(
+      (project) => `${project.environmentId}:${project.id}`,
+    ),
+  );
+  return selectSidebarThreadsAcrossEnvironments(state)
+    .filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        quickProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+    )
+    .toSorted((left, right) => {
+      const leftTime = left.latestUserMessageAt ?? left.updatedAt ?? left.createdAt;
+      const rightTime = right.latestUserMessageAt ?? right.updatedAt ?? right.createdAt;
+      return rightTime.localeCompare(leftTime) || right.id.localeCompare(left.id);
+    });
 }
 
 export function selectSidebarThreadsForProjectRef(

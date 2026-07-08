@@ -9,6 +9,7 @@ import {
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  getQuickChatThreadSections,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   orderItemsByPreferredIds,
@@ -64,6 +65,26 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("getQuickChatThreadSections", () => {
+  it("keeps the first six quick chats in the preview and moves the rest into overflow", () => {
+    const threads = Array.from({ length: 8 }, (_, index) => ({ id: `thread-${index + 1}` }));
+
+    expect(getQuickChatThreadSections(threads, 6)).toEqual({
+      previewThreads: threads.slice(0, 6),
+      overflowThreads: threads.slice(6),
+    });
+  });
+
+  it("returns all quick chats in the preview when they fit", () => {
+    const threads = [{ id: "newest" }, { id: "oldest" }];
+
+    expect(getQuickChatThreadSections(threads, 6)).toEqual({
+      previewThreads: threads,
+      overflowThreads: [],
+    });
   });
 });
 

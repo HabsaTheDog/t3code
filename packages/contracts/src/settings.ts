@@ -6,6 +6,8 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { StudyBuddyConnectionTestResult } from "./studyBuddy.ts";
+import { TelemetryConsentDecision } from "./telemetry.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -30,6 +32,16 @@ export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
+const StudyBuddyConnectionChecks = Schema.Struct({
+  moodle: Schema.optionalKey(StudyBuddyConnectionTestResult),
+  cis: Schema.optionalKey(StudyBuddyConnectionTestResult),
+  calendar: Schema.optionalKey(StudyBuddyConnectionTestResult),
+});
+const InstallationId = Schema.String.check(
+  Schema.isPattern(
+    /^(?:|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i,
+  ),
+);
 export const SidebarThreadPreviewCount = Schema.Int.check(
   Schema.isBetween({
     minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -40,6 +52,33 @@ export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
 export const ClientSettingsSchema = Schema.Struct({
+  installationId: InstallationId.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  analyticsConsent: TelemetryConsentDecision.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unset")),
+  ),
+  conversationConsent: TelemetryConsentDecision.pipe(
+    Schema.withDecodingDefault(Effect.succeed("unset")),
+  ),
+  consentVersion: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  consentUpdatedAt: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  analyticsEnabledAt: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  conversationEnabledAt: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  onboardingVersion: Schema.Int.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  onboardingStatus: Schema.Literals(["not-started", "in-progress", "completed"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("not-started")),
+  ),
+  onboardingCurrentStep: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  studyBuddyConnectionChecks: StudyBuddyConnectionChecks.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -252,11 +291,11 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("agent").pipe(
+    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "agent", clearWhenEmpty: "omit" },
+        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
       }),
     ),
     apiEndpoint: TrimmedString.pipe(
@@ -341,6 +380,7 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  personalityPrompt: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
     Schema.withDecodingDefault(
       Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
@@ -448,6 +488,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
+  personalityPrompt: Schema.optionalKey(TrimmedString),
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
@@ -475,6 +516,19 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  installationId: Schema.optionalKey(Schema.String),
+  analyticsConsent: Schema.optionalKey(TelemetryConsentDecision),
+  conversationConsent: Schema.optionalKey(TelemetryConsentDecision),
+  consentVersion: Schema.optionalKey(Schema.Int),
+  consentUpdatedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  analyticsEnabledAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  conversationEnabledAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  onboardingVersion: Schema.optionalKey(Schema.Int),
+  onboardingStatus: Schema.optionalKey(
+    Schema.Literals(["not-started", "in-progress", "completed"]),
+  ),
+  onboardingCurrentStep: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  studyBuddyConnectionChecks: Schema.optionalKey(StudyBuddyConnectionChecks),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

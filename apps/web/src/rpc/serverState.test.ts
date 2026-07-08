@@ -80,6 +80,7 @@ const baseServerConfig: ServerConfig = {
     sessionCookieName: "t3_session",
   },
   cwd: "/tmp/workspace",
+  quickChatWorkspaceRoot: "/tmp/t3-home/quick-chats",
   keybindingsConfigPath: "/tmp/workspace/.config/keybindings.json",
   keybindings: [],
   issues: [],

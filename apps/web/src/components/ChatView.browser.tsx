@@ -112,6 +112,9 @@ const THREAD_TITLE = "Browser test thread";
 const ARCHIVED_SECONDARY_THREAD_ID = "thread-secondary-project-archived" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
 const SECOND_PROJECT_ID = "project-2" as ProjectId;
+const QUICK_CHAT_PROJECT_ID = "project-quick-chat" as ProjectId;
+const QUICK_CHAT_THREAD_ID = "thread-quick-chat" as ThreadId;
+const QUICK_CHAT_THREAD_TITLE = "Quick browser chat";
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
@@ -207,6 +210,7 @@ function createBaseServerConfig(): ServerConfig {
       sessionCookieName: "t3_session",
     },
     cwd: "/repo/project",
+    quickChatWorkspaceRoot: "/tmp/t3-home/quick-chats",
     keybindingsConfigPath: "/repo/project/.t3code-keybindings.json",
     keybindings: [],
     issues: [],
@@ -248,6 +252,7 @@ function createMockEnvironmentApi(input: {
     projects: {} as EnvironmentApi["projects"],
     filesystem: {
       browse: input.browse,
+      createPreviewTicket: vi.fn(),
     },
     sourceControl: {} as EnvironmentApi["sourceControl"],
     vcs: {} as EnvironmentApi["vcs"],
@@ -421,6 +426,74 @@ function createSnapshotForTargetUser(options: {
   };
 }
 
+function createSnapshotWithQuickChat(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-quick-chat-actions" as MessageId,
+    targetText: "quick chat actions",
+  });
+  return {
+    ...snapshot,
+    projects: [
+      ...snapshot.projects,
+      {
+        id: QUICK_CHAT_PROJECT_ID,
+        title: "Quick Chat",
+        projectKind: "quick-chat",
+        workspaceRoot: "/tmp/t3-home/quick-chats/thread-quick-chat",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      ...snapshot.threads,
+      {
+        id: QUICK_CHAT_THREAD_ID,
+        projectId: QUICK_CHAT_PROJECT_ID,
+        title: QUICK_CHAT_THREAD_TITLE,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        latestTurn: {
+          turnId: "turn-quick-chat" as TurnId,
+          state: "completed",
+          requestedAt: isoAt(100),
+          startedAt: isoAt(101),
+          completedAt: isoAt(102),
+          assistantMessageId: null,
+        },
+        createdAt: isoAt(90),
+        updatedAt: isoAt(102),
+        archivedAt: null,
+        deletedAt: null,
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          threadId: QUICK_CHAT_THREAD_ID,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: isoAt(102),
+        },
+      },
+    ],
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
@@ -516,6 +589,7 @@ function toShellSnapshot(snapshot: OrchestrationReadModel) {
       id: project.id,
       title: project.title,
       workspaceRoot: project.workspaceRoot,
+      projectKind: project.projectKind,
       repositoryIdentity: project.repositoryIdentity ?? null,
       defaultModelSelection: project.defaultModelSelection,
       scripts: project.scripts,
@@ -3868,6 +3942,64 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(getComputedStyle(archiveAction!).opacity).toBe("0");
         },
         { timeout: 4_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("gives Quick Chat threads the standard hover and context-menu actions", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQuickChat(),
+      initialPath: serverThreadPath(QUICK_CHAT_THREAD_ID),
+    });
+
+    try {
+      const quickChatRow = page.getByTestId(`quick-chat-row-${QUICK_CHAT_THREAD_ID}`);
+      await expect.element(quickChatRow).toBeInTheDocument();
+      await quickChatRow.hover();
+
+      const archiveButton = page.getByTestId(`quick-chat-archive-${QUICK_CHAT_THREAD_ID}`);
+      await expect.element(archiveButton).toBeVisible();
+
+      const quickChatRowElement = await quickChatRow.element();
+      quickChatRowElement.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 120,
+          clientY: 180,
+        }),
+      );
+
+      const renameButton = await waitForButtonByText("Rename thread");
+      expect(findButtonByText("Mark unread")).not.toBeNull();
+      expect(findButtonByText("Copy Path")).not.toBeNull();
+      expect(findButtonByText("Copy Thread ID")).not.toBeNull();
+      expect(findButtonByText("Delete")).not.toBeNull();
+
+      renameButton.click();
+      const renameInput = await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>(
+            `[data-testid="quick-chat-row-${QUICK_CHAT_THREAD_ID}"] input`,
+          ),
+        "Quick Chat rename input did not appear.",
+      );
+      renameInput.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await archiveButton.click();
+      await waitForURL(
+        mounted.router,
+        (pathname) => pathname === "/",
+        "Archiving the active Quick Chat should return to the thread picker.",
       );
     } finally {
       await mounted.cleanup();

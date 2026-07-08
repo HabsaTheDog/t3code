@@ -55,6 +55,29 @@ const scopedPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
     isCommandPath: isNativeTestCommandPath("/.scoped-package-tool/bin/scoped-package-tool"),
   },
 });
+const codexStandaloneUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("codex"),
+  npmPackageName: "@openai/codex",
+  homebrewFormula: "codex",
+  nativeUpdate: {
+    executable: process.platform === "win32" ? "powershell.exe" : "sh",
+    args:
+      process.platform === "win32"
+        ? [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
+          ]
+        : [
+            "-lc",
+            "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+          ],
+    lockKey: "codex-installer",
+    isCommandPath: isNativeTestCommandPath("/.local/bin/codex"),
+  },
+});
 const staticToolUpdate = makeStaticProviderMaintenanceResolver(
   makeProviderMaintenanceCapabilities({
     provider: driver("staticTool"),
@@ -129,6 +152,84 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         args: ["update"],
 
         lockKey: "static-tool",
+      },
+    });
+  });
+
+  it("switches Codex standalone installs to rerunning the installer when the binary lives in the standalone install dir", () => {
+    expect(
+      codexStandaloneUpdate.resolve({
+        binaryPath: "/Users/test/.local/bin/codex",
+        platform: "darwin",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("codex"),
+      packageName: "@openai/codex",
+      update: {
+        command:
+          process.platform === "win32"
+            ? "powershell.exe -NoLogo -NoProfile -NonInteractive -Command $env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex"
+            : "sh -lc curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+
+        executable: process.platform === "win32" ? "powershell.exe" : "sh",
+
+        args:
+          process.platform === "win32"
+            ? [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
+              ]
+            : [
+                "-lc",
+                "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+              ],
+
+        lockKey: "codex-installer",
+      },
+    });
+  });
+
+  it("switches Codex standalone installs on Windows to rerunning the installer when the binary resolves to a wrapper in the Codex install dir", () => {
+    expect(
+      codexStandaloneUpdate.resolve({
+        binaryPath: "C:\\Users\\test\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.cmd",
+        platform: "win32",
+        env: {
+          PATH: "",
+        },
+      }),
+    ).toEqual({
+      provider: driver("codex"),
+      packageName: "@openai/codex",
+      update: {
+        command:
+          process.platform === "win32"
+            ? "powershell.exe -NoLogo -NoProfile -NonInteractive -Command $env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex"
+            : "sh -lc curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+
+        executable: process.platform === "win32" ? "powershell.exe" : "sh",
+
+        args:
+          process.platform === "win32"
+            ? [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
+              ]
+            : [
+                "-lc",
+                "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+              ],
+
+        lockKey: "codex-installer",
       },
     });
   });

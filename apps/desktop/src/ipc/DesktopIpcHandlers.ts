@@ -41,11 +41,13 @@ import {
 } from "./methods/updates.ts";
 import {
   confirm,
+  destroyViewerSurface,
   getAppBranding,
   getLocalEnvironmentBootstrap,
   openExternal,
   pickFolder,
   setTheme,
+  setViewerSurface,
   showContextMenu,
 } from "./methods/window.ts";
 
@@ -82,6 +84,8 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
+  yield* ipc.handle(setViewerSurface);
+  yield* ipc.handle(destroyViewerSurface);
   yield* ipc.handle(createCloudAuthRequest);
   yield* ipc.handle(getCloudAuthToken);
   yield* ipc.handle(setCloudAuthToken);

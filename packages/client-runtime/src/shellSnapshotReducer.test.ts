@@ -16,6 +16,7 @@ const stubProject = {
   id: ProjectId.make("project-1"),
   title: "Test Project",
   workspaceRoot: "/workspace/test",
+  projectKind: "regular",
   repositoryIdentity: null,
   defaultModelSelection: null,
   scripts: [],

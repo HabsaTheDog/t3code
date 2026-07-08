@@ -2835,6 +2835,9 @@ describe("ProviderRuntimeIngestion", () => {
     const completed = thread.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-task-completed",
     );
+    const delegatedWork = thread.delegatedWork.find(
+      (entry: { readonly id: string }) => entry.id === "turn-task-1",
+    );
 
     const progressPayload =
       progress?.payload && typeof progress.payload === "object"
@@ -2859,6 +2862,122 @@ describe("ProviderRuntimeIngestion", () => {
         (entry: ProviderRuntimeTestProposedPlan) => entry.id === "plan:thread-1:turn:turn-task-1",
       )?.planMarkdown,
     ).toBe("# Plan title");
+    expect(delegatedWork).toMatchObject({
+      id: "turn-task-1",
+      parentTurnId: asTurnId("turn-task-1"),
+      task: "plan",
+      status: "completed",
+      lastProgress: "Code reviewer is validating the desktop rollout chunks.",
+      result: "<proposed_plan>\n# Plan title\n</proposed_plan>",
+      completedAt: now,
+    });
+  });
+
+  it("defers assistant and turn completion until required delegated work is terminal", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-delegated-wait"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-delegated-wait"),
+    });
+
+    harness.emit({
+      type: "task.started",
+      eventId: asEventId("evt-task-started-delegated-wait"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-delegated-wait"),
+      payload: {
+        taskId: "child-review-1",
+        taskType: "code-review",
+        description: "Review the proposed fix.",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.delegatedWork.some(
+          (entry) => entry.id === "child-review-1" && entry.status === "running",
+        ),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-assistant-completed-delegated-wait"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-delegated-wait"),
+      itemId: asItemId("assistant-final-delegated-wait"),
+      createdAt: now,
+      payload: {
+        itemType: "assistant_message",
+        detail: "Final answer after delegated review.",
+      },
+    });
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-delegated-wait"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-delegated-wait"),
+      createdAt: now,
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const waitingThread = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-delegated-wait" &&
+        thread.activities.some((activity) => activity.kind === "delegated-work.waiting"),
+    );
+    expect(waitingThread.messages).toHaveLength(0);
+
+    harness.emit({
+      type: "task.completed",
+      eventId: asEventId("evt-task-completed-delegated-wait"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-delegated-wait"),
+      payload: {
+        taskId: "child-review-1",
+        status: "completed",
+        summary: "Review found no blockers.",
+      },
+    });
+
+    const reviewPendingThread = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.messages.length === 0 &&
+        (thread.deferredFinalizations ?? []).some(
+          (entry) => entry.turnId === "turn-delegated-wait" && entry.state === "reviewing",
+        ) &&
+        thread.delegatedWork.some(
+          (entry) => entry.id === "child-review-1" && entry.reviewStatus === "pending",
+        ),
+    );
+
+    expect(
+      reviewPendingThread.delegatedWork.find((entry) => entry.id === "child-review-1"),
+    ).toMatchObject({
+      status: "completed",
+      result: "Review found no blockers.",
+      reviewStatus: "pending",
+      completedAt: "2026-01-01T00:00:01.000Z",
+    });
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

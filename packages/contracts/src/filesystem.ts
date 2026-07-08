@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const FILESYSTEM_PATH_MAX_LENGTH = 512;
 
@@ -23,6 +23,52 @@ export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 
 export class FilesystemBrowseError extends Schema.TaggedErrorClass<FilesystemBrowseError>()(
   "FilesystemBrowseError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export const PreviewFileKind = Schema.Literals([
+  "pdf",
+  "html",
+  "image",
+  "markdown",
+  "text",
+  "file",
+]);
+export type PreviewFileKind = typeof PreviewFileKind.Type;
+
+export const PreviewScope = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("thread"),
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("project"),
+    projectId: ProjectId,
+  }),
+]);
+export type PreviewScope = typeof PreviewScope.Type;
+
+export const FilesystemCreatePreviewTicketInput = Schema.Struct({
+  scope: PreviewScope,
+  filePath: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type FilesystemCreatePreviewTicketInput = typeof FilesystemCreatePreviewTicketInput.Type;
+
+export const FilesystemPreviewTicket = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  fileName: TrimmedNonEmptyString,
+  fileKind: PreviewFileKind,
+  mimeType: TrimmedNonEmptyString,
+  size: NonNegativeInt,
+  expiresAt: TrimmedNonEmptyString,
+});
+export type FilesystemPreviewTicket = typeof FilesystemPreviewTicket.Type;
+
+export class FilesystemPreviewError extends Schema.TaggedErrorClass<FilesystemPreviewError>()(
+  "FilesystemPreviewError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

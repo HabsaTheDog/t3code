@@ -15,14 +15,14 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
-import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import { selectRegularProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { useSettings } from "./useSettings";
 
 function useNewThreadState() {
-  const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
+  const projects = useStore(useShallow((store) => selectRegularProjectsAcrossEnvironments(store)));
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -165,7 +165,7 @@ export function useHandleNewThread() {
         : useComposerDraftStore.getState().getDraftSession(routeTarget.draftId)
       : null,
   );
-  const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
+  const projects = useStore(useShallow((store) => selectRegularProjectsAcrossEnvironments(store)));
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
       items: projects,

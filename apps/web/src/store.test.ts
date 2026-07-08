@@ -19,6 +19,8 @@ import {
   removeEnvironmentState,
   selectEnvironmentState,
   selectProjectsAcrossEnvironments,
+  selectQuickChatThreadsAcrossEnvironments,
+  selectRegularProjectsAcrossEnvironments,
   selectThreadByRef,
   selectThreadExistsByRef,
   setThreadBranch,
@@ -246,6 +248,115 @@ function makeEvent<T extends OrchestrationEvent["type"]>(
     ...overrides,
   } as Extract<OrchestrationEvent, { type: T }>;
 }
+
+describe("quick chat selectors", () => {
+  it("hides quick chat projects from regular projects and sorts quick threads by activity", () => {
+    const regularProjectId = ProjectId.make("project-regular");
+    const quickProjectId = ProjectId.make("project-quick");
+    const olderQuickThreadId = ThreadId.make("thread-quick-older");
+    const newerQuickThreadId = ThreadId.make("thread-quick-newer");
+    const regularThreadId = ThreadId.make("thread-regular");
+    const baseEnvironmentState = localEnvironmentStateOf(
+      makeState(makeThread({ id: regularThreadId, projectId: regularProjectId })),
+    );
+    const state = withActiveEnvironmentState(baseEnvironmentState, {
+      projectIds: [regularProjectId, quickProjectId],
+      projectById: {
+        [regularProjectId]: {
+          id: regularProjectId,
+          environmentId: localEnvironmentId,
+          name: "Regular",
+          cwd: "/tmp/regular",
+          projectKind: "regular",
+          defaultModelSelection: null,
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          scripts: [],
+        },
+        [quickProjectId]: {
+          id: quickProjectId,
+          environmentId: localEnvironmentId,
+          name: "Quick Chat",
+          cwd: "/tmp/quick-chats/thread-quick-newer",
+          projectKind: "quick-chat",
+          defaultModelSelection: null,
+          createdAt: "2026-02-27T00:00:00.000Z",
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          scripts: [],
+        },
+      },
+      threadIds: [regularThreadId, olderQuickThreadId, newerQuickThreadId],
+      threadIdsByProjectId: {
+        [regularProjectId]: [regularThreadId],
+        [quickProjectId]: [olderQuickThreadId, newerQuickThreadId],
+      },
+      sidebarThreadSummaryById: {
+        [regularThreadId]: {
+          id: regularThreadId,
+          environmentId: localEnvironmentId,
+          projectId: regularProjectId,
+          title: "Regular thread",
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          session: null,
+          createdAt: "2026-02-27T00:00:00.000Z",
+          archivedAt: null,
+          updatedAt: "2026-02-27T00:00:00.000Z",
+          latestTurn: null,
+          branch: null,
+          worktreePath: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+        [olderQuickThreadId]: {
+          id: olderQuickThreadId,
+          environmentId: localEnvironmentId,
+          projectId: quickProjectId,
+          title: "Older Quick Chat",
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          session: null,
+          createdAt: "2026-02-27T00:00:01.000Z",
+          archivedAt: null,
+          updatedAt: "2026-02-27T00:00:02.000Z",
+          latestTurn: null,
+          branch: null,
+          worktreePath: null,
+          latestUserMessageAt: "2026-02-27T00:00:03.000Z",
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+        [newerQuickThreadId]: {
+          id: newerQuickThreadId,
+          environmentId: localEnvironmentId,
+          projectId: quickProjectId,
+          title: "Newer Quick Chat",
+          interactionMode: DEFAULT_INTERACTION_MODE,
+          session: null,
+          createdAt: "2026-02-27T00:00:01.000Z",
+          archivedAt: null,
+          updatedAt: "2026-02-27T00:00:04.000Z",
+          latestTurn: null,
+          branch: null,
+          worktreePath: null,
+          latestUserMessageAt: "2026-02-27T00:00:05.000Z",
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+        },
+      },
+    });
+
+    expect(selectRegularProjectsAcrossEnvironments(state).map((project) => project.id)).toEqual([
+      regularProjectId,
+    ]);
+    expect(selectQuickChatThreadsAcrossEnvironments(state).map((thread) => thread.id)).toEqual([
+      newerQuickThreadId,
+      olderQuickThreadId,
+    ]);
+  });
+});
 
 describe("environment state removal", () => {
   it("drops local state for removed environments", () => {
