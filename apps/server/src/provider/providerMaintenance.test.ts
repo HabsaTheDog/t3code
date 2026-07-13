@@ -70,10 +70,7 @@ const codexStandaloneUpdate = makePackageManagedProviderMaintenanceResolver({
             "-Command",
             "$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | iex",
           ]
-        : [
-            "-lc",
-            "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
-          ],
+        : ["-lc", "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"],
     lockKey: "codex-installer",
     isCommandPath: isNativeTestCommandPath("/.local/bin/codex"),
   },

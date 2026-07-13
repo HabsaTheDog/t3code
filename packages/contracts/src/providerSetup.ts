@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+export const MINIMUM_STUDY_BUDDY_CODEX_VERSION = "0.138.0";
+
 export const ProviderSetupProvider = Schema.Literals(["codex", "claude", "cursor", "opencode"]);
 export type ProviderSetupProvider = typeof ProviderSetupProvider.Type;
 

@@ -41,6 +41,7 @@ export const StudyBuddyConfigurationPatch = Schema.Struct({
   cisUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(10_000))),
   cisPassword: Schema.optionalKey(StudyBuddySecretPatch),
   calendarUrl: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(10_000))),
+  calendarUrlSecret: Schema.optionalKey(StudyBuddySecretPatch),
   quiz: Schema.optionalKey(StudyBuddyQuizSettings),
 });
 export type StudyBuddyConfigurationPatch = typeof StudyBuddyConfigurationPatch.Type;

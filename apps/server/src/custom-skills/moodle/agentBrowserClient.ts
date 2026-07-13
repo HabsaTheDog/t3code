@@ -3,9 +3,34 @@ import { access } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { MoodleRuntimeConfig } from "./types.ts";
+import type { BrowserLoginConfig } from "./browserAuth.ts";
+import {
+  BrowserAuthenticationGate,
+  isAuthenticationSnapshot,
+  redactSensitiveValues,
+  sanitizeBrowserSnapshot,
+  sanitizeModelVisibleUrl,
+} from "./browserSecurity.ts";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_AGENT_BROWSER_PACKAGE = "agent-browser@0.27.0";
+const BROWSER_ENV_ALLOWLIST = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "XDG_RUNTIME_DIR",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+]);
 
 export interface AgentBrowserClient {
   doctor(): Promise<AgentBrowserCommandResult>;
@@ -21,6 +46,11 @@ export interface AgentBrowserClient {
   wait(ms: number): Promise<AgentBrowserCommandResult>;
   download(selector: string, targetPath: string): Promise<AgentBrowserCommandResult>;
   close(): Promise<AgentBrowserCommandResult>;
+  readonly authenticationState?: BrowserAuthenticationGate["state"];
+  lockAuthentication?(): void;
+  completeAuthentication?(): void;
+  failAuthentication?(): void;
+  secureLogin?(config: BrowserLoginConfig): Promise<void>;
 }
 
 export interface AgentBrowserCommandResult {
@@ -57,6 +87,35 @@ interface CommandSpec {
   command: string;
   baseArgs: string[];
   sensitiveValues: string[];
+}
+
+export function assertNoSensitiveCommandArguments(
+  args: readonly string[],
+  sensitiveValues: readonly string[],
+): void {
+  const exposed = sensitiveValues.find(
+    (secret) => secret.length > 0 && args.some((argument) => argument.includes(secret)),
+  );
+  if (exposed) {
+    throw new Error("Blocked an agent-browser command that would expose a credential in argv.");
+  }
+}
+
+export function buildCredentialFreeChildEnvironment(
+  source: NodeJS.ProcessEnv,
+  sensitiveValues: readonly string[],
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(source).filter(([key, value]) => {
+      if (!BROWSER_ENV_ALLOWLIST.has(key)) return false;
+      if (/(?:PASSWORD|PASSWD|TOKEN|SECRET|API_?KEY|CREDENTIAL|CALENDAR_URL)$/i.test(key)) {
+        return false;
+      }
+      return !sensitiveValues.some(
+        (secret) => secret.length > 0 && (value?.includes(secret) ?? false),
+      );
+    }),
+  );
 }
 
 export class AgentBrowserCommandError extends Error {
@@ -111,6 +170,7 @@ export function buildAgentBrowserCommandSpec(config: MoodleRuntimeConfig): Comma
       config.password,
       config.cisUsername,
       config.cisPassword,
+      config.calendarUrl,
     ].filter((value): value is string => Boolean(value)),
   };
 }
@@ -124,9 +184,26 @@ export async function verifyAgentBrowserPolicy(config: MoodleRuntimeConfig): Pro
 
 class CliAgentBrowserClient implements AgentBrowserClient {
   private readonly spec: CommandSpec;
+  private readonly authenticationGate = new BrowserAuthenticationGate();
 
   constructor(spec: CommandSpec) {
     this.spec = spec;
+  }
+
+  get authenticationState() {
+    return this.authenticationGate.state;
+  }
+
+  lockAuthentication(): void {
+    this.authenticationGate.lock();
+  }
+
+  completeAuthentication(): void {
+    this.authenticationGate.authenticate();
+  }
+
+  failAuthentication(): void {
+    this.authenticationGate.fail();
   }
 
   async doctor(): Promise<AgentBrowserCommandResult> {
@@ -138,6 +215,7 @@ class CliAgentBrowserClient implements AgentBrowserClient {
   }
 
   async snapshot(options: SnapshotOptions = {}): Promise<AgentBrowserSnapshot> {
+    this.authenticationGate.assertReadable("snapshot");
     const args = ["snapshot", "--json"];
     if (options.interactive) {
       args.push("--interactive");
@@ -155,23 +233,45 @@ class CliAgentBrowserClient implements AgentBrowserClient {
       args.push("--selector", options.selector);
     }
     const result = await this.run(args);
-    return parseAgentBrowserSnapshot(result.stdout);
+    const snapshot = sanitizeBrowserSnapshot(
+      parseAgentBrowserSnapshot(result.stdout),
+      this.spec.sensitiveValues,
+    );
+    if (this.authenticationGate.state !== "authenticated" && isAuthenticationSnapshot(snapshot)) {
+      this.authenticationGate.lock();
+      this.authenticationGate.assertReadable("snapshot");
+    }
+    return snapshot;
   }
 
   async getText(selector = "body"): Promise<string> {
-    return (await this.run(["get", "text", selector])).stdout.trim();
+    this.authenticationGate.assertReadable("text extraction");
+    return redactSensitiveValues(
+      (await this.run(["get", "text", selector])).stdout.trim(),
+      this.spec.sensitiveValues,
+    );
   }
 
   async getTitle(): Promise<string> {
-    return (await this.run(["get", "title"])).stdout.trim();
+    this.authenticationGate.assertReadable("title extraction");
+    return redactSensitiveValues(
+      (await this.run(["get", "title"])).stdout.trim(),
+      this.spec.sensitiveValues,
+    );
   }
 
   async getUrl(): Promise<string> {
-    return (await this.run(["get", "url"])).stdout.trim();
+    this.authenticationGate.assertReadable("URL extraction");
+    return sanitizeModelVisibleUrl(
+      (await this.run(["get", "url"])).stdout.trim(),
+      this.spec.sensitiveValues,
+    );
   }
 
   async evalJson<T = unknown>(script: string): Promise<T> {
-    return parseAgentBrowserEvalJson<T>((await this.run(["eval", script])).stdout);
+    this.authenticationGate.assertReadable("DOM evaluation");
+    const value = parseAgentBrowserEvalJson<T>((await this.run(["eval", script])).stdout);
+    return JSON.parse(redactSensitiveValues(JSON.stringify(value), this.spec.sensitiveValues)) as T;
   }
 
   async fill(selector: string, value: string): Promise<AgentBrowserCommandResult> {
@@ -203,11 +303,13 @@ class CliAgentBrowserClient implements AgentBrowserClient {
     options: { includeBaseArgs?: boolean } = {},
   ): Promise<AgentBrowserCommandResult> {
     const allArgs = [...(options.includeBaseArgs === false ? [] : this.spec.baseArgs), ...args];
+    assertNoSensitiveCommandArguments(allArgs, this.spec.sensitiveValues);
     try {
       const result = await execFileAsync(this.spec.command, allArgs, {
         encoding: "utf8",
         maxBuffer: 10 * 1024 * 1024,
         timeout: 120_000,
+        env: buildCredentialFreeChildEnvironment(process.env, this.spec.sensitiveValues),
       });
       return {
         stdout: result.stdout,
@@ -267,10 +369,7 @@ function toAgentBrowserCommandError(
 }
 
 function sanitizeText(text: string, sensitiveValues: string[]): string {
-  return sensitiveValues.reduce(
-    (message, secret) => message.split(secret).join("[redacted]"),
-    text,
-  );
+  return redactSensitiveValues(text, sensitiveValues);
 }
 
 function formatUnknownError(error: unknown): string {

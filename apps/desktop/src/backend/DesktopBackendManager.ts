@@ -285,7 +285,10 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.tapError((error) => options.onReadinessFailure?.(error) ?? Effect.void),
     Effect.as("ready" as const),
     Effect.mapError(
-      (cause) => new BackendProcessReadinessError({ cause: cause as BackendTimeoutError | PlatformError.PlatformError }),
+      (cause) =>
+        new BackendProcessReadinessError({
+          cause: cause as BackendTimeoutError | PlatformError.PlatformError,
+        }),
     ),
   );
 
@@ -294,7 +297,7 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
 
   const readinessOrExit = yield* Effect.raceFirst(
-    waitForReadiness.pipe(Effect.map((kind) => ({ kind } as const))),
+    waitForReadiness.pipe(Effect.map((kind) => ({ kind }) as const)),
     waitForExit,
   );
   if (readinessOrExit.kind === "ready") {

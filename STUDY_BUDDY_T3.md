@@ -60,6 +60,33 @@ project or Quick Chat workspace. Direct `bun run moodle:agent` calls require an
 explicit `STUDY_BUDDY_WORKSPACE` or `T3CODE_CWD`; the runner does not provide a
 default artifact workspace.
 
+## Codex-only setup and credential boundary
+
+Study Buddy currently requires Codex CLI 0.138.0 or newer. The first-run wizard
+only offers Codex and does not allow the provider step to be skipped. It can
+install Codex with npm, starts authentication with the configured Codex binary,
+and refuses to continue until that binary is installed, supported, and signed
+in.
+
+At server startup, Study Buddy creates a private, app-owned `CODEX_HOME` below
+its state directory and writes a strict Codex permission profile there. Every
+Study Buddy Codex process receives that exact home, including setup, provider
+probes, runtime sessions, and read-only analysis. This makes the behavior
+independent of a user's global `~/.codex/config.toml` and ensures that a custom
+Codex binary selected in settings receives the same Study Buddy policy.
+
+The generated profile denies the Study Buddy secret store and workspace
+credential files, disables network access, disables login shells and web
+search, and removes Moodle, CIS, password, token, secret, and API-key variables
+from spawned command environments. The server rewrites this generated policy
+on startup and launches Codex with `--strict-config`, so an unsupported policy
+fails closed instead of silently falling back.
+
+The same setup path is used on Linux, native Windows, and WSL. Native Windows
+uses the `npm.cmd` and `codex.cmd` command shims when no explicit Codex binary
+path is configured. Unix file permissions additionally restrict the generated
+home to the current account; Windows relies on the user's app-data ACLs.
+
 ## Ports
 
 The dedicated scripts use `T3CODE_PORT_OFFSET=120`.

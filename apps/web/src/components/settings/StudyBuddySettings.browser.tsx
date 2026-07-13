@@ -13,7 +13,7 @@ const harness = vi.hoisted(() => {
     cisUsername: "mr25b093",
     cisUrl: "https://cis.technikum-wien.at/cis.php/",
     cisPasswordConfigured: true,
-    calendarUrl: "https://cis.technikum-wien.at/calendar.ics",
+    calendarUrl: "",
     calendarUrlConfigured: true,
     quiz: {
       accessMode: "review-only" as const,
@@ -26,15 +26,17 @@ const harness = vi.hoisted(() => {
   return {
     config,
     getStudyBuddyConfigurationMock: vi.fn(async () => config),
-    updateStudyBuddyConfigurationMock: vi.fn(async ({ patch }: { patch: Record<string, unknown> }) => {
-      if ("moodlePassword" in patch) config.moodlePasswordConfigured = true;
-      if ("cisPassword" in patch) config.cisPasswordConfigured = true;
-      if ("calendarUrl" in patch) {
-        config.calendarUrl = String(patch.calendarUrl ?? "");
-        config.calendarUrlConfigured = Boolean(config.calendarUrl);
-      }
-      return config;
-    }),
+    updateStudyBuddyConfigurationMock: vi.fn(
+      async ({ patch }: { patch: Record<string, unknown> }) => {
+        if ("moodlePassword" in patch) config.moodlePasswordConfigured = true;
+        if ("cisPassword" in patch) config.cisPasswordConfigured = true;
+        if ("calendarUrlSecret" in patch) {
+          const secret = patch.calendarUrlSecret as { operation?: string };
+          config.calendarUrlConfigured = secret.operation !== "clear";
+        }
+        return config;
+      },
+    ),
     testStudyBuddyConnectionMock: vi.fn(async () => ({
       target: "moodle",
       ok: true,
@@ -48,7 +50,7 @@ const harness = vi.hoisted(() => {
       this.captureMock.mockClear();
       config.moodlePasswordConfigured = true;
       config.cisPasswordConfigured = true;
-      config.calendarUrl = "https://cis.technikum-wien.at/calendar.ics";
+      config.calendarUrl = "";
       config.calendarUrlConfigured = true;
     },
   };

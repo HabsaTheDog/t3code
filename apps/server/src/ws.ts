@@ -71,9 +71,13 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import {
   getProviderSetupCapabilities,
+  detectProviderSetupPlatform,
   nodeProviderSetupProcessSpawner,
   ProviderSetupJobRunner,
+  ensureStudyBuddyCodexHome,
+  studyBuddyCodexEnvironment,
   ProviderSetupRequestError,
+  resolveProviderSetupCommand,
 } from "./provider/setup/index.ts";
 import { readStoredStudyBuddyConfiguration } from "./custom-skills/moodle/studyBuddyConfig.ts";
 import { redactConversationTurn } from "./telemetry/ConversationRedaction.ts";
@@ -298,9 +302,28 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const relayClient = yield* RelayClient.RelayClient;
       const runtimeContext = yield* Effect.context<never>();
       const runPromise = Effect.runPromiseWith(runtimeContext);
+      const studyBuddyCodexPaths = yield* Effect.tryPromise({
+        try: () => ensureStudyBuddyCodexHome(config),
+        catch: (cause) =>
+          new ProviderSetupError({
+            code: "internal_error",
+            message: cause instanceof Error ? cause.message : "Codex security setup failed.",
+          }),
+      });
+      const configuredProviders = yield* serverSettings.getSettings;
+      const configuredCodexBinary = configuredProviders.providers.codex.binaryPath;
+      const providerSetupPlatform = detectProviderSetupPlatform();
       const providerSetupRunner = new ProviderSetupJobRunner({
         spawner: nodeProviderSetupProcessSpawner,
         cwd: config.cwd,
+        env: studyBuddyCodexEnvironment(studyBuddyCodexPaths),
+        platform: providerSetupPlatform,
+        resolveCommand: (action) =>
+          resolveProviderSetupCommand({
+            action,
+            platform: providerSetupPlatform,
+            configuredCodexBinary,
+          }),
         refreshProviderStatus: () => runPromise(providerRegistry.refresh().pipe(Effect.asVoid)),
       });
       const providerSetupError = (cause: unknown): ProviderSetupError => {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { ServerConfigShape } from "../../../config.ts";
 import { testStudyBuddyConnection } from "../connectionTests.ts";
 import type { StoredStudyBuddyConfiguration } from "../studyBuddyConfig.ts";
+import type { BrowserLoginConfig } from "../browserAuth.ts";
 
 const checkedAt = "2026-06-28T12:00:00.000Z";
 const config = { cwd: "/tmp/study-buddy" } as ServerConfigShape;
@@ -51,7 +52,9 @@ describe("Study Buddy connection tests", () => {
   it.each(loginCases)(
     "reports a typed $target login success without forwarding URL credentials",
     async (input) => {
-      const ensureLogin = vi.fn(async () => undefined);
+      const ensureLogin = vi.fn(
+        async (_page: unknown, _loginConfig: BrowserLoginConfig) => undefined,
+      );
       const result = await Effect.runPromise(
         testStudyBuddyConnection(config, input.target, {
           readConfiguration: async () => stored(input.values),
@@ -68,13 +71,10 @@ describe("Study Buddy connection tests", () => {
         message: expect.stringContaining("succeeded"),
         checkedAt,
       });
-      expect(ensureLogin).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({
-          targetUrl: input.expectedUrl,
-          username: "student",
-        }),
-      );
+      const loginConfig = ensureLogin.mock.calls[0]?.[1];
+      expect(loginConfig).toMatchObject({ targetUrl: input.expectedUrl });
+      expect(loginConfig?.resolveUsername()).toBe("student");
+      expect(loginConfig?.allowedOrigins).toEqual(new Set([new URL(input.expectedUrl).origin]));
       expect(JSON.stringify(result)).not.toContain("secret");
       expect(browser.close).toHaveBeenCalled();
     },

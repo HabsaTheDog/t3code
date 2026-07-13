@@ -3144,10 +3144,12 @@ describe("ProviderRuntimeIngestion", () => {
       reviewNote: "wrong file",
       reviewerTurnId: reviewTurnId,
     });
-    expect(reviewedThread.delegatedWork.find((entry) => entry.id === "child-failed")).toMatchObject({
-      reviewStatus: "rejected",
-      reviewerTurnId: reviewTurnId,
-    });
+    expect(reviewedThread.delegatedWork.find((entry) => entry.id === "child-failed")).toMatchObject(
+      {
+        reviewStatus: "rejected",
+        reviewerTurnId: reviewTurnId,
+      },
+    );
   });
 
   it("projects structured user input request and resolution as thread activities", async () => {

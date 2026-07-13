@@ -1,7 +1,12 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { END, START, StateGraph } from "@langchain/langgraph";
-import { createAgentBrowserClient, verifyAgentBrowserPolicy } from "./agentBrowserClient.ts";
+import {
+  createAgentBrowserClient,
+  type AgentBrowserClient,
+  verifyAgentBrowserPolicy,
+} from "./agentBrowserClient.ts";
+import { createBrowserClient } from "./browserClient.ts";
 import { createCodexClient, type CodexClient } from "./codexClient.ts";
 import {
   AgentStateAnnotation,
@@ -33,6 +38,7 @@ import {
   isPureScheduleRequest,
   requiresCisDirectly,
 } from "./calendarAdapter.ts";
+import { redactSensitiveValues } from "./browserSecurity.ts";
 
 const MAX_RETRIES = 3;
 
@@ -45,6 +51,7 @@ export interface GraphDependencies {
   quizPageNode?: ReturnType<typeof createQuizPageNode>;
   quizSolverNode?: ReturnType<typeof createQuizSolverNode>;
   quizFillNode?: ReturnType<typeof createQuizFillNode>;
+  quizBrowser?: AgentBrowserClient;
 }
 
 export async function runMoodleGraph(
@@ -58,7 +65,10 @@ export async function runMoodleGraph(
   ) {
     await runAgentBrowserPreflight(config);
   }
-  const graph = buildMoodleGraph(config, dependencies);
+  const quizBrowser = isQuizPrompt(config.prompt)
+    ? (dependencies.quizBrowser ?? createBrowserClient(config))
+    : undefined;
+  const graph = buildMoodleGraph(config, { ...dependencies, quizBrowser });
   let state: AgentState = initialAgentState;
   try {
     state = (await graph.invoke(initialAgentState)) as AgentState;
@@ -67,7 +77,13 @@ export async function runMoodleGraph(
       ...state,
       error_log: error instanceof Error ? error.message : String(error),
     };
+  } finally {
+    if (quizBrowser && !config.keepBrowserOpen) {
+      await quizBrowser.close().catch(() => undefined);
+    }
   }
+
+  state = sanitizeGraphState(state, config);
 
   const ok = !state.error_log && Boolean(state.final_document.trim());
   const calendarOnlyAnswer = Boolean(
@@ -101,6 +117,28 @@ export async function runMoodleGraph(
   }
   return {
     ...result,
+  };
+}
+
+export function sanitizeGraphState(state: AgentState, config: MoodleRuntimeConfig): AgentState {
+  const sensitiveValues = [
+    config.username,
+    config.password,
+    config.cisUsername,
+    config.cisPassword,
+    config.calendarUrl,
+  ];
+  const sanitizeJson = <T>(value: T): T =>
+    JSON.parse(redactSensitiveValues(JSON.stringify(value), sensitiveValues)) as T;
+  return {
+    ...state,
+    moodle_raw_text: redactSensitiveValues(state.moodle_raw_text, sensitiveValues),
+    extracted_data: sanitizeJson(state.extracted_data),
+    final_document: redactSensitiveValues(state.final_document, sensitiveValues),
+    error_log: state.error_log
+      ? redactSensitiveValues(state.error_log, sensitiveValues)
+      : state.error_log,
+    source_coverage: sanitizeJson(state.source_coverage),
   };
 }
 
@@ -144,16 +182,26 @@ export function buildMoodleGraph(
   const analyzerNode = createAnalyzerNode(config, codex);
   const formatterNode = createFormatterNode(config, codex);
   const diskWriterNode = createDiskWriterNode(config);
+  const quizBrowser = dependencies.quizBrowser ?? createBrowserClient(config);
 
   return new StateGraph(AgentStateAnnotation)
     .addNode("scraper", scraperNode)
     .addNode("calendar", calendarNode)
     .addNode("calendarAnswer", createCalendarAnswerNode(config))
     .addNode("router", async () => ({}))
-    .addNode("quizTarget", dependencies.quizTargetNode ?? createQuizTargetNode(config))
-    .addNode("quizPage", dependencies.quizPageNode ?? createQuizPageNode(config))
+    .addNode(
+      "quizTarget",
+      dependencies.quizTargetNode ?? createQuizTargetNode(config, { agentBrowser: quizBrowser }),
+    )
+    .addNode(
+      "quizPage",
+      dependencies.quizPageNode ?? createQuizPageNode(config, { agentBrowser: quizBrowser }),
+    )
     .addNode("quizSolver", dependencies.quizSolverNode ?? createQuizSolverNode(config, { codex }))
-    .addNode("quizFill", dependencies.quizFillNode ?? createQuizFillNode(config))
+    .addNode(
+      "quizFill",
+      dependencies.quizFillNode ?? createQuizFillNode(config, { agentBrowser: quizBrowser }),
+    )
     .addNode("cisScraper", cisScraperNode)
     .addNode("analyzer", analyzerNode)
     .addNode("formatter", formatterNode)

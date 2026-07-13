@@ -2,6 +2,7 @@ export {
   detectProviderSetupPlatform,
   getProviderSetupCapabilities,
   resolveProviderSetupAction,
+  resolveProviderSetupCommand,
   type ResolvedProviderSetupAction,
 } from "./capabilities.ts";
 export {
@@ -11,6 +12,15 @@ export {
 } from "./jobRunner.ts";
 export { nodeProviderSetupProcessSpawner } from "./nodeProcessSpawner.ts";
 export { makeProviderSetupProgressSanitizer, sanitizeProviderSetupOutput } from "./sanitize.ts";
+export {
+  buildStudyBuddyCodexConfig,
+  ensureStudyBuddyCodexHome,
+  MINIMUM_STUDY_BUDDY_CODEX_VERSION,
+  resolveStudyBuddyCodexPolicyPaths,
+  STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE,
+  STUDY_BUDDY_CODEX_PERMISSION_PROFILE,
+  studyBuddyCodexEnvironment,
+} from "./studyBuddyCodexPolicy.ts";
 export {
   type ProviderSetupAction,
   type ProviderSetupActionCapability,

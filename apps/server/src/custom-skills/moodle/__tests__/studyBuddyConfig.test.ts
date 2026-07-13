@@ -35,7 +35,7 @@ describe("typed Study Buddy configuration", () => {
     expect(next).toContain("CIS_USERNAME=if00cis\n");
   });
 
-  it("returns public URLs while keeping only passwords hidden", () => {
+  it("returns public site URLs while keeping passwords and calendar bearer URLs hidden", () => {
     const raw = [
       "MOODLE_USERNAME=if00test",
       "MOODLE_PASSWORD=secret",
@@ -53,7 +53,7 @@ describe("typed Study Buddy configuration", () => {
     expect(result.moodlePasswordConfigured).toBe(true);
     expect(result.cisPasswordConfigured).toBe(true);
     expect(result.calendarUrlConfigured).toBe(true);
-    expect(result.calendarUrl).toBe("https://calendar.example/private-token.ics");
+    expect(result.calendarUrl).toBe("");
     expect(result.moodleDashboardUrl).toBe("https://moodle.example/my/?id=42");
     expect(JSON.stringify(result)).not.toContain("secret");
   });
@@ -69,13 +69,16 @@ describe("typed Study Buddy configuration", () => {
           moodleUsername: "if00test",
           moodlePassword: { operation: "set", value: "moodle-secret" },
           cisPassword: { operation: "clear" },
-          calendarUrl: "webcal://calendar.example/private.ics",
+          calendarUrlSecret: {
+            operation: "set",
+            value: "webcal://calendar.example/private.ics",
+          },
         }),
       );
       await Effect.runPromise(
         updateStudyBuddyConfiguration(config, {
           moodlePassword: { operation: "unchanged" },
-          calendarUrl: "webcal://calendar.example/private.ics",
+          calendarUrlSecret: { operation: "unchanged" },
         }),
       );
 
@@ -85,6 +88,24 @@ describe("typed Study Buddy configuration", () => {
       expect(raw).toContain("CIS_PASSWORD=\n");
       expect(raw).toContain("CIS_CALENDAR_URL=webcal://calendar.example/private.ics\n");
       expect((await stat(envPath)).mode & 0o777).toBe(0o600);
+    } finally {
+      if (previousRoot === undefined) delete process.env.STUDY_BUDDY_ROOT;
+      else process.env.STUDY_BUDDY_ROOT = previousRoot;
+    }
+  });
+
+  it("rejects plaintext remote login origins", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "study-buddy-config-"));
+    const previousRoot = process.env.STUDY_BUDDY_ROOT;
+    process.env.STUDY_BUDDY_ROOT = root;
+    try {
+      await expect(
+        Effect.runPromise(
+          updateStudyBuddyConfiguration({ cwd: root } as ServerConfigShape, {
+            moodleDashboardUrl: "http://university.example/login",
+          }),
+        ),
+      ).rejects.toMatchObject({ message: expect.stringContaining("use HTTPS") });
     } finally {
       if (previousRoot === undefined) delete process.env.STUDY_BUDDY_ROOT;
       else process.env.STUDY_BUDDY_ROOT = previousRoot;

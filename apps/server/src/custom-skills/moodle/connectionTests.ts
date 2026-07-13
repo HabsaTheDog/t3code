@@ -95,6 +95,11 @@ export const testStudyBuddyConnection = (
               targetUrl,
               username,
               password,
+              allowedOrigins: parseAllowedOrigins(
+                stored.values[
+                  isMoodle ? "MOODLE_LOGIN_ALLOWED_ORIGINS" : "CIS_LOGIN_ALLOWED_ORIGINS"
+                ],
+              ),
             }),
           );
         } finally {
@@ -139,6 +144,18 @@ function sanitizedUrl(value: string): string {
 
 function firstUrl(value: string | undefined): string | null {
   return value?.split(/[\s,]+/).find(Boolean) ?? null;
+}
+
+function parseAllowedOrigins(value: string | undefined): string[] {
+  return (value ?? "").split(/[\s,]+/).flatMap((entry) => {
+    if (!entry) return [];
+    try {
+      const parsed = new URL(entry);
+      return parsed.protocol === "https:" ? [parsed.origin] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 function label(target: StudyBuddyConnectionTarget): string {

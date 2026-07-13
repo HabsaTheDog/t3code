@@ -253,9 +253,7 @@ function DelegatedWorkStatusBanner({ thread }: { thread: Thread }) {
   );
   const pendingReview = delegatedWork.filter(
     (entry) =>
-      entry.required &&
-      entry.blockingPolicy === "required" &&
-      entry.reviewStatus === "pending",
+      entry.required && entry.blockingPolicy === "required" && entry.reviewStatus === "pending",
   );
   const reviewing = deferredFinalizations.some((entry) => entry.state === "reviewing");
   if (activeRequired.length === 0 && pendingReview.length === 0 && !reviewing) {

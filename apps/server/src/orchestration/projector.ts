@@ -575,7 +575,8 @@ export function projectEvent(
           payload.deferredFinalization,
         ].toSorted(
           (left, right) =>
-            left.createdAt.localeCompare(right.createdAt) || left.turnId.localeCompare(right.turnId),
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.turnId.localeCompare(right.turnId),
         );
 
         return {

@@ -968,7 +968,7 @@ const make = Effect.gen(function* () {
     );
     const originalUserMessage =
       [...input.thread.messages]
-        .reverse()
+        .toReversed()
         .find((message) => message.role === "user" && message.turnId === null)?.text ??
       input.thread.messages.find((message) => message.role === "user")?.text ??
       "";
@@ -1013,47 +1013,49 @@ const make = Effect.gen(function* () {
     ].join("\n");
   };
 
-  const processDelegatedWorkReviewRequested = Effect.fn(
-    "processDelegatedWorkReviewRequested",
-  )(function* (event: Extract<ProviderIntentEvent, { type: "thread.delegated-work-review-requested" }>) {
-    const thread = yield* resolveThread(event.payload.threadId);
-    if (!thread) {
-      return;
-    }
-    const deferred = (thread.deferredFinalizations ?? []).find(
-      (entry) =>
-        String(entry.turnId) === String(event.payload.turnId) &&
-        (entry.state === "waiting" || entry.state === "reviewing"),
-    );
-    if (!deferred || deferred.reviewTurnId !== undefined) {
-      return;
-    }
+  const processDelegatedWorkReviewRequested = Effect.fn("processDelegatedWorkReviewRequested")(
+    function* (
+      event: Extract<ProviderIntentEvent, { type: "thread.delegated-work-review-requested" }>,
+    ) {
+      const thread = yield* resolveThread(event.payload.threadId);
+      if (!thread) {
+        return;
+      }
+      const deferred = (thread.deferredFinalizations ?? []).find(
+        (entry) =>
+          String(entry.turnId) === String(event.payload.turnId) &&
+          (entry.state === "waiting" || entry.state === "reviewing"),
+      );
+      if (!deferred || deferred.reviewTurnId !== undefined) {
+        return;
+      }
 
-    const reviewPrompt = buildDelegatedWorkReviewPrompt({
-      thread,
-      turnId: event.payload.turnId,
-    });
-    const sendTurnRequest = yield* buildSendTurnRequestForThread({
-      threadId: event.payload.threadId,
-      messageText: reviewPrompt,
-      createdAt: event.payload.createdAt,
-    });
+      const reviewPrompt = buildDelegatedWorkReviewPrompt({
+        thread,
+        turnId: event.payload.turnId,
+      });
+      const sendTurnRequest = yield* buildSendTurnRequestForThread({
+        threadId: event.payload.threadId,
+        messageText: reviewPrompt,
+        createdAt: event.payload.createdAt,
+      });
 
-    const result = yield* providerService.sendTurn(sendTurnRequest);
-    yield* orchestrationEngine.dispatch({
-      type: "thread.deferred-finalization.upsert",
-      commandId: yield* serverCommandId("delegated-work-review-turn-set"),
-      threadId: event.payload.threadId,
-      deferredFinalization: {
-        ...deferred,
-        state: "reviewing",
-        reviewTurnId: result.turnId,
-        updatedAt: event.payload.createdAt,
-        reason: "pending_delegated_review",
-      },
-      createdAt: event.payload.createdAt,
-    });
-  });
+      const result = yield* providerService.sendTurn(sendTurnRequest);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.deferred-finalization.upsert",
+        commandId: yield* serverCommandId("delegated-work-review-turn-set"),
+        threadId: event.payload.threadId,
+        deferredFinalization: {
+          ...deferred,
+          state: "reviewing",
+          reviewTurnId: result.turnId,
+          updatedAt: event.payload.createdAt,
+          reason: "pending_delegated_review",
+        },
+        createdAt: event.payload.createdAt,
+      });
+    },
+  );
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,

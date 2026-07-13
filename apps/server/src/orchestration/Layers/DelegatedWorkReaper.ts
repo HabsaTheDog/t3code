@@ -48,18 +48,14 @@ function envInt(name: string): number | undefined {
 function hasActiveRequiredWork(thread: OrchestrationThread): boolean {
   return thread.delegatedWork.some(
     (entry) =>
-      entry.required &&
-      entry.blockingPolicy === "required" &&
-      activeStatuses.has(entry.status),
+      entry.required && entry.blockingPolicy === "required" && activeStatuses.has(entry.status),
   );
 }
 
 function hasPendingRequiredReview(thread: OrchestrationThread): boolean {
   return thread.delegatedWork.some(
     (entry) =>
-      entry.required &&
-      entry.blockingPolicy === "required" &&
-      entry.reviewStatus === "pending",
+      entry.required && entry.blockingPolicy === "required" && entry.reviewStatus === "pending",
   );
 }
 
@@ -97,8 +93,8 @@ const makeDelegatedWorkReaper = (options?: DelegatedWorkReaperLiveOptions) =>
       let timedOutCount = 0;
 
       for (const thread of snapshot.threads) {
-        let nextThread = thread;
-        for (const work of thread.delegatedWork) {
+        const nextDelegatedWork = [...thread.delegatedWork];
+        for (const [workIndex, work] of thread.delegatedWork.entries()) {
           if (!activeStatuses.has(work.status)) {
             continue;
           }
@@ -118,7 +114,8 @@ const makeDelegatedWorkReaper = (options?: DelegatedWorkReaperLiveOptions) =>
             completedAt: nowIso,
             timedOutAt: nowIso,
             updatedAt: nowIso,
-            reviewStatus: work.required && work.blockingPolicy === "required" ? "pending" : "not_required",
+            reviewStatus:
+              work.required && work.blockingPolicy === "required" ? "pending" : "not_required",
           };
           yield* orchestrationEngine.dispatch({
             type: "thread.delegated-work.upsert",
@@ -151,13 +148,10 @@ const makeDelegatedWorkReaper = (options?: DelegatedWorkReaperLiveOptions) =>
             blockingPolicy: work.blockingPolicy,
           });
           timedOutCount += 1;
-          nextThread = {
-            ...nextThread,
-            delegatedWork: nextThread.delegatedWork.map((entry) =>
-              entry.id === work.id ? timedOut : entry,
-            ),
-          };
+          nextDelegatedWork[workIndex] = timedOut;
         }
+
+        const nextThread = { ...thread, delegatedWork: nextDelegatedWork };
 
         if (!hasActiveRequiredWork(nextThread) && hasPendingRequiredReview(nextThread)) {
           for (const deferred of nextThread.deferredFinalizations ?? []) {

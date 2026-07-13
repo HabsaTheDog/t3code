@@ -165,9 +165,18 @@ function decodedRelayClientError(message: string) {
     const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
-      cause,
+      // Fetch may detach a request-body ArrayBuffer. Keeping the complete
+      // HttpClientError graph then makes logging/hash inspection throw instead
+      // of preserving the original transport failure.
+      cause: safeErrorSummary(cause),
     });
   };
+}
+
+function safeErrorSummary(cause: unknown): unknown {
+  return cause instanceof Error
+    ? { name: cause.name, message: cause.message }
+    : { type: typeof cause };
 }
 
 function findRelayProtectedError(cause: unknown): RelayProtectedErrorType | null {

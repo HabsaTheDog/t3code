@@ -130,6 +130,8 @@ describe("ProviderSetupJobRunner", () => {
         },
       },
       refreshProviderStatus: async () => undefined,
+      resolveCommand: (action) =>
+        action.provider === "codex" ? "/opt/study-buddy/bin/codex" : action.executable,
       platform: { platform: "linux", isWsl: false },
       createJobId: () => "job-secret",
     });
@@ -143,7 +145,7 @@ describe("ProviderSetupJobRunner", () => {
     const events = await eventsPromise;
 
     expect(spawned[0]).toMatchObject({
-      command: "codex",
+      command: "/opt/study-buddy/bin/codex",
       args: ["login", "--with-api-key"],
     });
     expect(JSON.stringify(spawned)).not.toContain(apiKey);
@@ -161,7 +163,7 @@ describe("ProviderSetupJobRunner", () => {
       platform: { platform: "linux", isWsl: false },
     });
 
-    expect(() => runner.start({ actionId: "cursor.install" })).toThrowError(
+    expect(() => runner.start({ actionId: "codex.install" })).toThrowError(
       expect.objectContaining<Partial<ProviderSetupRequestError>>({
         code: "confirmation_required",
       }),
@@ -169,7 +171,7 @@ describe("ProviderSetupJobRunner", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("rejects unknown and platform-unsupported action ids without spawning", () => {
+  it("rejects non-Codex and injected action ids without spawning", () => {
     const spawn = vi.fn();
     const runner = new ProviderSetupJobRunner({
       spawner: { spawn },
@@ -179,7 +181,7 @@ describe("ProviderSetupJobRunner", () => {
 
     expect(() => runner.start({ actionId: "cursor.install", confirmed: true })).toThrowError(
       expect.objectContaining<Partial<ProviderSetupRequestError>>({
-        code: "unsupported_action",
+        code: "unknown_action",
       }),
     );
     expect(() =>
@@ -216,7 +218,7 @@ describe("ProviderSetupJobRunner", () => {
       createJobId: () => "job-cancel",
     });
 
-    const handle = runner.start({ actionId: "claude.auth.login" });
+    const handle = runner.start({ actionId: "codex.auth.browser" });
     const eventsPromise = collectEvents(handle.events);
     await waitUntil(() => spawned);
     expect(handle.cancel()).toBe(true);
@@ -247,7 +249,7 @@ describe("ProviderSetupJobRunner", () => {
       platform: { platform: "linux", isWsl: false },
       createJobId: () => "job-input",
     });
-    const handle = runner.start({ actionId: "opencode.auth.login" });
+    const handle = runner.start({ actionId: "codex.auth.browser" });
     await waitUntil(() => spawned);
 
     expect(spawnInput).toMatchObject({ pty: true });
@@ -296,7 +298,7 @@ describe("ProviderSetupJobRunner", () => {
       createJobId: () => "job-replay",
     });
 
-    const handle = runner.start({ actionId: "opencode.install", confirmed: true });
+    const handle = runner.start({ actionId: "codex.install", confirmed: true });
     await handle.completion;
     const events = runner.events(handle.jobId);
 

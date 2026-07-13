@@ -2,6 +2,7 @@ import type { CodexClient } from "../codexClient.ts";
 import type { LangGraphAgentState } from "../state.ts";
 import type { MoodleRuntimeConfig } from "../types.ts";
 import { validateTypst } from "../validation.ts";
+import { redactSensitiveValues } from "../browserSecurity.ts";
 import {
   STUDY_BUDDY_TEMPLATE_FILE,
   STUDY_BUDDY_TYPST_TEMPLATE,
@@ -45,7 +46,7 @@ function appendFormatterWarning(document: string, error: string): string {
 }
 
 function buildFormatterPrompt(config: MoodleRuntimeConfig, state: LangGraphAgentState): string {
-  return [
+  const prompt = [
     "Generate a complete Typst document for an engineering study note.",
     studyBuddyTemplatePromptReference(),
     "Return only Typst source. Do not include Markdown fences or explanation.",
@@ -68,6 +69,13 @@ function buildFormatterPrompt(config: MoodleRuntimeConfig, state: LangGraphAgent
   ]
     .filter(Boolean)
     .join("\n\n");
+  return redactSensitiveValues(prompt, [
+    config.username,
+    config.password,
+    config.cisUsername,
+    config.cisPassword,
+    config.calendarUrl,
+  ]);
 }
 
 function stripTypstFence(text: string): string {

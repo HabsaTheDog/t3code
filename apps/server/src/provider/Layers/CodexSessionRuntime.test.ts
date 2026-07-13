@@ -148,6 +148,21 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it("does not override the configured Study Buddy permission profile", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Inspect the workspace",
+        useConfiguredPermissionProfile: true,
+      }),
+    );
+
+    assert.equal(params.approvalPolicy, undefined);
+    assert.equal(params.sandboxPolicy, undefined);
+    assert.deepStrictEqual(params.input, [{ type: "text", text: "Inspect the workspace" }]);
+  });
+
   it("injects the saved personality when interaction mode is absent", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
@@ -284,6 +299,37 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
+  it("lets the configured permission profile own new thread permissions", async () => {
+    let payload: CodexRpc.ClientRequestParamsByMethod["thread/start"] | undefined;
+    const client = {
+      request: <M extends "thread/start" | "thread/resume">(
+        method: M,
+        input: CodexRpc.ClientRequestParamsByMethod[M],
+      ) => {
+        if (method === "thread/start") payload = input;
+        return Effect.succeed(
+          makeThreadOpenResponse("secure-thread") as CodexRpc.ClientRequestResponsesByMethod[M],
+        );
+      },
+    };
+
+    await Effect.runPromise(
+      openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-secure"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: undefined,
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        useConfiguredPermissionProfile: true,
+      }),
+    );
+
+    assert.equal(payload?.approvalPolicy, undefined);
+    assert.equal(payload?.sandbox, undefined);
+  });
+
   it("falls back to thread/start when resume fails recoverably", async () => {
     const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
     const started = makeThreadOpenResponse("fresh-thread");

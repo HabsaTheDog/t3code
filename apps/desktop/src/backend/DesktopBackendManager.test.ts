@@ -16,7 +16,12 @@ import * as Sink from "effect/Sink";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
@@ -85,7 +90,7 @@ function responseForRequest(
 function httpClientLayer(
   handler: (
     request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>,
 ) {
   return Layer.succeed(
     HttpClient.HttpClient,
@@ -306,7 +311,12 @@ describe("DesktopBackendManager", () => {
             requestUrls.push(request.url);
             yield* Deferred.succeed(firstRequest, void 0);
             if (requestUrls.length === 1) {
-              yield* Effect.fail(new Error("connect ECONNREFUSED 127.0.0.1:3773"));
+              return yield* new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  description: "connect ECONNREFUSED 127.0.0.1:3773",
+                }),
+              });
             }
             return responseForRequest(request, 200);
           }),

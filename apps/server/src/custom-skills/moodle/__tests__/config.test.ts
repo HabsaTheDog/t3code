@@ -20,6 +20,8 @@ const originalEnv = {
   MOODLE_QUIZ_MIN_ATTEMPTS_LEFT: process.env.MOODLE_QUIZ_MIN_ATTEMPTS_LEFT,
   MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD: process.env.MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD,
   MOODLE_QUIZ_BLOCK_FINAL_SUBMIT: process.env.MOODLE_QUIZ_BLOCK_FINAL_SUBMIT,
+  MOODLE_BROWSER_BACKEND: process.env.MOODLE_BROWSER_BACKEND,
+  CIS_BROWSER_BACKEND: process.env.CIS_BROWSER_BACKEND,
 };
 afterEach(async () => {
   restoreEnv();
@@ -48,15 +50,51 @@ describe("moodle config env loading", () => {
     );
     await writeFile(rootEnv, "MOODLE_USERNAME=root-user\nMOODLE_PASSWORD=root-pass\n", "utf8");
 
-    loadEnvFiles([serverEnv, rootEnv]);
+    const environment = loadEnvFiles([serverEnv, rootEnv], {});
 
-    expect(process.env.MOODLE_USERNAME).toBe("server-user");
-    expect(process.env.MOODLE_PASSWORD).toBe("root-pass");
-    expect(process.env.CIS_URLS).toBe("https://server.example/cis");
+    expect(environment.MOODLE_USERNAME).toBe("server-user");
+    expect(environment.MOODLE_PASSWORD).toBe("root-pass");
+    expect(environment.CIS_URLS).toBe("https://server.example/cis");
+    expect(process.env.MOODLE_USERNAME).toBeUndefined();
+    expect(process.env.MOODLE_PASSWORD).toBeUndefined();
   });
 });
 
 describe("moodle output paths", () => {
+  it("forces credential-bearing runs through Playwright instead of CLI arguments", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "moodle-workspace-"));
+    process.env.STUDY_BUDDY_WORKSPACE = tempDir;
+    process.env.MOODLE_USERNAME = "student";
+    process.env.MOODLE_PASSWORD = "credential-canary";
+    process.env.MOODLE_BROWSER_BACKEND = "agent-browser";
+    process.env.CIS_BROWSER_BACKEND = "agent-browser";
+
+    const config = createRuntimeConfig({
+      prompt: "Generate notes",
+      moodleUrl: "https://moodle.technikum-wien.at/my/",
+    });
+    createdRunDir = config.runDir;
+
+    expect(config.browserBackend).toBe("playwright");
+    expect(config.cisBrowserBackend).toBe("playwright");
+  });
+
+  it("derives the navigation allowlist from arbitrary configured university hosts", async () => {
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "moodle-workspace-"));
+    process.env.STUDY_BUDDY_WORKSPACE = tempDir;
+
+    const config = createRuntimeConfig({
+      prompt: "Generate notes",
+      moodleUrl: "https://learning.example-university.edu/my/",
+      cisUrls: ["https://campus.example-university.edu/student/"],
+    });
+    createdRunDir = config.runDir;
+
+    expect(config.browserAllowedDomains).toEqual(
+      expect.arrayContaining(["learning.example-university.edu", "campus.example-university.edu"]),
+    );
+  });
+
   it("reads the private calendar URL from local environment configuration", async () => {
     tempDir = await mkdtemp(path.join(os.tmpdir(), "moodle-workspace-"));
     process.env.STUDY_BUDDY_WORKSPACE = tempDir;

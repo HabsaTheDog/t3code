@@ -73,6 +73,9 @@ function makeSidebarThreadSummary(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    activeDelegatedWorkCount: 0,
+    activeRequiredDelegatedWorkCount: 0,
+    pendingDelegatedReviewCount: 0,
     ...overrides,
   };
 }

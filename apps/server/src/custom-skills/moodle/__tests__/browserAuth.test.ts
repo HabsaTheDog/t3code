@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createBrowserLoginConfig, ensureLoggedIn } from "../browserAuth.ts";
+import {
+  createBrowserLoginConfig,
+  ensureAgentBrowserLoggedIn,
+  ensureLoggedIn,
+} from "../browserAuth.ts";
 
 describe("ensureLoggedIn connection validation", () => {
   it("rejects an HTTP error page instead of treating it as a reachable dashboard", async () => {
@@ -87,7 +91,9 @@ describe("ensureLoggedIn connection validation", () => {
       locator: vi.fn((selector: string) => ({
         first: () => ({
           count: async () =>
-            ["#username", "#password", "#loginbtn", "#loginerrormessage"].includes(selector) ? 1 : 0,
+            ["#username", "#password", "#loginbtn", "#loginerrormessage"].includes(selector)
+              ? 1
+              : 0,
           textContent: async () =>
             selector === "#loginerrormessage" ? "Invalid login, please try again" : null,
           fill: async () => undefined,
@@ -119,7 +125,8 @@ describe("ensureLoggedIn connection validation", () => {
       waitForLoadState: vi.fn(async () => undefined),
       locator: vi.fn((selector: string) => ({
         first: () => ({
-          count: async () => (["#username", "#password", "#loginbtn", "body"].includes(selector) ? 1 : 0),
+          count: async () =>
+            ["#username", "#password", "#loginbtn", "body"].includes(selector) ? 1 : 0,
           textContent: async () =>
             selector === "body" ? "Please enter your verification code to continue" : null,
           fill: async () => undefined,
@@ -139,5 +146,94 @@ describe("ensureLoggedIn connection validation", () => {
         }),
       ),
     ).rejects.toThrow("verification code");
+  });
+
+  it("fails closed on an unknown SSO login surface instead of extracting it", async () => {
+    const page = {
+      goto: vi.fn(async () => ({ ok: () => true, status: () => 200 })),
+      url: vi.fn(() => "https://identity.example/sso/login"),
+      locator: vi.fn(() => ({
+        first: () => ({
+          count: async () => 0,
+          textContent: async () => null,
+        }),
+      })),
+    };
+
+    await expect(
+      ensureLoggedIn(
+        page as never,
+        createBrowserLoginConfig({
+          serviceName: "University SSO",
+          targetUrl: "https://identity.example/sso/login",
+          allowedOrigins: ["https://identity.example"],
+        }),
+      ),
+    ).rejects.toThrow("login did not complete");
+  });
+
+  it("redacts a password echoed by a hostile login error page", async () => {
+    const password = "echo-canary-password";
+    const page = {
+      goto: vi.fn(async () => ({ ok: () => true, status: () => 200 })),
+      url: vi.fn(() => "https://moodle.example/login/index.php"),
+      waitForLoadState: vi.fn(async () => undefined),
+      locator: vi.fn((selector: string) => ({
+        first: () => ({
+          count: async () =>
+            ["#username", "#password", "#loginbtn", "#loginerrormessage"].includes(selector)
+              ? 1
+              : 0,
+          textContent: async () =>
+            selector === "#loginerrormessage" ? `Invalid password ${password}` : null,
+          fill: async () => undefined,
+          click: async () => undefined,
+        }),
+      })),
+    };
+
+    const failure = ensureLoggedIn(
+      page as never,
+      createBrowserLoginConfig({
+        serviceName: "Moodle",
+        targetUrl: "https://moodle.example/login/index.php",
+        username: "student",
+        password,
+      }),
+    );
+    await expect(failure).rejects.not.toThrow(password);
+    await expect(failure).rejects.toThrow("[REDACTED_CREDENTIAL]");
+  });
+
+  it("blocks agent-browser CLI credential filling when a login form is present", async () => {
+    const fill = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const lockAuthentication = vi.fn();
+    const failAuthentication = vi.fn();
+    const client = {
+      open: vi.fn(async () => ({ stdout: "", stderr: "" })),
+      snapshot: vi.fn(async () => ({
+        origin: "https://moodle.example",
+        refs: { p1: { role: "textbox", name: "Password" } },
+        snapshot: 'textbox "Password" [ref=p1]',
+      })),
+      fill,
+      lockAuthentication,
+      failAuthentication,
+    };
+
+    await expect(
+      ensureAgentBrowserLoggedIn(
+        client as never,
+        createBrowserLoginConfig({
+          serviceName: "Moodle",
+          targetUrl: "https://moodle.example/login/index.php",
+          username: "student",
+          password: "argv-canary",
+        }),
+      ),
+    ).rejects.toThrow("command-line filling is blocked");
+    expect(fill).not.toHaveBeenCalled();
+    expect(lockAuthentication).toHaveBeenCalledOnce();
+    expect(failAuthentication).toHaveBeenCalledOnce();
   });
 });

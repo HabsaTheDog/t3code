@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { getProviderSetupCapabilities, resolveProviderSetupAction } from "./capabilities.ts";
+import {
+  getProviderSetupCapabilities,
+  resolveProviderSetupAction,
+  resolveProviderSetupCommand,
+} from "./capabilities.ts";
 
 const linux = { platform: "linux", isWsl: false } as const;
 
 describe("provider setup capability registry", () => {
-  it("exposes every supported provider through stable allowlisted action ids", () => {
+  it("exposes only Codex through stable allowlisted action ids", () => {
     const capabilities = getProviderSetupCapabilities(linux);
 
-    expect(capabilities.map((capability) => capability.provider)).toEqual([
-      "codex",
-      "claude",
-      "cursor",
-      "opencode",
-    ]);
+    expect(capabilities.map((capability) => capability.provider)).toEqual(["codex"]);
     expect(
       capabilities.flatMap((capability) => capability.actions.map((action) => action.id)),
     ).toEqual([
@@ -22,14 +21,6 @@ describe("provider setup capability registry", () => {
       "codex.auth.device-code",
       "codex.auth.api-key",
       "codex.auth.access-token",
-      "claude.install",
-      "claude.auth.login",
-      "claude.auth.console",
-      "claude.auth.api-key",
-      "cursor.install",
-      "cursor.auth.login",
-      "opencode.install",
-      "opencode.auth.login",
     ]);
     expect(capabilities).not.toHaveProperty("command");
     expect(JSON.stringify(capabilities)).not.toContain("@openai/codex");
@@ -60,46 +51,53 @@ describe("provider setup capability registry", () => {
       args: ["login", "--with-access-token"],
       secretInput: "access-token",
     });
-    expect(resolveProviderSetupAction("claude.auth.login", linux)).toMatchObject({
-      executable: "claude",
-      args: ["auth", "login"],
-    });
-    expect(resolveProviderSetupAction("claude.auth.console", linux)).toMatchObject({
-      executable: "claude",
-      args: ["auth", "login", "--console"],
-    });
-    expect(resolveProviderSetupAction("claude.auth.api-key", linux)).toMatchObject({
-      executable: "claude",
-      args: ["auth", "status"],
-      secretInput: "api-key",
-    });
-    expect(resolveProviderSetupAction("cursor.auth.login", linux)).toMatchObject({
-      executable: "cursor-agent",
-      args: ["login"],
-    });
-    expect(resolveProviderSetupAction("opencode.install", linux)).toMatchObject({
-      executable: "npm",
-      args: ["install", "-g", "opencode-ai"],
-    });
-    expect(resolveProviderSetupAction("opencode.auth.login", linux)).toMatchObject({
-      executable: "opencode",
-      args: ["auth", "login"],
-    });
+    expect(resolveProviderSetupAction("claude.auth.login", linux)).toBeNull();
+    expect(resolveProviderSetupAction("cursor.auth.login", linux)).toBeNull();
+    expect(resolveProviderSetupAction("opencode.auth.login", linux)).toBeNull();
     expect(resolveProviderSetupAction("codex.install; rm -rf /", linux)).toBeNull();
   });
 
-  it("keeps Cursor unsupported on native Windows and supported on WSL", () => {
-    const windowsCursor = getProviderSetupCapabilities({
-      platform: "win32",
-      isWsl: false,
-    }).find((capability) => capability.provider === "cursor");
-    const wslCursor = getProviderSetupCapabilities({
-      platform: "linux",
-      isWsl: true,
-    }).find((capability) => capability.provider === "cursor");
+  it("exposes the same Codex-only flow on Linux, native Windows, and WSL", () => {
+    for (const platform of [
+      { platform: "linux", isWsl: false },
+      { platform: "win32", isWsl: false },
+      { platform: "linux", isWsl: true },
+    ] as const) {
+      expect(getProviderSetupCapabilities(platform).map((entry) => entry.provider)).toEqual([
+        "codex",
+      ]);
+      expect(
+        getProviderSetupCapabilities(platform)[0]?.actions.every((action) => action.supported),
+      ).toBe(true);
+    }
+  });
 
-    expect(windowsCursor?.actions.every((action) => !action.supported)).toBe(true);
-    expect(windowsCursor?.actions[0]?.unsupportedReason).toContain("Install WSL");
-    expect(wslCursor?.actions.every((action) => action.supported)).toBe(true);
+  it("uses native command shims on Windows and preserves an explicit Codex binary", () => {
+    const windows = { platform: "win32", isWsl: false } as const;
+    const install = resolveProviderSetupAction("codex.install", windows);
+    const login = resolveProviderSetupAction("codex.auth.browser", windows);
+    expect(install).not.toBeNull();
+    expect(login).not.toBeNull();
+    expect(
+      resolveProviderSetupCommand({
+        action: install!,
+        platform: windows,
+        configuredCodexBinary: "codex",
+      }),
+    ).toBe("npm.cmd");
+    expect(
+      resolveProviderSetupCommand({
+        action: login!,
+        platform: windows,
+        configuredCodexBinary: "codex",
+      }),
+    ).toBe("codex.cmd");
+    expect(
+      resolveProviderSetupCommand({
+        action: login!,
+        platform: windows,
+        configuredCodexBinary: "C:\\Tools\\codex.exe",
+      }),
+    ).toBe("C:\\Tools\\codex.exe");
   });
 });

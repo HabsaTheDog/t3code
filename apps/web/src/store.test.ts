@@ -79,6 +79,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    delegatedWork: [],
+    deferredFinalizations: [],
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
@@ -308,6 +310,9 @@ describe("quick chat selectors", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          activeDelegatedWorkCount: 0,
+          activeRequiredDelegatedWorkCount: 0,
+          pendingDelegatedReviewCount: 0,
         },
         [olderQuickThreadId]: {
           id: olderQuickThreadId,
@@ -326,6 +331,9 @@ describe("quick chat selectors", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          activeDelegatedWorkCount: 0,
+          activeRequiredDelegatedWorkCount: 0,
+          pendingDelegatedReviewCount: 0,
         },
         [newerQuickThreadId]: {
           id: newerQuickThreadId,
@@ -344,6 +352,9 @@ describe("quick chat selectors", () => {
           hasPendingApprovals: false,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          activeDelegatedWorkCount: 0,
+          activeRequiredDelegatedWorkCount: 0,
+          pendingDelegatedReviewCount: 0,
         },
       },
     });

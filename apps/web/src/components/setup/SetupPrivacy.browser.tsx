@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import type { AnchorHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, MouseEvent } from "react";
 import { page } from "vite-plus/test/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
@@ -31,6 +31,8 @@ const {
     onboardingStatus: "not-started" as "not-started" | "in-progress" | "completed",
     onboardingCurrentStep: null as string | null,
     studyBuddyConnectionChecks: {} as Record<string, unknown>,
+    providers: {},
+    providerInstances: {},
   };
   const getDurableState = () => {
     const scope = globalThis as typeof globalThis & {
@@ -74,24 +76,28 @@ const {
     },
     flushMock: vi.fn(async () => undefined),
     getStudyBuddyConfigurationMock: vi.fn(async () => studyBuddyConfiguration),
-    updateStudyBuddyConfigurationMock: vi.fn(async ({ patch }: { patch: Record<string, unknown> }) => {
-      if ("moodleUsername" in patch) studyBuddyConfiguration.moodleUsername = String(patch.moodleUsername ?? "");
-      if ("cisUsername" in patch) studyBuddyConfiguration.cisUsername = String(patch.cisUsername ?? "");
-      if ("moodleDashboardUrl" in patch)
-        studyBuddyConfiguration.moodleDashboardUrl = String(patch.moodleDashboardUrl ?? "");
-      if ("cisUrl" in patch) studyBuddyConfiguration.cisUrl = String(patch.cisUrl ?? "");
-      if ("quiz" in patch && patch.quiz && typeof patch.quiz === "object") {
-        const nextQuiz = patch.quiz as { accessMode?: string };
-        if (nextQuiz.accessMode) studyBuddyConfiguration.quiz.accessMode = nextQuiz.accessMode;
-      }
-      if ("calendarUrl" in patch) {
-        studyBuddyConfiguration.calendarUrl = String(patch.calendarUrl ?? "");
-        studyBuddyConfiguration.calendarUrlConfigured = Boolean(studyBuddyConfiguration.calendarUrl);
-      }
-      if ("moodlePassword" in patch) studyBuddyConfiguration.moodlePasswordConfigured = true;
-      if ("cisPassword" in patch) studyBuddyConfiguration.cisPasswordConfigured = true;
-      return studyBuddyConfiguration;
-    }),
+    updateStudyBuddyConfigurationMock: vi.fn(
+      async ({ patch }: { patch: Record<string, unknown> }) => {
+        if ("moodleUsername" in patch)
+          studyBuddyConfiguration.moodleUsername = String(patch.moodleUsername ?? "");
+        if ("cisUsername" in patch)
+          studyBuddyConfiguration.cisUsername = String(patch.cisUsername ?? "");
+        if ("moodleDashboardUrl" in patch)
+          studyBuddyConfiguration.moodleDashboardUrl = String(patch.moodleDashboardUrl ?? "");
+        if ("cisUrl" in patch) studyBuddyConfiguration.cisUrl = String(patch.cisUrl ?? "");
+        if ("quiz" in patch && patch.quiz && typeof patch.quiz === "object") {
+          const nextQuiz = patch.quiz as { accessMode?: string };
+          if (nextQuiz.accessMode) studyBuddyConfiguration.quiz.accessMode = nextQuiz.accessMode;
+        }
+        if ("calendarUrlSecret" in patch) {
+          const secret = patch.calendarUrlSecret as { operation?: string };
+          studyBuddyConfiguration.calendarUrlConfigured = secret.operation !== "clear";
+        }
+        if ("moodlePassword" in patch) studyBuddyConfiguration.moodlePasswordConfigured = true;
+        if ("cisPassword" in patch) studyBuddyConfiguration.cisPasswordConfigured = true;
+        return studyBuddyConfiguration;
+      },
+    ),
     testStudyBuddyConnectionMock: vi.fn(async () => ({
       target: "moodle",
       message: "Connection successful",
@@ -127,15 +133,40 @@ vi.mock("~/hostedPairing", () => ({
   isHostedStaticApp: () => false,
 }));
 
-vi.mock("~/localApi", () => ({
-  ensureLocalApi: () => ({
+vi.mock("~/rpc/serverState", () => ({
+  getServerConfig: () => null,
+  useServerProviders: () => [
+    {
+      instanceId: "codex",
+      driver: "codex",
+      enabled: true,
+      installed: true,
+      version: "0.144.3",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-07-13T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ],
+}));
+
+vi.mock("~/localApi", () => {
+  const api = {
     server: {
       getStudyBuddyConfiguration: getStudyBuddyConfigurationMock,
       updateStudyBuddyConfiguration: updateStudyBuddyConfigurationMock,
       testStudyBuddyConnection: testStudyBuddyConnectionMock,
+      getProviderSetupCapabilities: async () => [],
+      refreshProviders: async () => ({}),
     },
-  }),
-}));
+  };
+  return {
+    ensureLocalApi: () => api,
+    readLocalApi: () => api,
+  };
+});
 
 vi.mock("~/telemetry/runtime", () => ({
   registerTelemetrySecret: vi.fn(),
@@ -162,9 +193,19 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
     Link: ({
       children,
       to,
+      onClick,
       ...props
     }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) => (
-      <a href={to} {...props}>
+      <a
+        href={to}
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+          onClick?.(event);
+          if (event.defaultPrevented) return;
+          event.preventDefault();
+          window.history.pushState({}, "", to);
+        }}
+        {...props}
+      >
         {children}
       </a>
     ),
@@ -188,6 +229,8 @@ function resetSettings(patch: Partial<typeof settings> = {}): void {
     onboardingStatus: "not-started",
     onboardingCurrentStep: null,
     studyBuddyConnectionChecks: {},
+    providers: {},
+    providerInstances: {},
     ...patch,
   });
 }
@@ -200,7 +243,7 @@ async function renderSetup() {
   );
 }
 
-describe("first-run privacy and setup", () => {
+describe.sequential("first-run privacy and setup", () => {
   beforeEach(() => {
     resetSettings();
     updateSettingsMock.mockClear();
@@ -219,11 +262,15 @@ describe("first-run privacy and setup", () => {
     window.history.replaceState({}, "", "/");
   });
 
-  it("shows a compact first screen with direct notice access", async () => {
+  it.sequential("shows a compact first screen with direct notice access", async () => {
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Pick the categories you want.")).toBeInTheDocument();
-    await expect.element(page.getByRole("link", { name: "Read full privacy notice" })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Privacy", level: 1 }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole("link", { name: "Read full privacy notice" }))
+      .toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Allow all" })).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Reject all" })).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Skip" })).toBeInTheDocument();
@@ -234,7 +281,7 @@ describe("first-run privacy and setup", () => {
     await screen.unmount();
   });
 
-  it("lets the user approve only one category before continuing", async () => {
+  it.sequential("lets the user approve only one category before continuing", async () => {
     const screen = await renderSetup();
 
     await page.getByRole("checkbox", { name: "Usage analytics" }).click();
@@ -251,21 +298,21 @@ describe("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("opens the privacy notice page from the setup screen", async () => {
+  it.sequential("opens the privacy notice page from the setup screen", async () => {
     const screen = await renderSetup();
 
     await page.getByRole("link", { name: "Read full privacy notice" }).click();
 
-    await expect.element(page.getByText("Consent before collection.")).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/privacy");
     await screen.unmount();
   });
 
-  it("selects both categories with one button", async () => {
+  it.sequential("selects both categories with one button", async () => {
     const screen = await renderSetup();
 
     await page.getByRole("button", { name: "Allow all" }).click();
@@ -280,12 +327,12 @@ describe("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("checks Moodle inline and only advances when continuing", async () => {
+  it.sequential("checks Moodle inline and only advances when continuing", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -295,14 +342,18 @@ describe("first-run privacy and setup", () => {
     });
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Moodle")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .toBeInTheDocument();
     await expect.element(page.getByLabelText("Moodle link")).toBeInTheDocument();
     await expect.element(page.getByLabelText("Moodle login")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle password")).toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Moodle password", { exact: true }))
+      .toBeInTheDocument();
 
     await page.getByLabelText("Moodle link").fill("https://moodle.example/");
     await page.getByLabelText("Moodle login").fill("mr25b093");
-    await page.getByLabelText("Moodle password").fill("secret");
+    await page.getByLabelText("Moodle password", { exact: true }).fill("secret");
     await page.getByRole("button", { name: "Check" }).click();
 
     await vi.waitFor(() => {
@@ -323,10 +374,22 @@ describe("first-run privacy and setup", () => {
       expect(testStudyBuddyConnectionMock).toHaveBeenCalledWith({
         target: "moodle",
       });
+      expect(updateSettingsMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          studyBuddyConnectionChecks: expect.objectContaining({
+            moodle: expect.objectContaining({
+              status: "success",
+              message: "Connection successful",
+            }),
+          }),
+        }),
+      );
     });
     await expect.element(page.getByText("Connection successful")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Connection check passed")).toBeInTheDocument();
-    await expect.element(page.getByText("Moodle")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Moodle password", { exact: true })).toHaveValue("");
+    await expect
+      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .toBeInTheDocument();
 
     testStudyBuddyConnectionMock.mockClear();
     await page.getByRole("button", { name: "Continue" }).click();
@@ -335,12 +398,12 @@ describe("first-run privacy and setup", () => {
       expect(updateStudyBuddyConfigurationMock).toHaveBeenCalledTimes(2);
     });
     expect(testStudyBuddyConnectionMock).not.toHaveBeenCalled();
-    await expect.element(page.getByText("Quiz safety is non-negotiable")).toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "CIS", level: 1 })).toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("restores the last passed connection check when returning to a setup step", async () => {
+  it.sequential("restores the last passed connection check when returning to a setup step", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -363,13 +426,15 @@ describe("first-run privacy and setup", () => {
       .element(page.getByText("Moodle login and page reachability succeeded."))
       .toBeInTheDocument();
     await expect.element(page.getByLabelText("Connection check passed")).toBeInTheDocument();
-    await expect.element(page.getByText("Moodle")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .toBeInTheDocument();
     expect(testStudyBuddyConnectionMock).not.toHaveBeenCalled();
 
     await screen.unmount();
   });
 
-  it("does not advance setup when durable progress persistence fails", async () => {
+  it.sequential("does not advance setup when durable progress persistence fails", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -380,10 +445,10 @@ describe("first-run privacy and setup", () => {
     setDurableFailure(true);
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
-    await page.getByRole("button", { name: "Skip" }).click();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
     await expect
       .element(
         page.getByText("Setup progress could not be saved locally. Retry before continuing."),
@@ -392,32 +457,34 @@ describe("first-run privacy and setup", () => {
     await screen.unmount();
   });
 
-  it("skips privacy and continues to the next setup step", async () => {
+  it.sequential("skips privacy and continues to the next setup step", async () => {
     const first = await renderSetup();
 
     await page.getByRole("button", { name: "Skip" }).click();
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual(
         expect.objectContaining({
           analyticsConsent: "rejected",
           conversationConsent: "rejected",
           consentVersion: 1,
-          onboardingStatus: "in-progress",
-          onboardingCurrentStep: "provider",
         }),
       );
+      expect(getDurableState().calls).toContainEqual({
+        onboardingStatus: "in-progress",
+        onboardingCurrentStep: "provider",
+      });
     });
     expect(settings.analyticsConsent).toBe("rejected");
     expect(settings.conversationConsent).toBe("rejected");
     await first.unmount();
 
     const second = await renderSetup();
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
     await second.unmount();
   });
 
-  it("resumes, skips a step, and persists completion", async () => {
+  it.sequential("resumes, completes required Codex setup, and persists completion", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -427,15 +494,17 @@ describe("first-run privacy and setup", () => {
     });
     const resumed = await renderSetup();
 
-    await expect.element(page.getByText("Choose an AI provider")).toBeInTheDocument();
-    await page.getByRole("button", { name: "Skip" }).click();
+    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await page.getByRole("button", { name: "Continue" }).click();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual({
         onboardingStatus: "in-progress",
         onboardingCurrentStep: "moodle",
       });
     });
-    await expect.element(page.getByText("Moodle")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .toBeInTheDocument();
     await resumed.unmount();
 
     resetSettings({
@@ -461,7 +530,7 @@ describe("first-run privacy and setup", () => {
     await completed.unmount();
   });
 
-  it("honors the developer setup URL override for completed installations", async () => {
+  it.sequential("honors the developer setup URL override for completed installations", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -473,13 +542,15 @@ describe("first-run privacy and setup", () => {
 
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Moodle")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Privacy", level: 1 }))
+      .toBeInTheDocument();
     await expect.element(page.getByText("Application content")).not.toBeInTheDocument();
     await screen.unmount();
   });
 });
 
-describe("privacy settings and public notice", () => {
+describe.sequential("privacy settings and public notice", () => {
   beforeEach(() => {
     resetSettings({
       installationId: "install-existing",
@@ -496,7 +567,7 @@ describe("privacy settings and public notice", () => {
     document.body.innerHTML = "";
   });
 
-  it("changes analytics and conversation consent independently", async () => {
+  it.sequential("changes analytics and conversation consent independently", async () => {
     const screen = await render(<PrivacySettingsPanel />);
 
     await page.getByRole("switch", { name: "Share completed conversations" }).click();
@@ -523,7 +594,7 @@ describe("privacy settings and public notice", () => {
     await screen.unmount();
   });
 
-  it("publishes the controller, collection, retention, and withdrawal details", async () => {
+  it.sequential("publishes the controller, collection, retention, and withdrawal details", async () => {
     const screen = await render(<PrivacyNotice />);
 
     await expect.element(page.getByText("Controller: Alvaro Schroll")).toBeInTheDocument();

@@ -81,6 +81,7 @@ export interface ProviderSetupJobRunnerOptions {
   readonly createJobId?: (() => string) | undefined;
   readonly cwd?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly resolveCommand?: ((action: ResolvedProviderSetupAction) => string) | undefined;
 }
 
 export class ProviderSetupJobRunner {
@@ -91,6 +92,7 @@ export class ProviderSetupJobRunner {
   readonly #createJobId: () => string;
   readonly #cwd: string | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
+  readonly #resolveCommand: (action: ResolvedProviderSetupAction) => string;
   readonly #jobs = new Map<string, ActiveJob>();
 
   constructor(options: ProviderSetupJobRunnerOptions) {
@@ -101,6 +103,7 @@ export class ProviderSetupJobRunner {
     this.#createJobId = options.createJobId ?? randomUUID;
     this.#cwd = options.cwd;
     this.#env = options.env;
+    this.#resolveCommand = options.resolveCommand ?? ((action) => action.executable);
   }
 
   start(request: ProviderSetupJobRequest): ProviderSetupJobHandle {
@@ -226,7 +229,7 @@ export class ProviderSetupJobRunner {
 
     try {
       const child = await this.#spawner.spawn({
-        command: job.action.executable,
+        command: this.#resolveCommand(job.action),
         args: [...job.action.args],
         cwd: this.#cwd,
         env: this.#env,

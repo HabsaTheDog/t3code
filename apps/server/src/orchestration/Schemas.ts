@@ -46,8 +46,7 @@ export const ThreadSessionSetPayload = ContractsThreadSessionSetPayloadSchema;
 export const ThreadTurnDiffCompletedPayload = ContractsThreadTurnDiffCompletedPayloadSchema;
 export const ThreadRevertedPayload = ContractsThreadRevertedPayloadSchema;
 export const ThreadActivityAppendedPayload = ContractsThreadActivityAppendedPayloadSchema;
-export const ThreadDelegatedWorkUpsertedPayload =
-  ContractsThreadDelegatedWorkUpsertedPayloadSchema;
+export const ThreadDelegatedWorkUpsertedPayload = ContractsThreadDelegatedWorkUpsertedPayloadSchema;
 export const ThreadDeferredFinalizationUpsertedPayload =
   ContractsThreadDeferredFinalizationUpsertedPayloadSchema;
 export const ThreadDeferredFinalizationReleasedPayload =

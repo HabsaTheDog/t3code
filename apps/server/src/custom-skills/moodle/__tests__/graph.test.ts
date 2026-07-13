@@ -199,20 +199,6 @@ function sequenceCodex(outputs: string[]): CodexClient {
   };
 }
 
-function validExtractedData() {
-  return {
-    document_title: "DYN2",
-    language: "de",
-    course: { title: "Dynamik", url: "https://moodle.example/course" },
-    sources: [],
-    sections: [],
-    formulas: [],
-    worked_examples: [],
-    quiz_style_questions: [],
-    warnings: [],
-  };
-}
-
 function validScheduleExtractedData() {
   return {
     document_title: "Termininfo",

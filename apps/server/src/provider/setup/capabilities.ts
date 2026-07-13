@@ -31,6 +31,27 @@ export interface ResolvedProviderSetupAction {
   readonly unsupportedReason: string | null;
 }
 
+export function resolveProviderSetupCommand(input: {
+  readonly action: ResolvedProviderSetupAction;
+  readonly platform: ProviderSetupPlatform;
+  readonly configuredCodexBinary: string;
+}): string {
+  if (input.action.provider === "codex" && input.action.kind !== "install") {
+    if (input.platform.platform === "win32" && input.configuredCodexBinary === "codex") {
+      return "codex.cmd";
+    }
+    return input.configuredCodexBinary;
+  }
+  if (
+    input.platform.platform === "win32" &&
+    input.action.kind === "install" &&
+    input.action.executable === "npm"
+  ) {
+    return "npm.cmd";
+  }
+  return input.action.executable;
+}
+
 const supportedEverywhere = () => null;
 
 const supportsCursor = (platform: ProviderSetupPlatform): string | null => {
@@ -236,7 +257,7 @@ export function resolveProviderSetupAction(
   platform: ProviderSetupPlatform,
 ): ResolvedProviderSetupAction | null {
   const definition = ACTIONS_BY_ID.get(actionId as ProviderSetupActionId);
-  if (!definition) {
+  if (!definition || definition.provider !== "codex") {
     return null;
   }
   return {
@@ -255,7 +276,7 @@ export function resolveProviderSetupAction(
 export function getProviderSetupCapabilities(
   platform: ProviderSetupPlatform = detectProviderSetupPlatform(),
 ): ReadonlyArray<ProviderSetupCapability> {
-  return PROVIDERS.map((provider) => ({
+  return PROVIDERS.filter((provider) => provider.provider === "codex").map((provider) => ({
     ...provider,
     actions: ACTIONS.filter((action) => action.provider === provider.provider).map((action) => {
       const unsupportedReason = action.supports(platform);

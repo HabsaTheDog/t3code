@@ -1555,8 +1555,7 @@ function applyEnvironmentOrchestrationEvent(
         ...thread,
         deferredFinalizations: [
           ...thread.deferredFinalizations.filter(
-            (entry) =>
-              String(entry.turnId) !== String(event.payload.deferredFinalization.turnId),
+            (entry) => String(entry.turnId) !== String(event.payload.deferredFinalization.turnId),
           ),
           { ...event.payload.deferredFinalization },
         ].toSorted(

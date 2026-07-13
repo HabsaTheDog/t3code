@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { createAgentBrowserClient, type AgentBrowserClient } from "../agentBrowserClient.ts";
+import { redactSensitiveValues } from "../browserSecurity.ts";
 import {
   createBrowserLoginConfig,
   dismissCommonAgentBrowserOverlays,
@@ -80,6 +81,8 @@ export function createCisScraperNode(
           targetUrl: config.cisDashboardUrl || config.cisUrls[0],
           username: config.cisUsername,
           password: config.cisPassword,
+          allowedOrigins: config.cisLoginAllowedOrigins,
+          allowInteractiveUserAction: !config.headless,
         }),
       );
 
@@ -106,7 +109,7 @@ export function createCisScraperNode(
         error_log: null,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = redactContent(config, error instanceof Error ? error.message : String(error));
       const warningChunk = [`[CIS warning]`, `CIS scrape failed: ${message}`].join("\n");
       return {
         moodle_raw_text: [state.moodle_raw_text, warningChunk]
@@ -151,9 +154,14 @@ async function crawlCisPages(
       .locator("body")
       .innerText({ timeout: 15_000 })
       .catch(() => "");
-    chunks.push(formatCisChunk({ title, url: next.url, text }));
+    chunks.push(redactContent(config, formatCisChunk({ title, url: next.url, text })));
 
-    await capturePlaywrightReadableFiles(page, path.join(config.runDir, "cis-sources"), chunks);
+    await capturePlaywrightReadableFiles(
+      page,
+      path.join(config.runDir, "cis-sources"),
+      chunks,
+      config,
+    );
 
     if (next.depth < config.maxDepth) {
       const links = await extractCisLinks(page, config.cisBaseUrl, config.prompt);
@@ -179,6 +187,8 @@ async function scrapeCisWithAgentBrowser(
         targetUrl: config.cisDashboardUrl || config.cisUrls[0],
         username: config.cisUsername,
         password: config.cisPassword,
+        allowedOrigins: config.cisLoginAllowedOrigins,
+        allowInteractiveUserAction: !config.headless,
       }),
     );
 
@@ -205,7 +215,7 @@ async function scrapeCisWithAgentBrowser(
       error_log: null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactContent(config, error instanceof Error ? error.message : String(error));
     const warningChunk = [`[CIS warning]`, `CIS scrape failed: ${message}`].join("\n");
     return {
       moodle_raw_text: [state.moodle_raw_text, warningChunk]
@@ -259,7 +269,7 @@ async function crawlCisPagesWithAgentBrowser(
         "utf8",
       );
     }
-    chunks.push(formatCisChunk({ title, url: next.url, text }));
+    chunks.push(redactContent(config, formatCisChunk({ title, url: next.url, text })));
 
     if (snapshot) {
       await captureAgentBrowserReadableFiles(
@@ -268,6 +278,7 @@ async function crawlCisPagesWithAgentBrowser(
         snapshot.refs,
         sourcesDir,
         chunks,
+        config,
       );
     }
 
@@ -315,6 +326,7 @@ async function capturePlaywrightReadableFiles(
   page: Page,
   sourcesDir: string,
   chunks: string[],
+  config: MoodleRuntimeConfig,
 ): Promise<void> {
   const hrefs = await page.locator("a[href]").evaluateAll((anchors) =>
     anchors.map((anchor) => ({
@@ -343,10 +355,10 @@ async function capturePlaywrightReadableFiles(
       continue;
     }
 
-    const body = await response.body();
-    await writeFile(target, body);
+    const body = redactContent(config, (await response.body()).toString("utf8"));
+    await writeFile(target, body, "utf8");
     chunks.push(
-      `[CIS linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}\n\n${body.toString("utf8").trim()}`,
+      `[CIS linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}\n\n${body.trim()}`,
     );
   }
 }
@@ -357,6 +369,7 @@ async function captureAgentBrowserReadableFiles(
   refs: Parameters<typeof extractLinksFromSnapshot>[1],
   sourcesDir: string,
   chunks: string[],
+  config: MoodleRuntimeConfig,
 ): Promise<void> {
   const fileLinks = extractLinksFromSnapshot(snapshot, refs).filter(({ href }) =>
     /\.(ics|csv|txt|md)$/i.test(new URL(href).pathname),
@@ -369,10 +382,10 @@ async function captureAgentBrowserReadableFiles(
     try {
       assertSafeClick(link.label);
       await client.download(`@${link.ref}`, target);
+      const safeText = redactContent(config, await readFile(target, "utf8"));
+      await writeFile(target, safeText, "utf8");
       chunks.push(
-        `[CIS linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}\n\n${(
-          await readFile(target, "utf8")
-        ).trim()}`,
+        `[CIS linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}\n\n${safeText.trim()}`,
       );
     } catch {
       chunks.push(
@@ -380,6 +393,16 @@ async function captureAgentBrowserReadableFiles(
       );
     }
   }
+}
+
+function redactContent(config: MoodleRuntimeConfig, value: string): string {
+  return redactSensitiveValues(value, [
+    config.username,
+    config.password,
+    config.cisUsername,
+    config.cisPassword,
+    config.calendarUrl,
+  ]);
 }
 
 function formatCisChunk(input: { title: string; url: string; text: string }): string {

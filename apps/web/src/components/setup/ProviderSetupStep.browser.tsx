@@ -9,7 +9,7 @@ import type {
   ServerProvider,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { createRef } from "react";
 import { page } from "vite-plus/test/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
@@ -111,7 +111,7 @@ vi.mock("~/telemetry/runtime", () => ({
   },
 }));
 
-import { ProviderSetupStep } from "../../setup/ProviderSetupStep";
+import { ProviderSetupStep, type ProviderSetupStepHandle } from "../../setup/ProviderSetupStep";
 
 function action(
   input: Partial<ProviderSetupAction> & Pick<ProviderSetupAction, "id" | "kind" | "label">,
@@ -290,9 +290,6 @@ describe("provider setup", () => {
     const screen = await render(<ProviderSetupStep />);
 
     await expect.element(page.getByText("Installed · 1.2.3 · Authenticated")).toBeInTheDocument();
-    await expect
-      .element(page.getByText("Not installed · Not authenticated").first())
-      .toBeInTheDocument();
     await expect.element(page.getByText("Enabled")).toBeInTheDocument();
     await expect.element(page.getByText("Default")).toBeInTheDocument();
     await expect.element(page.getByLabelText("Ready")).toBeInTheDocument();
@@ -300,6 +297,68 @@ describe("provider setup", () => {
       .element(page.getByRole("button", { name: "Install Codex" }))
       .not.toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Sign in with browser" })).toBeEnabled();
+
+    await screen.unmount();
+  });
+
+  it("completes only with a supported authenticated Codex and disables other providers", async () => {
+    harness.providers = [
+      provider({
+        instanceId: "codex-main",
+        driver: "codex",
+        installed: true,
+        enabled: true,
+        version: "0.144.3",
+        auth: { status: "authenticated" },
+      }),
+    ];
+    harness.settings = {
+      ...harness.settings,
+      providerInstances: {
+        codex: { driver: "codex" },
+        claudeAgent: { driver: "claudeAgent" },
+      } as UnifiedSettings["providerInstances"],
+    };
+    const ref = createRef<ProviderSetupStepHandle>();
+    const screen = await render(<ProviderSetupStep ref={ref} />);
+
+    await vi.waitFor(() => expect(ref.current).not.toBeNull());
+    await expect(ref.current?.save()).resolves.toBe(true);
+    expect(harness.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providers: expect.objectContaining({
+          codex: expect.objectContaining({ enabled: true }),
+          claudeAgent: expect.objectContaining({ enabled: false }),
+          cursor: expect.objectContaining({ enabled: false }),
+          opencode: expect.objectContaining({ enabled: false }),
+        }),
+        providerInstances: { codex: { driver: "codex" } },
+      }),
+    );
+
+    await screen.unmount();
+  });
+
+  it("fails closed when Codex is older than the permission-profile minimum", async () => {
+    harness.providers = [
+      provider({
+        instanceId: "codex-main",
+        driver: "codex",
+        installed: true,
+        enabled: true,
+        version: "0.137.0",
+        auth: { status: "authenticated" },
+      }),
+    ];
+    const ref = createRef<ProviderSetupStepHandle>();
+    const screen = await render(<ProviderSetupStep ref={ref} />);
+
+    await vi.waitFor(() => expect(ref.current).not.toBeNull());
+    await expect(ref.current?.save()).resolves.toBe(false);
+    await expect
+      .element(page.getByText("Update Codex to 0.138.0 or newer before continuing."))
+      .toBeInTheDocument();
+    expect(harness.updateSettings).not.toHaveBeenCalled();
 
     await screen.unmount();
   });
@@ -321,7 +380,7 @@ describe("provider setup", () => {
       type: "progress",
       text: "Installing package…",
     });
-    await expect.element(page.getByText("Installing")).toBeInTheDocument();
+    await expect.element(page.getByText("Installing", { exact: true })).toBeInTheDocument();
     await expect
       .element(page.getByText("Study Buddy is installing Codex in the background."))
       .toBeInTheDocument();
@@ -339,6 +398,9 @@ describe("provider setup", () => {
   });
 
   it("shows failed jobs and retries the same allowlisted action", async () => {
+    harness.providers = [
+      provider({ instanceId: "codex", driver: "codex", installed: true, version: "0.144.3" }),
+    ];
     const screen = await render(<ProviderSetupStep />);
 
     await page.getByRole("button", { name: "Sign in with browser" }).click();
@@ -362,38 +424,27 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
-  it("stores Claude API keys in provider settings instead of starting a setup job", async () => {
+  it("keeps non-Codex providers out of the Study Buddy setup", async () => {
     const screen = await render(<ProviderSetupStep />);
 
-    await page.getByRole("button", { name: "Sign in with API key" }).click();
-    await expect.element(page.getByText("Paste the key once.")).toBeInTheDocument();
-    await page.getByPlaceholder("Write-only; never shown again").fill("anthropic-secret");
-    await page.getByRole("button", { name: "Continue" }).click();
-
-    await vi.waitFor(() => {
-      expect(harness.updateSettings).toHaveBeenCalled();
-    });
-    expect(harness.startProviderSetup).not.toHaveBeenCalledWith({
-      actionId: "claude.auth.api-key",
-      secretValue: "anthropic-secret",
-    });
-    expect(
-      harness.settings.providerInstances[ProviderInstanceId.make("claudeAgent")]?.environment,
-    ).toEqual([
-      {
-        name: "ANTHROPIC_API_KEY",
-        value: "anthropic-secret",
-        sensitive: true,
-      },
-    ]);
+    await expect.element(page.getByText("Credential boundary")).toBeInTheDocument();
+    await expect.element(page.getByText("Claude")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Cursor")).not.toBeInTheDocument();
+    await expect.element(page.getByText("OpenCode")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Sign in to Claude" }))
+      .not.toBeInTheDocument();
 
     await screen.unmount();
   });
 
   it("cancels running jobs and exposes retry after the cancellation event", async () => {
+    harness.providers = [
+      provider({ instanceId: "codex", driver: "codex", installed: true, version: "0.144.3" }),
+    ];
     const screen = await render(<ProviderSetupStep />);
 
-    await page.getByRole("button", { name: "Sign in to OpenCode" }).click();
+    await page.getByRole("button", { name: "Sign in with browser" }).click();
     await waitForJob("job-1");
     await expect.element(page.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
     await page.getByRole("button", { name: "Cancel" }).click();
@@ -401,23 +452,23 @@ describe("provider setup", () => {
       expect(harness.cancelProviderSetup).toHaveBeenCalledWith({ jobId: "job-1" });
     });
 
-    emit("job-1", "opencode.auth.login", "opencode", { type: "cancelled" });
+    emit("job-1", "codex.auth.browser", "codex", { type: "cancelled" });
     await expect.element(page.getByText("Action cancelled")).toBeInTheDocument();
-    await expect.element(page.getByText("CANCELLED")).toBeInTheDocument();
+    await expect.element(page.getByText("cancelled", { exact: true })).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("renders platform-specific manual instructions and disables unsupported actions", async () => {
+  it("does not render setup actions for unsupported provider families", async () => {
     const screen = await render(<ProviderSetupStep />);
 
-    await expect.element(page.getByText("Manual setup required")).toBeInTheDocument();
     await expect
-      .element(page.getByText("Cursor setup requires Linux, macOS, or WSL."))
-      .toBeInTheDocument();
-    await expect.element(page.getByRole("button", { name: "Install Cursor CLI" })).toBeDisabled();
-    await expect.element(page.getByRole("button", { name: "Sign in to Claude" })).toBeDisabled();
+      .element(page.getByRole("button", { name: "Install Cursor CLI" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Sign in to Claude" }))
+      .not.toBeInTheDocument();
 
     await screen.unmount();
   });

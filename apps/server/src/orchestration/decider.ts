@@ -769,7 +769,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           delegatedWorkIds: command.delegatedWorkIds,
           reviewStatus: command.reviewStatus,
           ...(command.reviewNote !== undefined ? { reviewNote: command.reviewNote } : {}),
-          ...(command.reviewerTurnId !== undefined ? { reviewerTurnId: command.reviewerTurnId } : {}),
+          ...(command.reviewerTurnId !== undefined
+            ? { reviewerTurnId: command.reviewerTurnId }
+            : {}),
           reviewedAt: command.reviewedAt,
         },
       };

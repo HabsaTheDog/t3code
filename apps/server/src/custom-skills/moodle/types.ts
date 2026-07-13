@@ -61,6 +61,8 @@ export interface MoodleRuntimeConfig {
   browserSession?: string | undefined;
   browserSessionName?: string | undefined;
   browserAllowedDomains?: string[] | undefined;
+  moodleLoginAllowedOrigins?: string[] | undefined;
+  cisLoginAllowedOrigins?: string[] | undefined;
   browserActionPolicyPath?: string | undefined;
   browserMaxOutput?: number | undefined;
   keepBrowserOpen?: boolean | undefined;

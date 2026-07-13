@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createAgentBrowserClient, type AgentBrowserClient } from "../agentBrowserClient.ts";
+import type { AgentBrowserClient } from "../agentBrowserClient.ts";
+import { createBrowserClient } from "../browserClient.ts";
 import { createBrowserLoginConfig, ensureAgentBrowserLoggedIn } from "../browserAuth.ts";
 import type { CodexClient } from "../codexClient.ts";
 import { extractQuizUrl, promptWantsQuizAttempt } from "../quizIntent.ts";
@@ -58,7 +59,7 @@ export function createQuizTargetNode(
   return async function quizTargetNode(
     state: LangGraphAgentState,
   ): Promise<Partial<LangGraphAgentState>> {
-    const client = dependencies.agentBrowser ?? createAgentBrowserClient(config);
+    const client = dependencies.agentBrowser ?? createBrowserClient(config);
     await ensureAgentBrowserLoggedIn(
       client,
       createBrowserLoginConfig({
@@ -66,6 +67,7 @@ export function createQuizTargetNode(
         targetUrl: config.moodleUrl || config.dashboardUrl,
         username: config.username,
         password: config.password,
+        allowedOrigins: config.moodleLoginAllowedOrigins,
       }),
     );
     const targetUrl = extractQuizUrl(config.prompt) ?? (await discoverQuizTarget(config, client));
@@ -122,7 +124,7 @@ export function createQuizPageNode(
     if (!workflow.target_url || workflow.done) {
       return {};
     }
-    const client = dependencies.agentBrowser ?? createAgentBrowserClient(config);
+    const client = dependencies.agentBrowser ?? createBrowserClient(config);
     let metadata = workflow.metadata;
     if (workflow.page_number === 1) {
       const openDecision = enforceQuizSafetyPolicy(config.quizSafetyPolicy, "open_quiz_page");
@@ -322,7 +324,7 @@ export function createQuizFillNode(
     if (workflow.done || !workflow.page || !workflow.target_url) {
       return {};
     }
-    const client = dependencies.agentBrowser ?? createAgentBrowserClient(config);
+    const client = dependencies.agentBrowser ?? createBrowserClient(config);
     const pageResults: Array<Record<string, unknown>> = [];
     const answers = workflow.answers ?? [];
     for (const question of workflow.page.questions) {

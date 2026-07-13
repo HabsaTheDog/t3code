@@ -281,6 +281,23 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
   ) as Schema.Json;
 }
 
+const REASONING_EFFORT_DESCRIPTION = "A non-empty reasoning effort value advertised by the model.";
+
+function normalizeGeneratedSchema(name: string, value: Schema.Json): Schema.Json {
+  // Reasoning efforts are model-advertised values. Keep these schemas open so a
+  // newer Codex model catalog cannot break an older app-server client merely by
+  // introducing another effort name.
+  if (name === "ReasoningEffort" || name.endsWith("__ReasoningEffort")) {
+    return {
+      description: REASONING_EFFORT_DESCRIPTION,
+      type: "string",
+      minLength: 1,
+    };
+  }
+
+  return stripNullDefaults(normalizeNullableTypes(value));
+}
+
 function toPascalCaseMethod(method: string) {
   return method
     .split("/")
@@ -553,14 +570,14 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     );
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
-      aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
-        normalizeNullableTypes(
-          rewriteExternalRefs(
-            definitionSchema,
-            localDefinitionNames,
-            file.namespace,
-            exportNameByQualifiedName,
-          ),
+      const generatedName = localDefinitionNames.get(definitionName)!;
+      aggregateSchemas[generatedName] = normalizeGeneratedSchema(
+        generatedName,
+        rewriteExternalRefs(
+          definitionSchema,
+          localDefinitionNames,
+          file.namespace,
+          exportNameByQualifiedName,
         ),
       );
     }
@@ -572,21 +589,20 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
       }
     }
 
-    aggregateSchemas[file.exportName] = stripNullDefaults(
-      normalizeNullableTypes(
-        rewriteExternalRefs(
-          topLevelSchema,
-          localDefinitionNames,
-          file.namespace,
-          exportNameByQualifiedName,
-        ),
+    aggregateSchemas[file.exportName] = normalizeGeneratedSchema(
+      file.exportName,
+      rewriteExternalRefs(
+        topLevelSchema,
+        localDefinitionNames,
+        file.namespace,
+        exportNameByQualifiedName,
       ),
     );
   }
 
   for (const [name, schema] of Object.entries(ManualSchemas)) {
     if (!(name in aggregateSchemas)) {
-      aggregateSchemas[name] = stripNullDefaults(normalizeNullableTypes(schema));
+      aggregateSchemas[name] = normalizeGeneratedSchema(name, schema);
     }
   }
 
@@ -745,14 +761,14 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   yield* Effect.log(`Generated Codex App Server schemas from ${UPSTREAM_REF}`);
 
   yield* Effect.service(ChildProcessSpawner.ChildProcessSpawner).pipe(
-    Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make("bun", ["oxfmt", generatedDir]))),
+    Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make("vp", ["fmt", generatedDir]))),
     Effect.flatMap((child) => child.exitCode),
     Effect.tap((code) =>
       code === 0
         ? Effect.void
         : Effect.fail(
             new GeneratorError({
-              detail: `oxfmt failed with exit code ${code}`,
+              detail: `vp fmt failed with exit code ${code}`,
             }),
           ),
     ),

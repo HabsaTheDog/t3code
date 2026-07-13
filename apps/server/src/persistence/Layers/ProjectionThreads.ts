@@ -24,9 +24,7 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     delegatedWork: Schema.fromJsonString(Schema.Array(OrchestrationDelegatedWork)),
-    deferredFinalizations: Schema.fromJsonString(
-      Schema.Array(OrchestrationDeferredFinalization),
-    ),
+    deferredFinalizations: Schema.fromJsonString(Schema.Array(OrchestrationDeferredFinalization)),
   }),
 );
 type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;

@@ -3,6 +3,7 @@ import { extractedDataJsonSchema } from "../schemas.ts";
 import type { LangGraphAgentState } from "../state.ts";
 import type { MoodleRuntimeConfig } from "../types.ts";
 import { parseJsonObjectOrArray, validateExtractedData } from "../validation.ts";
+import { redactSensitiveValues } from "../browserSecurity.ts";
 
 export function createAnalyzerNode(config: MoodleRuntimeConfig, codex: CodexClient) {
   return async function analyzerNode(
@@ -28,7 +29,7 @@ export function createAnalyzerNode(config: MoodleRuntimeConfig, codex: CodexClie
 }
 
 function buildAnalyzerPrompt(config: MoodleRuntimeConfig, state: LangGraphAgentState): string {
-  return [
+  const prompt = [
     "Extract structured study data from selected calendar events and relevant Moodle/CIS text for a mechatronics/engineering student.",
     "Return only JSON matching the requested schema. Do not include Markdown fences.",
     "Preserve German source language unless the user asks otherwise.",
@@ -50,4 +51,11 @@ function buildAnalyzerPrompt(config: MoodleRuntimeConfig, state: LangGraphAgentS
   ]
     .filter(Boolean)
     .join("\n\n");
+  return redactSensitiveValues(prompt, [
+    config.username,
+    config.password,
+    config.cisUsername,
+    config.cisPassword,
+    config.calendarUrl,
+  ]);
 }

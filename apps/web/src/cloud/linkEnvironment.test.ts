@@ -731,7 +731,7 @@ describe("web cloud link environment client", () => {
           .fn()
           .mockResolvedValueOnce(Response.json(validChallenge()))
           .mockResolvedValueOnce(Response.json(validProof()))
-          .mockResolvedValueOnce(Response.json({ error: "unavailable" }, { status: 503 })),
+          .mockRejectedValueOnce(new TypeError("relay transport unavailable")),
       );
 
       const error = yield* withCloudServices(

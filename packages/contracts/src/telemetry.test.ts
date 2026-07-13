@@ -37,8 +37,13 @@ describe("Study Buddy configuration patches", () => {
       operation: "clear",
     });
     expect(
-      decodeStudyBuddyPatch({ calendarUrl: "https://example.test/calendar.ics" }).calendarUrl,
-    ).toBe("https://example.test/calendar.ics");
+      decodeStudyBuddyPatch({
+        calendarUrlSecret: {
+          operation: "set",
+          value: "https://example.test/calendar.ics",
+        },
+      }).calendarUrlSecret,
+    ).toEqual({ operation: "set", value: "https://example.test/calendar.ics" });
     expect(() =>
       decodeStudyBuddyPatch({ moodlePassword: { operation: "set", value: "" } }),
     ).toThrow();

@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createAgentBrowserClient, type AgentBrowserClient } from "../agentBrowserClient.ts";
+import type { AgentBrowserClient } from "../agentBrowserClient.ts";
+import { createBrowserClient } from "../browserClient.ts";
 import { createBrowserLoginConfig, ensureAgentBrowserLoggedIn } from "../browserAuth.ts";
 import {
   extractLinksFromSnapshot,
@@ -171,7 +172,7 @@ export function createQuizReviewNode(
   return async function quizReviewNode(
     state: LangGraphAgentState,
   ): Promise<Partial<LangGraphAgentState>> {
-    const client = dependencies.agentBrowser ?? createAgentBrowserClient(config);
+    const client = dependencies.agentBrowser ?? createBrowserClient(config);
     try {
       await ensureAgentBrowserLoggedIn(
         client,
@@ -180,6 +181,7 @@ export function createQuizReviewNode(
           targetUrl: config.moodleUrl || config.dashboardUrl,
           username: config.username,
           password: config.password,
+          allowedOrigins: config.moodleLoginAllowedOrigins,
         }),
       );
 
@@ -240,7 +242,11 @@ export function createQuizReviewNode(
             metadata,
           })
         : null;
-      if (startDecision?.status && startDecision.status !== "allowed" && beforeStart.questions.length === 0) {
+      if (
+        startDecision?.status &&
+        startDecision.status !== "allowed" &&
+        beforeStart.questions.length === 0
+      ) {
         return await stopForQuizPolicy(config, state, target, startDecision, metadata);
       }
       const startResult =
@@ -725,14 +731,13 @@ export async function openSafePreviousAttemptReview(
       const href = /url=([^\]\s]+)/i.exec(line)?.[1] ?? "";
       return { ref, name, href };
     })
-    .find(
-      ({ name, href }) =>
-        Boolean(
-          href &&
-            /\/mod\/quiz\/review\.php\b/i.test(href) &&
-            !isFinalSubmitClickLabel(name) &&
-            !isStartOrContinueLabel(name),
-        ),
+    .find(({ name, href }) =>
+      Boolean(
+        href &&
+        /\/mod\/quiz\/review\.php\b/i.test(href) &&
+        !isFinalSubmitClickLabel(name) &&
+        !isStartOrContinueLabel(name),
+      ),
     );
   if (!candidate?.ref) {
     return { clicked: false, reason: "no-safe-previous-attempt-review" };

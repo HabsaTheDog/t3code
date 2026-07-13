@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
 import { createAgentBrowserClient, type AgentBrowserClient } from "../agentBrowserClient.ts";
+import { redactSensitiveValues } from "../browserSecurity.ts";
 import {
   createBrowserLoginConfig,
   dismissCommonAgentBrowserOverlays,
@@ -58,6 +59,8 @@ export function createScraperNode(
           targetUrl: config.moodleUrl || config.dashboardUrl,
           username: config.username,
           password: config.password,
+          allowedOrigins: config.moodleLoginAllowedOrigins,
+          allowInteractiveUserAction: !config.headless,
         }),
       );
 
@@ -81,10 +84,10 @@ export function createScraperNode(
           .locator("body")
           .innerText({ timeout: 15_000 })
           .catch(() => "");
-        chunks.push(formatSourceChunk({ title, url: next.url, text }));
+        chunks.push(redactContent(config, formatSourceChunk({ title, url: next.url, text })));
 
         if (config.allowFileDownloads) {
-          await capturePlaywrightFileLinks(page, sourcesDir, chunks);
+          await capturePlaywrightFileLinks(page, sourcesDir, chunks, config);
         }
 
         if (next.depth < config.maxDepth) {
@@ -115,7 +118,7 @@ export function createScraperNode(
         error_log: null,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = redactContent(config, error instanceof Error ? error.message : String(error));
       return {
         moodle_raw_text: [
           _state.moodle_raw_text,
@@ -153,6 +156,8 @@ async function scrapeWithAgentBrowser(
         targetUrl: config.moodleUrl || config.dashboardUrl,
         username: config.username,
         password: config.password,
+        allowedOrigins: config.moodleLoginAllowedOrigins,
+        allowInteractiveUserAction: !config.headless,
       }),
     );
 
@@ -183,7 +188,7 @@ async function scrapeWithAgentBrowser(
           "utf8",
         );
       }
-      chunks.push(formatSourceChunk({ title, url: next.url, text }));
+      chunks.push(redactContent(config, formatSourceChunk({ title, url: next.url, text })));
 
       if (config.allowFileDownloads && snapshot) {
         await captureAgentBrowserFileLinks(
@@ -192,6 +197,7 @@ async function scrapeWithAgentBrowser(
           snapshot.refs,
           sourcesDir,
           chunks,
+          config,
         );
       }
 
@@ -228,7 +234,7 @@ async function scrapeWithAgentBrowser(
       error_log: null,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactContent(config, error instanceof Error ? error.message : String(error));
     return {
       moodle_raw_text: [
         state.moodle_raw_text,
@@ -289,6 +295,7 @@ async function capturePlaywrightFileLinks(
   page: Page,
   sourcesDir: string,
   chunks: string[],
+  config: MoodleRuntimeConfig,
 ): Promise<void> {
   const hrefs = await page.locator("a[href]").evaluateAll((anchors) =>
     anchors.map((anchor) => ({
@@ -318,12 +325,13 @@ async function capturePlaywrightFileLinks(
     }
 
     const body = await response.body();
-    await writeFile(target, body);
     const pathname = new URL(link.href).pathname.toLowerCase();
-    const text =
-      pathname.endsWith(".txt") || pathname.endsWith(".md")
-        ? `\n\n${body.toString("utf8").trim()}`
-        : "\n\nBinary file saved for future extraction.";
+    const isText = pathname.endsWith(".txt") || pathname.endsWith(".md");
+    const safeBody = isText ? redactContent(config, body.toString("utf8")) : body;
+    await writeFile(target, safeBody);
+    const text = isText
+      ? `\n\n${String(safeBody).trim()}`
+      : "\n\nBinary file saved for future extraction.";
     chunks.push(
       `[Linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}${text}`,
     );
@@ -336,6 +344,7 @@ async function captureAgentBrowserFileLinks(
   refs: Parameters<typeof extractLinksFromSnapshot>[1],
   sourcesDir: string,
   chunks: string[],
+  config: MoodleRuntimeConfig,
 ): Promise<void> {
   const fileLinks = extractLinksFromSnapshot(snapshot, refs).filter(({ href }) =>
     /\.(txt|md)$/i.test(new URL(href).pathname),
@@ -349,10 +358,12 @@ async function captureAgentBrowserFileLinks(
       assertSafeClick(link.label);
       await client.download(`@${link.ref}`, target);
       const pathname = new URL(link.href).pathname.toLowerCase();
-      const text =
-        pathname.endsWith(".txt") || pathname.endsWith(".md")
-          ? `\n\n${(await readFile(target, "utf8")).trim()}`
-          : "\n\nBinary file saved for future extraction.";
+      const isText = pathname.endsWith(".txt") || pathname.endsWith(".md");
+      const safeText = isText ? redactContent(config, await readFile(target, "utf8")) : "";
+      if (isText) await writeFile(target, safeText, "utf8");
+      const text = isText
+        ? `\n\n${safeText.trim()}`
+        : "\n\nBinary file saved for future extraction.";
       chunks.push(
         `[Linked file]\nTitle: ${link.label || filename}\nURL: ${link.href}\nSaved path: ${target}${text}`,
       );
@@ -362,6 +373,16 @@ async function captureAgentBrowserFileLinks(
       );
     }
   }
+}
+
+function redactContent(config: MoodleRuntimeConfig, value: string): string {
+  return redactSensitiveValues(value, [
+    config.username,
+    config.password,
+    config.cisUsername,
+    config.cisPassword,
+    config.calendarUrl,
+  ]);
 }
 
 function formatSourceChunk(input: { title: string; url: string; text: string }): string {

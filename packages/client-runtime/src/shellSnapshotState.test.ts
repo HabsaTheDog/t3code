@@ -53,6 +53,7 @@ const BASE_SNAPSHOT: OrchestrationShellSnapshot = {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      activeDelegatedWorkCount: 0,
     },
   ],
 };

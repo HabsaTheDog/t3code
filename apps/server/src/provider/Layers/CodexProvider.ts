@@ -20,9 +20,10 @@ import type {
   ServerProviderModel,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { ServerSettingsError } from "@t3tools/contracts";
+import { MINIMUM_STUDY_BUDDY_CODEX_VERSION, ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -44,14 +45,27 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
-const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__ReasoningEffort, string> = {
+const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
   low: "Low",
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
 };
+
+function reasoningEffortLabel(reasoningEffort: string): string {
+  return (
+    REASONING_EFFORT_LABELS[reasoningEffort] ??
+    reasoningEffort
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part[0]!.toUpperCase() + part.slice(1))
+      .join(" ")
+  );
+}
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
@@ -100,12 +114,12 @@ function mapCodexModelCapabilities(
     reasoningEffort === model.defaultReasoningEffort
       ? {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
           isDefault: true,
         }
       : {
           id: reasoningEffort,
-          label: REASONING_EFFORT_LABELS[reasoningEffort],
+          label: reasoningEffortLabel(reasoningEffort),
         },
   );
   const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
@@ -263,7 +277,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const clientContext = yield* Layer.build(
     CodexClient.layerCommand({
       command: input.binaryPath,
-      args: ["app-server"],
+      args: ["--strict-config", "app-server"],
       cwd: input.cwd,
       env: {
         ...(input.environment ?? process.env),
@@ -495,6 +509,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const versionSupported =
+    snapshot.version !== undefined &&
+    compareSemverVersions(snapshot.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) >= 0;
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -505,9 +522,15 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: snapshot.version ?? null,
-      status: accountStatus.status,
-      auth: accountStatus.auth,
-      ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      status: versionSupported ? accountStatus.status : "error",
+      auth: versionSupported ? accountStatus.auth : { status: "unknown" },
+      ...(!versionSupported
+        ? {
+            message: `Study Buddy requires Codex ${MINIMUM_STUDY_BUDDY_CODEX_VERSION} or newer.`,
+          }
+        : accountStatus.message
+          ? { message: accountStatus.message }
+          : {}),
     },
   });
 });

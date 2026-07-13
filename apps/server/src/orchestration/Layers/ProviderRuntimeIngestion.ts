@@ -118,12 +118,17 @@ function isDelegatedTaskRuntimeEvent(
   { type: "task.started" | "task.progress" | "task.completed" }
 > {
   return (
-    event.type === "task.started" || event.type === "task.progress" || event.type === "task.completed"
+    event.type === "task.started" ||
+    event.type === "task.progress" ||
+    event.type === "task.completed"
   );
 }
 
 function taskLabelFromRuntimeEvent(
-  event: Extract<ProviderRuntimeEvent, { type: "task.started" | "task.progress" | "task.completed" }>,
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "task.started" | "task.progress" | "task.completed" }
+  >,
 ): string {
   if (event.type === "task.started") {
     return event.payload.description?.trim() || event.payload.taskType?.trim() || "Task";
@@ -145,7 +150,12 @@ function hashProgress(value: string | null): string | undefined {
   return `p:${Math.abs(hash)}`;
 }
 
-function classifyDelegatedTask(event: Extract<ProviderRuntimeEvent, { type: "task.started" | "task.progress" | "task.completed" }>): {
+function classifyDelegatedTask(
+  event: Extract<
+    ProviderRuntimeEvent,
+    { type: "task.started" | "task.progress" | "task.completed" }
+  >,
+): {
   readonly blockingPolicy: OrchestrationDelegatedWork["blockingPolicy"];
   readonly origin: OrchestrationDelegatedWork["origin"];
   readonly taskType?: string;
@@ -155,16 +165,21 @@ function classifyDelegatedTask(event: Extract<ProviderRuntimeEvent, { type: "tas
       ? event.payload.taskType.trim()
       : undefined;
   const text = `${rawTaskType ?? ""} ${taskLabelFromRuntimeEvent(event)}`.toLowerCase();
-  const origin = text.includes("study buddy") || text.includes("moodle") ? "study-buddy" : "codex-task";
-  if (
-    /\b(cleanup|index|telemetry|metric|metrics)\b/.test(text)
-  ) {
-    return { blockingPolicy: "background", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
+  const origin =
+    text.includes("study buddy") || text.includes("moodle") ? "study-buddy" : "codex-task";
+  if (/\b(cleanup|index|telemetry|metric|metrics)\b/.test(text)) {
+    return {
+      blockingPolicy: "background",
+      origin,
+      ...(rawTaskType ? { taskType: rawTaskType } : {}),
+    };
   }
-  if (
-    /\b(visual|enrichment|summarization|summary-only|secondary)\b/.test(text)
-  ) {
-    return { blockingPolicy: "optional", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
+  if (/\b(visual|enrichment|summarization|summary-only|secondary)\b/.test(text)) {
+    return {
+      blockingPolicy: "optional",
+      origin,
+      ...(rawTaskType ? { taskType: rawTaskType } : {}),
+    };
   }
   return { blockingPolicy: "required", origin, ...(rawTaskType ? { taskType: rawTaskType } : {}) };
 }
@@ -187,14 +202,14 @@ function delegatedWorkFromRuntimeTaskEvent(input: {
       ? (event.payload.description ?? null)
       : event.type === "task.progress"
         ? (event.payload.summary ?? event.payload.description ?? existing?.lastProgress ?? null)
-        : existing?.lastProgress ?? null;
+        : (existing?.lastProgress ?? null);
   const base = {
     id: String(event.payload.taskId),
     parentTurnId,
     task,
     required,
     blockingPolicy,
-    ...(existing?.taskType ?? classification.taskType
+    ...((existing?.taskType ?? classification.taskType)
       ? { taskType: existing?.taskType ?? classification.taskType }
       : {}),
     origin: existing?.origin ?? classification.origin,
@@ -312,13 +327,14 @@ function sanitizeReviewDecisionNote(value: unknown): string | undefined {
 function parseDelegatedWorkReviewDecisions(
   assistantText: string,
 ): ReadonlyArray<ParsedDelegatedWorkReviewDecision> {
-  const match = assistantText.match(
-    /<!--\s*delegated-work-review-decisions\s*([\s\S]*?)\s*-->/i,
-  );
+  const match = assistantText.match(/<!--\s*delegated-work-review-decisions\s*([\s\S]*?)\s*-->/i);
   if (!match?.[1]) {
     return [];
   }
-  const rawJson = match[1].trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const rawJson = match[1]
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "");
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
@@ -1173,21 +1189,21 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           activity: {
             id: EventId.make(`${input.event.eventId}:delegated-work-waiting:${input.stage}`),
-          createdAt: input.event.createdAt,
-          tone: "info",
-          kind: "delegated-work.waiting",
-          summary: "Waiting for delegated work",
-          payload: {
+            createdAt: input.event.createdAt,
+            tone: "info",
+            kind: "delegated-work.waiting",
+            summary: "Waiting for delegated work",
+            payload: {
+              turnId: input.turnId,
+              stage: input.stage,
+              activeDelegatedWork: input.activeDelegatedWork.map((entry) => ({
+                id: entry.id,
+                task: entry.task,
+                status: entry.status,
+                lastProgress: entry.lastProgress,
+              })),
+            },
             turnId: input.turnId,
-            stage: input.stage,
-            activeDelegatedWork: input.activeDelegatedWork.map((entry) => ({
-              id: entry.id,
-              task: entry.task,
-              status: entry.status,
-              lastProgress: entry.lastProgress,
-            })),
-          },
-          turnId: input.turnId,
           },
           createdAt: input.event.createdAt,
         }),

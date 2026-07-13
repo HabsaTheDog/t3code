@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAgentBrowserCommandSpec,
+  assertNoSensitiveCommandArguments,
+  buildCredentialFreeChildEnvironment,
   parseAgentBrowserSnapshot,
   parseAgentBrowserEvalJson,
 } from "../agentBrowserClient.ts";
@@ -69,5 +71,33 @@ describe("agentBrowserClient", () => {
         ].join("\n"),
       ),
     ).toEqual({ ok: true });
+  });
+
+  it("rejects credentials in any CLI argument before process execution", () => {
+    expect(() =>
+      assertNoSensitiveCommandArguments(
+        ["fill", "#password", "argv-canary-password"],
+        ["student", "argv-canary-password"],
+      ),
+    ).toThrow("expose a credential in argv");
+    expect(() =>
+      assertNoSensitiveCommandArguments(["open", "https://moodle.example/my/"], ["secret"]),
+    ).not.toThrow();
+  });
+
+  it("removes credential variables and values from browser child environments", () => {
+    expect(
+      buildCredentialFreeChildEnvironment(
+        {
+          PATH: "/safe/bin",
+          MOODLE_PASSWORD: "browser-canary",
+          CIS_CALENDAR_URL: "https://calendar.example/private",
+          HARMLESS_ALIAS: "browser-canary",
+          DATABASE_URL: "postgres://user:db-password@database.example/app",
+          LANG: "de_AT.UTF-8",
+        },
+        ["browser-canary"],
+      ),
+    ).toEqual({ PATH: "/safe/bin", LANG: "de_AT.UTF-8" });
   });
 });

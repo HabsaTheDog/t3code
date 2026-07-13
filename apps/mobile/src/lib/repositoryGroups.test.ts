@@ -44,6 +44,7 @@ function makeThread(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    activeDelegatedWorkCount: 0,
     ...input,
   };
 }

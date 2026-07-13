@@ -185,10 +185,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         codexConfig.binaryPath || "codex",
         [
           "exec",
+          "--strict-config",
           "--ephemeral",
           "--skip-git-repo-check",
-          "-s",
-          "read-only",
+          "--config",
+          'default_permissions="study_buddy_analysis"',
           "--model",
           modelSelection.model,
           "--config",

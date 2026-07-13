@@ -85,7 +85,10 @@ export function publicStudyBuddyConfiguration(
     cisUsername: values[CONFIG_KEYS.cisUsername] ?? "",
     cisUrl: publicUrl(firstUrl(values[CONFIG_KEYS.cisUrl]) ?? DEFAULT_CIS_URL),
     cisPasswordConfigured: hasSecret(values[CONFIG_KEYS.cisPassword]),
-    calendarUrl: publicUrl(values[CONFIG_KEYS.calendarUrl] ?? ""),
+    // Calendar feed URLs frequently contain bearer tokens in opaque path
+    // segments. They are write-only even when no credential-looking query key
+    // is present.
+    calendarUrl: "",
     calendarUrlConfigured: hasSecret(values[CONFIG_KEYS.calendarUrl]),
     quiz: {
       accessMode: parseQuizMode(values[CONFIG_KEYS.quizMode]),
@@ -144,6 +147,7 @@ function buildUpdates(patch: StudyBuddyConfigurationPatch): Readonly<Record<stri
   if (patch.calendarUrl !== undefined) {
     updates[CONFIG_KEYS.calendarUrl] = validateCalendarUrl(patch.calendarUrl);
   }
+  applySecretPatch(updates, CONFIG_KEYS.calendarUrl, patch.calendarUrlSecret, validateCalendarUrl);
   if (patch.quiz) {
     updates[CONFIG_KEYS.quizMode] = patch.quiz.accessMode;
     updates[CONFIG_KEYS.quizMinimumMinutes] = String(patch.quiz.minimumTimeLimitMinutes);
@@ -158,9 +162,10 @@ function applySecretPatch(
   updates: Record<string, string>,
   key: string,
   patch: StudyBuddySecretPatch | undefined,
+  validate: (value: string) => string = (value) => value,
 ): void {
   if (!patch || patch.operation === "unchanged") return;
-  updates[key] = patch.operation === "clear" ? "" : patch.value;
+  updates[key] = patch.operation === "clear" ? "" : validate(patch.value);
 }
 
 function validateCalendarUrl(value: string): string {
@@ -169,12 +174,7 @@ function validateCalendarUrl(value: string): string {
   const normalized = trimmed.replace(/^webcal:\/\//i, "https://");
   const parsed = new URL(normalized);
   const hasCredentialQuery = [...parsed.searchParams.keys()].some(isCredentialParameter);
-  if (
-    parsed.protocol !== "https:" ||
-    parsed.username ||
-    parsed.password ||
-    hasCredentialQuery
-  ) {
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || hasCredentialQuery) {
     throw new Error("Invalid calendar URL: use HTTPS without embedded credentials.");
   }
   return trimmed;
@@ -219,13 +219,14 @@ function validatePublicUrl(label: string, value: string): string {
   if (!trimmed) return "";
   const parsed = new URL(trimmed);
   const hasCredentialQuery = [...parsed.searchParams.keys()].some(isCredentialParameter);
+  const loopback = ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname);
   if (
-    !["http:", "https:"].includes(parsed.protocol) ||
+    (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) ||
     parsed.username ||
     parsed.password ||
     hasCredentialQuery
   ) {
-    throw new Error(`Invalid ${label}: use an HTTP(S) URL without embedded credentials.`);
+    throw new Error(`Invalid ${label}: use HTTPS without embedded credentials.`);
   }
   return parsed.toString();
 }
@@ -270,11 +271,9 @@ function parseNumberInRange(
 function parseQuizMode(value: string | undefined): StudyBuddyConfiguration["quiz"]["accessMode"] {
   return value === "info-only"
     ? "review-only"
-    : value === "ask-before-attempt" ||
-    value === "quiz-assist" ||
-    value === "review-only"
-    ? value
-    : "review-only";
+    : value === "ask-before-attempt" || value === "quiz-assist" || value === "review-only"
+      ? value
+      : "review-only";
 }
 
 function parseEnvValue(raw: string): string {

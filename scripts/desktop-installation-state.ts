@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off
+// @effect-diagnostics globalConsole:off
 
 import { access, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -23,11 +26,7 @@ const BACKUP_PREFIX = "t3code-backup-";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const T3_ROOT = path.resolve(SCRIPT_DIR, "..");
 const STUDY_BUDDY_ROOT = path.resolve(T3_ROOT, "..");
-const DEFAULT_STUDY_BUDDY_T3_HOME = path.join(
-  STUDY_BUDDY_ROOT,
-  "output",
-  "t3-study-buddy-t3-home",
-);
+const DEFAULT_STUDY_BUDDY_T3_HOME = path.join(STUDY_BUDDY_ROOT, "output", "t3-study-buddy-t3-home");
 const DEFAULT_STUDY_BUDDY_T3_HOME_DEV = path.join(
   STUDY_BUDDY_ROOT,
   "output",
@@ -55,7 +54,11 @@ function includeSharedInstallState(): boolean {
 }
 
 function uniquePaths(paths: readonly string[]): readonly string[] {
-  return [...new Set(paths.map((entry) => path.resolve(entry.trim())).filter((entry) => entry.length > 0))];
+  return [
+    ...new Set(
+      paths.map((entry) => path.resolve(entry.trim())).filter((entry) => entry.length > 0),
+    ),
+  ];
 }
 
 function studyBuddyStateRoots(): readonly string[] {
@@ -224,8 +227,8 @@ async function main(): Promise<void> {
       break;
     default:
       console.error(
-        "Usage: node scripts/desktop-installation-state.ts <backup|restore|reset>\n"
-          + "Defaults to Study Buddy fork state only. Set STUDY_BUDDY_T3_INCLUDE_SHARED_INSTALL=1 to include shared T3 Code install state.",
+        "Usage: node scripts/desktop-installation-state.ts <backup|restore|reset>\n" +
+          "Defaults to Study Buddy fork state only. Set STUDY_BUDDY_T3_INCLUDE_SHARED_INSTALL=1 to include shared T3 Code install state.",
       );
       process.exitCode = 1;
   }

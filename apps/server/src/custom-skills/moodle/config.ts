@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
@@ -9,7 +9,7 @@ import type {
   QuizSafetyPolicy,
 } from "./types.ts";
 
-const DEFAULT_BROWSER_BACKEND = "agent-browser";
+const DEFAULT_BROWSER_BACKEND = "playwright";
 const DEFAULT_BROWSER_MAX_OUTPUT = 50_000;
 const DEFAULT_BROWSER_ALLOWED_DOMAINS = [
   "moodle.technikum-wien.at",
@@ -20,8 +20,6 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = path.resolve(MODULE_DIR, "../../..");
 const T3_ROOT = path.resolve(MODULE_DIR, "../../../../..");
 
-loadEnvFiles();
-
 export function createRuntimeConfig(input: MoodleGraphInput): MoodleRuntimeConfig {
   if (!input.prompt.trim()) {
     throw new Error("prompt is required.");
@@ -30,7 +28,8 @@ export function createRuntimeConfig(input: MoodleGraphInput): MoodleRuntimeConfi
     throw new Error("moodleUrl is required.");
   }
 
-  const workspaceRoot = resolveWorkspaceRoot();
+  const environment = loadEnvFiles(defaultEnvFileCandidates(process.env), process.env);
+  const workspaceRoot = resolveWorkspaceRoot(environment);
   const outputRoot = path.join(workspaceRoot, "output", requestSlug(input.prompt));
   const explicitOutputPath = input.outputPath
     ? resolveWorkspacePath(input.outputPath, workspaceRoot)
@@ -40,11 +39,20 @@ export function createRuntimeConfig(input: MoodleGraphInput): MoodleRuntimeConfi
     : path.resolve(outputRoot, timestampSlug());
   mkdirSync(runDir, { recursive: true });
   const runSlug = path.basename(runDir).replace(/[^a-z0-9_-]+/gi, "-") || "run";
-  const browserBackend = parseBrowserBackend(
-    input.browserBackend || process.env.MOODLE_BROWSER_BACKEND,
+  const requestedBrowserBackend = parseBrowserBackend(
+    input.browserBackend || environment.MOODLE_BROWSER_BACKEND,
   );
-  const cisBrowserBackend = parseBrowserBackend(process.env.CIS_BROWSER_BACKEND || "playwright");
-  const quizSafetyPolicy = createQuizSafetyPolicy(input.quizSafetyPolicy);
+  const requestedCisBrowserBackend = parseBrowserBackend(
+    input.cisBrowserBackend || environment.CIS_BROWSER_BACKEND || "playwright",
+  );
+  // Credential values must never cross the agent-browser CLI argv boundary.
+  // Authenticated runs are forced through the in-process Playwright broker.
+  const browserBackend = environment.MOODLE_PASSWORD ? "playwright" : requestedBrowserBackend;
+  const cisBrowserBackend =
+    environment.CIS_PASSWORD || environment.MOODLE_PASSWORD
+      ? "playwright"
+      : requestedCisBrowserBackend;
+  const quizSafetyPolicy = createQuizSafetyPolicy(input.quizSafetyPolicy, environment);
 
   return {
     prompt: input.prompt,
@@ -53,46 +61,73 @@ export function createRuntimeConfig(input: MoodleGraphInput): MoodleRuntimeConfi
     runDir,
     maxDepth: input.maxDepth ?? 1,
     maxPages: input.maxPages ?? 12,
-    maxCisPages: input.maxCisPages ?? parsePositiveInteger(process.env.CIS_MAX_PAGES, 8),
+    maxCisPages: input.maxCisPages ?? parsePositiveInteger(environment.CIS_MAX_PAGES, 8),
     allowFileDownloads: input.allowFileDownloads ?? true,
-    baseUrl: process.env.MOODLE_BASE_URL || new URL(input.moodleUrl).origin,
-    dashboardUrl: process.env.MOODLE_DASHBOARD_URL || input.moodleUrl,
-    username: process.env.MOODLE_USERNAME,
-    password: process.env.MOODLE_PASSWORD,
-    storageState: process.env.MOODLE_STORAGE_STATE || undefined,
-    cisUrls: input.cisUrls?.length ? input.cisUrls : parseUrlList(process.env.CIS_URLS),
-    calendarUrl: input.calendarUrl?.trim() || process.env.CIS_CALENDAR_URL?.trim() || undefined,
+    baseUrl: environment.MOODLE_BASE_URL || new URL(input.moodleUrl).origin,
+    dashboardUrl: environment.MOODLE_DASHBOARD_URL || input.moodleUrl,
+    username: environment.MOODLE_USERNAME,
+    password: environment.MOODLE_PASSWORD,
+    storageState: environment.MOODLE_STORAGE_STATE || undefined,
+    cisUrls: input.cisUrls?.length ? input.cisUrls : parseUrlList(environment.CIS_URLS),
+    calendarUrl: input.calendarUrl?.trim() || environment.CIS_CALENDAR_URL?.trim() || undefined,
     cisBaseUrl:
-      process.env.CIS_BASE_URL ||
-      inferBaseUrl(input.cisUrls?.[0] || parseUrlList(process.env.CIS_URLS)[0]),
+      environment.CIS_BASE_URL ||
+      inferBaseUrl(input.cisUrls?.[0] || parseUrlList(environment.CIS_URLS)[0], environment),
     cisDashboardUrl:
-      process.env.CIS_DASHBOARD_URL ||
+      environment.CIS_DASHBOARD_URL ||
       input.cisUrls?.[0] ||
-      parseUrlList(process.env.CIS_URLS)[0] ||
+      parseUrlList(environment.CIS_URLS)[0] ||
       "",
-    cisUsername: process.env.CIS_USERNAME || process.env.MOODLE_USERNAME,
-    cisPassword: process.env.CIS_PASSWORD || process.env.MOODLE_PASSWORD,
-    cisStorageState: process.env.CIS_STORAGE_STATE || undefined,
-    headless: input.browserHeaded ? false : process.env.MOODLE_HEADLESS !== "false",
+    cisUsername: environment.CIS_USERNAME || environment.MOODLE_USERNAME,
+    cisPassword: environment.CIS_PASSWORD || environment.MOODLE_PASSWORD,
+    cisStorageState: environment.CIS_STORAGE_STATE || undefined,
+    headless: input.browserHeaded ? false : environment.MOODLE_HEADLESS !== "false",
     browserBackend,
     cisBrowserBackend,
-    agentBrowserBin: process.env.AGENT_BROWSER_BIN || undefined,
-    browserSession: process.env.MOODLE_BROWSER_SESSION || `study-buddy-${runSlug}`,
-    browserSessionName: process.env.MOODLE_BROWSER_SESSION_NAME || "study-buddy-technikum",
-    browserAllowedDomains: parseUrlList(process.env.MOODLE_BROWSER_ALLOWED_DOMAINS).length
-      ? parseUrlList(process.env.MOODLE_BROWSER_ALLOWED_DOMAINS)
-      : DEFAULT_BROWSER_ALLOWED_DOMAINS,
+    agentBrowserBin: environment.AGENT_BROWSER_BIN || undefined,
+    browserSession: environment.MOODLE_BROWSER_SESSION || `study-buddy-${runSlug}`,
+    browserSessionName: environment.MOODLE_BROWSER_SESSION_NAME || "study-buddy-technikum",
+    browserAllowedDomains: deriveBrowserAllowedDomains(input, environment),
+    moodleLoginAllowedOrigins: parseAllowedOrigins(environment.MOODLE_LOGIN_ALLOWED_ORIGINS),
+    cisLoginAllowedOrigins: parseAllowedOrigins(environment.CIS_LOGIN_ALLOWED_ORIGINS),
     browserActionPolicyPath:
-      process.env.MOODLE_BROWSER_ACTION_POLICY ||
+      environment.MOODLE_BROWSER_ACTION_POLICY ||
       path.resolve(path.join(MODULE_DIR, "config", "agent-browser.policy.json")),
     browserMaxOutput:
       input.browserMaxOutput ??
-      parsePositiveInteger(process.env.MOODLE_BROWSER_MAX_OUTPUT, DEFAULT_BROWSER_MAX_OUTPUT),
-    keepBrowserOpen: input.keepBrowserOpen ?? process.env.MOODLE_BROWSER_KEEP_OPEN === "true",
+      parsePositiveInteger(environment.MOODLE_BROWSER_MAX_OUTPUT, DEFAULT_BROWSER_MAX_OUTPUT),
+    keepBrowserOpen: input.keepBrowserOpen ?? environment.MOODLE_BROWSER_KEEP_OPEN === "true",
     autoAnswer: input.autoAnswer ?? quizSafetyPolicy.allowFillingAnswers,
     quizSafetyPolicy,
-    codexModel: trimOptional(input.codexModel) ?? trimOptional(process.env.STUDY_BUDDY_CODEX_MODEL),
+    codexModel: trimOptional(input.codexModel) ?? trimOptional(environment.STUDY_BUDDY_CODEX_MODEL),
   };
+}
+
+function deriveBrowserAllowedDomains(
+  input: MoodleGraphInput,
+  environment: NodeJS.ProcessEnv,
+): string[] {
+  const configured = parseUrlList(environment.MOODLE_BROWSER_ALLOWED_DOMAINS);
+  if (configured.length > 0) return configured;
+
+  const candidateUrls = [
+    input.moodleUrl,
+    environment.MOODLE_BASE_URL,
+    environment.MOODLE_DASHBOARD_URL,
+    ...(input.cisUrls ?? []),
+    ...parseUrlList(environment.CIS_URLS),
+    environment.CIS_BASE_URL,
+    environment.CIS_DASHBOARD_URL,
+  ];
+  const inferredHosts = candidateUrls.flatMap((value) => {
+    if (!value) return [];
+    try {
+      return [new URL(value).hostname];
+    } catch {
+      return [];
+    }
+  });
+  return [...new Set([...DEFAULT_BROWSER_ALLOWED_DOMAINS, ...inferredHosts])];
 }
 
 function trimOptional(value: string | undefined): string | undefined {
@@ -102,21 +137,24 @@ function trimOptional(value: string | undefined): string | undefined {
 
 export function createQuizSafetyPolicy(
   overrides: Partial<QuizSafetyPolicy> = {},
+  environment: NodeJS.ProcessEnv = loadEnvFiles(defaultEnvFileCandidates(process.env), process.env),
 ): QuizSafetyPolicy {
-  const accessMode = parseQuizAccessMode(process.env.MOODLE_QUIZ_ACCESS_MODE);
-  const basePolicy = accessMode ? quizAccessModePolicy(accessMode) : legacyQuizSafetyPolicy();
+  const accessMode = parseQuizAccessMode(environment.MOODLE_QUIZ_ACCESS_MODE);
+  const basePolicy = accessMode
+    ? quizAccessModePolicy(accessMode)
+    : legacyQuizSafetyPolicy(environment);
   return {
     ...basePolicy,
     minimumTimeLimitMinutes: parseNonNegativeNumber(
-      process.env.MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES,
+      environment.MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES,
       basePolicy.minimumTimeLimitMinutes,
     ),
     minimumAttemptsLeft: parseNonNegativeNumber(
-      process.env.MOODLE_QUIZ_MIN_ATTEMPTS_LEFT,
+      environment.MOODLE_QUIZ_MIN_ATTEMPTS_LEFT,
       basePolicy.minimumAttemptsLeft,
     ),
     fillConfidenceThreshold: parseBoundedNumber(
-      process.env.MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD,
+      environment.MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD,
       basePolicy.fillConfidenceThreshold,
       0,
       1,
@@ -126,29 +164,29 @@ export function createQuizSafetyPolicy(
   };
 }
 
-function legacyQuizSafetyPolicy(): QuizSafetyPolicy {
+function legacyQuizSafetyPolicy(environment: NodeJS.ProcessEnv): QuizSafetyPolicy {
   return {
     accessMode: "review-only",
-    allowOpeningQuizPages: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_OPEN, true),
-    allowStartingOrContinuingAttempts: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_ATTEMPT, false),
+    allowOpeningQuizPages: parseBoolean(environment.MOODLE_QUIZ_ALLOW_OPEN, true),
+    allowStartingOrContinuingAttempts: parseBoolean(environment.MOODLE_QUIZ_ALLOW_ATTEMPT, false),
     minimumTimeLimitMinutes: 10,
     minimumAttemptsLeft: 2,
-    allowReadingQuestions: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_READ_QUESTIONS, true),
-    allowSuggestingAnswers: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_SUGGEST_ANSWERS, false),
-    allowFillingAnswers: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_FILL_ANSWERS, false),
+    allowReadingQuestions: parseBoolean(environment.MOODLE_QUIZ_ALLOW_READ_QUESTIONS, true),
+    allowSuggestingAnswers: parseBoolean(environment.MOODLE_QUIZ_ALLOW_SUGGEST_ANSWERS, false),
+    allowFillingAnswers: parseBoolean(environment.MOODLE_QUIZ_ALLOW_FILL_ANSWERS, false),
     allowChangingExistingAnswers: parseBoolean(
-      process.env.MOODLE_QUIZ_ALLOW_CHANGE_EXISTING_ANSWERS,
+      environment.MOODLE_QUIZ_ALLOW_CHANGE_EXISTING_ANSWERS,
       false,
     ),
-    allowSavingMovingNext: parseBoolean(process.env.MOODLE_QUIZ_ALLOW_SAVE_NEXT, false),
-    askBeforeTimedQuizzes: parseBoolean(process.env.MOODLE_QUIZ_ASK_BEFORE_TIMED, true),
+    allowSavingMovingNext: parseBoolean(environment.MOODLE_QUIZ_ALLOW_SAVE_NEXT, false),
+    askBeforeTimedQuizzes: parseBoolean(environment.MOODLE_QUIZ_ASK_BEFORE_TIMED, true),
     askBeforeLimitedAttemptQuizzes: parseBoolean(
-      process.env.MOODLE_QUIZ_ASK_BEFORE_LIMITED_ATTEMPTS,
+      environment.MOODLE_QUIZ_ASK_BEFORE_LIMITED_ATTEMPTS,
       true,
     ),
-    askBeforeFillingAnswers: parseBoolean(process.env.MOODLE_QUIZ_ASK_BEFORE_FILL, true),
+    askBeforeFillingAnswers: parseBoolean(environment.MOODLE_QUIZ_ASK_BEFORE_FILL, true),
     askBeforeChangingExistingAnswers: parseBoolean(
-      process.env.MOODLE_QUIZ_ASK_BEFORE_CHANGE_EXISTING,
+      environment.MOODLE_QUIZ_ASK_BEFORE_CHANGE_EXISTING,
       true,
     ),
     fillConfidenceThreshold: 0.85,
@@ -217,8 +255,8 @@ function timestampSlug(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-function resolveWorkspaceRoot(): string {
-  return path.resolve(process.env.STUDY_BUDDY_WORKSPACE || process.env.T3CODE_CWD || process.cwd());
+function resolveWorkspaceRoot(environment: NodeJS.ProcessEnv): string {
+  return path.resolve(environment.STUDY_BUDDY_WORKSPACE || environment.T3CODE_CWD || process.cwd());
 }
 
 function resolveWorkspacePath(value: string, workspaceRoot: string): string {
@@ -243,9 +281,20 @@ function parseUrlList(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function inferBaseUrl(url: string | undefined): string {
+function parseAllowedOrigins(value: string | undefined): string[] {
+  return parseUrlList(value).flatMap((entry) => {
+    try {
+      const parsed = new URL(entry);
+      return parsed.protocol === "https:" ? [parsed.origin] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function inferBaseUrl(url: string | undefined, environment: NodeJS.ProcessEnv): string {
   if (!url) {
-    return process.env.CIS_BASE_URL || "https://cis.technikum-wien.at";
+    return environment.CIS_BASE_URL || "https://cis.technikum-wien.at";
   }
   return new URL(url).origin;
 }
@@ -315,21 +364,33 @@ function parseQuizAccessMode(value: string | undefined): QuizAccessMode | null {
   return null;
 }
 
-export function loadEnvFiles(candidates = defaultEnvFileCandidates()): void {
+export function loadEnvFiles(
+  candidates = defaultEnvFileCandidates(process.env),
+  baseEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { ...baseEnvironment };
   for (const envPath of new Set(candidates)) {
-    dotenv.config({ path: envPath, override: false, quiet: true });
+    try {
+      const parsed = dotenv.parse(readFileSync(envPath, "utf8"));
+      for (const [key, value] of Object.entries(parsed)) {
+        if (environment[key] === undefined) environment[key] = value;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
+  return environment;
 }
 
-function defaultEnvFileCandidates(): string[] {
+function defaultEnvFileCandidates(environment: NodeJS.ProcessEnv): string[] {
   return [
-    ...(process.env.STUDY_BUDDY_ROOT
-      ? [path.join(process.env.STUDY_BUDDY_ROOT, ".env.local")]
+    ...(environment.STUDY_BUDDY_ROOT
+      ? [path.join(environment.STUDY_BUDDY_ROOT, ".env.local")]
       : []),
     path.resolve(process.cwd(), ".env.local"),
     path.join(SERVER_ROOT, ".env.local"),
     path.join(T3_ROOT, ".env.local"),
-    ...(process.env.STUDY_BUDDY_ROOT ? [path.join(process.env.STUDY_BUDDY_ROOT, ".env")] : []),
+    ...(environment.STUDY_BUDDY_ROOT ? [path.join(environment.STUDY_BUDDY_ROOT, ".env")] : []),
     path.resolve(process.cwd(), ".env"),
     path.join(SERVER_ROOT, ".env"),
     path.join(T3_ROOT, ".env"),

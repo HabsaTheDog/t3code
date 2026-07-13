@@ -19,14 +19,7 @@ import {
   WifiIcon,
   XCircleIcon,
 } from "lucide-react";
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { isHostedStaticApp } from "../hostedPairing";
@@ -51,7 +44,7 @@ import {
 import { subscribeSetupRerun } from "./setupCoordinator";
 import { systemTelemetryRandom } from "../telemetry/types";
 import { registerTelemetrySecret, telemetry } from "../telemetry/runtime";
-import { ProviderSetupStep } from "./ProviderSetupStep";
+import { ProviderSetupStep, type ProviderSetupStepHandle } from "./ProviderSetupStep";
 
 export const ONBOARDING_VERSION = 1;
 export const CONSENT_VERSION = 1;
@@ -64,7 +57,7 @@ type SetupStepId =
   | "moodle"
   | "cis"
   | "calendar"
-  | "quiz-safety"
+  | "quiz-safety";
 
 interface SetupStep {
   id: SetupStepId;
@@ -79,7 +72,7 @@ type StepSaveHandle = {
 const ALL_STEPS: readonly SetupStep[] = [
   { id: "privacy", label: "Privacy", icon: ShieldCheckIcon },
   { id: "environment", label: "Environment", icon: WifiIcon },
-  { id: "provider", label: "AI provider", icon: BotIcon },
+  { id: "provider", label: "Codex", icon: BotIcon },
   { id: "moodle", label: "Moodle", icon: GraduationCapIcon },
   { id: "cis", label: "CIS", icon: LockKeyholeIcon },
   { id: "calendar", label: "Calendar", icon: LinkIcon },
@@ -187,8 +180,8 @@ function SetupWizard({
   const [savingStep, setSavingStep] = useState(false);
   const studyConfigurationStepRef = useRef<StepSaveHandle>(null);
   const quizSafetyStepRef = useRef<StepSaveHandle>(null);
-  const privacySelectionMade =
-    analyticsDecision !== "unset" || conversationDecision !== "unset";
+  const providerSetupStepRef = useRef<ProviderSetupStepHandle>(null);
+  const privacySelectionMade = analyticsDecision !== "unset" || conversationDecision !== "unset";
 
   const step = steps[stepIndex] ?? steps[0]!;
   useEffect(() => {
@@ -222,8 +215,7 @@ function SetupWizard({
     conversationConsent: TelemetryConsentDecision,
     telemetryEvent: "setup.step_completed" | "setup.step_skipped",
   ) => {
-    const normalizedAnalyticsConsent =
-      analyticsConsent === "unset" ? "rejected" : analyticsConsent;
+    const normalizedAnalyticsConsent = analyticsConsent === "unset" ? "rejected" : analyticsConsent;
     const normalizedConversationConsent =
       conversationConsent === "unset" ? "rejected" : conversationConsent;
     const now = new Date().toISOString();
@@ -243,13 +235,13 @@ function SetupWizard({
         analyticsEnabledAt:
           normalizedAnalyticsConsent === "accepted"
             ? settings.analyticsConsent === "accepted"
-              ? settings.analyticsEnabledAt ?? now
+              ? (settings.analyticsEnabledAt ?? now)
               : now
             : null,
         conversationEnabledAt:
           normalizedConversationConsent === "accepted"
             ? settings.conversationConsent === "accepted"
-              ? settings.conversationEnabledAt ?? now
+              ? (settings.conversationEnabledAt ?? now)
               : now
             : null,
       });
@@ -288,11 +280,13 @@ function SetupWizard({
     setSavingStep(true);
     try {
       const currentStepSaved =
-        step.id === "moodle" || step.id === "cis" || step.id === "calendar"
-          ? await studyConfigurationStepRef.current?.save()
-          : step.id === "quiz-safety"
-            ? await quizSafetyStepRef.current?.save()
-            : true;
+        step.id === "provider"
+          ? await providerSetupStepRef.current?.save()
+          : step.id === "moodle" || step.id === "cis" || step.id === "calendar"
+            ? await studyConfigurationStepRef.current?.save()
+            : step.id === "quiz-safety"
+              ? await quizSafetyStepRef.current?.save()
+              : true;
       if (currentStepSaved === false) return;
 
       if (stepIndex === steps.length - 1) {
@@ -381,7 +375,7 @@ function SetupWizard({
             })}
           </ol>
           <p className="mt-auto text-xs leading-5 text-muted-foreground">
-            Every step is skippable. Rerunning setup never erases existing configuration.
+            Codex is required. Study connections can be skipped and configured later.
           </p>
         </aside>
 
@@ -426,7 +420,9 @@ function SetupWizard({
               {step.id === "environment" ? (
                 <EnvironmentStep onOpenEnvironment={onOpenEnvironment} />
               ) : null}
-              {step.id === "provider" ? <ProviderStep /> : null}
+              {step.id === "provider" ? (
+                <ProviderStep providerSetupStepRef={providerSetupStepRef} />
+              ) : null}
               {step.id === "moodle" ? (
                 <StudyConfigurationStep
                   key="moodle"
@@ -444,9 +440,7 @@ function SetupWizard({
                   target="calendar"
                 />
               ) : null}
-              {step.id === "quiz-safety" ? (
-                <QuizSafetyStep ref={quizSafetyStepRef} />
-              ) : null}
+              {step.id === "quiz-safety" ? <QuizSafetyStep ref={quizSafetyStepRef} /> : null}
             </div>
           </div>
 
@@ -515,7 +509,7 @@ function SetupWizard({
                   Back
                 </Button>
                 <div className="flex items-center gap-2">
-                  {stepIndex < steps.length - 1 ? (
+                  {stepIndex < steps.length - 1 && step.id !== "provider" ? (
                     <Button
                       variant="ghost"
                       data-analytics-id="setup.skip"
@@ -722,384 +716,388 @@ function EnvironmentStep({ onOpenEnvironment }: { onOpenEnvironment: () => Promi
   );
 }
 
-function ProviderStep() {
+function ProviderStep({
+  providerSetupStepRef,
+}: {
+  providerSetupStepRef: React.RefObject<ProviderSetupStepHandle | null>;
+}) {
   return (
     <div className="space-y-6">
       <StepIntro
-        title="Choose an AI provider"
-        description="Installation and authentication run only after an explicit action and confirmation. Progress output is sanitized."
+        title="Set up Codex"
+        description="Study Buddy uses Codex exclusively. Connect one supported installation before adding your university accounts."
         icon={BotIcon}
       />
-      <ProviderSetupStep />
+      <ProviderSetupStep ref={providerSetupStepRef} />
     </div>
   );
 }
 
-const StudyConfigurationStep = forwardRef<
-  StepSaveHandle,
-  { target: StudyBuddyConnectionTarget }
->(function StudyConfigurationStep({ target }, ref) {
-  const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
-  const [config, setConfig] = useState<StudyBuddyConfiguration | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-  const [checkingConnection, setCheckingConnection] = useState(false);
-  const [moodleUsername, setMoodleUsername] = useState("");
-  const [cisUsername, setCisUsername] = useState("");
-  const [moodleUrl, setMoodleUrl] = useState("");
-  const [cisUrl, setCisUrl] = useState("");
-  const [moodlePassword, setMoodlePassword] = useState("");
-  const [cisPassword, setCisPassword] = useState("");
-  const [calendarUrl, setCalendarUrl] = useState("");
-  const persistedConnectionChecks = settings.studyBuddyConnectionChecks ?? {};
-  const savedConnectionCheck = persistedConnectionChecks[target] ?? null;
+const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyConnectionTarget }>(
+  function StudyConfigurationStep({ target }, ref) {
+    const settings = useSettings();
+    const { updateSettings } = useUpdateSettings();
+    const [config, setConfig] = useState<StudyBuddyConfiguration | null>(null);
+    const [unavailable, setUnavailable] = useState(false);
+    const [saveError, setSaveError] = useState(false);
+    const [checkingConnection, setCheckingConnection] = useState(false);
+    const [moodleUsername, setMoodleUsername] = useState("");
+    const [cisUsername, setCisUsername] = useState("");
+    const [moodleUrl, setMoodleUrl] = useState("");
+    const [cisUrl, setCisUrl] = useState("");
+    const [moodlePassword, setMoodlePassword] = useState("");
+    const [cisPassword, setCisPassword] = useState("");
+    const [calendarUrl, setCalendarUrl] = useState("");
+    const [secretInputResetVersion, setSecretInputResetVersion] = useState(0);
+    const persistedConnectionChecks = settings.studyBuddyConnectionChecks ?? {};
+    const savedConnectionCheck = persistedConnectionChecks[target] ?? null;
 
-  useEffect(() => {
-    void ensureLocalApi()
-      .server.getStudyBuddyConfiguration()
-      .then((next) => {
-        setConfig(next);
-        setMoodleUsername(next.moodleUsername);
-        setCisUsername(next.cisUsername);
-        setMoodleUrl(next.moodleDashboardUrl);
-        setCisUrl(next.cisUrl);
-        setCalendarUrl(next.calendarUrl);
-      })
-      .catch(() => setUnavailable(true));
-  }, []);
+    useEffect(() => {
+      void ensureLocalApi()
+        .server.getStudyBuddyConfiguration()
+        .then((next) => {
+          setConfig(next);
+          setMoodleUsername(next.moodleUsername);
+          setCisUsername(next.cisUsername);
+          setMoodleUrl(next.moodleDashboardUrl);
+          setCisUrl(next.cisUrl);
+        })
+        .catch(() => setUnavailable(true));
+    }, []);
 
-  useEffect(() => {
-    if (!config) return;
-    if (target === "moodle") {
-      setMoodleUsername(config.moodleUsername);
-      setMoodleUrl(config.moodleDashboardUrl);
-    } else if (target === "cis") {
-      setCisUsername(config.cisUsername);
-      setCisUrl(config.cisUrl);
-    } else {
-      setCalendarUrl(config.calendarUrl);
-    }
-  }, [config, target]);
+    useEffect(() => {
+      if (!config) return;
+      if (target === "moodle") {
+        setMoodleUsername(config.moodleUsername);
+        setMoodleUrl(config.moodleDashboardUrl);
+      } else if (target === "cis") {
+        setCisUsername(config.cisUsername);
+        setCisUrl(config.cisUrl);
+      } else {
+        setCalendarUrl("");
+      }
+    }, [config, target]);
 
-  const isConfigured =
-    target === "moodle"
-      ? Boolean(moodleUsername.trim()) &&
-        Boolean(moodleUrl.trim()) &&
-        (Boolean(moodlePassword.trim()) || config?.moodlePasswordConfigured)
-      : target === "cis"
-        ? Boolean(cisUsername.trim()) &&
-          Boolean(cisUrl.trim()) &&
-          (Boolean(cisPassword.trim()) || config?.cisPasswordConfigured)
-        : Boolean(calendarUrl.trim()) || config?.calendarUrlConfigured;
+    const isConfigured =
+      target === "moodle"
+        ? Boolean(moodleUsername.trim()) &&
+          Boolean(moodleUrl.trim()) &&
+          (Boolean(moodlePassword.trim()) || config?.moodlePasswordConfigured)
+        : target === "cis"
+          ? Boolean(cisUsername.trim()) &&
+            Boolean(cisUrl.trim()) &&
+            (Boolean(cisPassword.trim()) || config?.cisPasswordConfigured)
+          : Boolean(calendarUrl.trim()) || config?.calendarUrlConfigured;
 
-  const hasDraftChanges =
-    target === "moodle"
-      ? moodleUsername !== (config?.moodleUsername ?? "") ||
-        moodleUrl !== (config?.moodleDashboardUrl ?? "") ||
-        Boolean(moodlePassword)
-      : target === "cis"
-        ? cisUsername !== (config?.cisUsername ?? "") ||
-          cisUrl !== (config?.cisUrl ?? "") ||
-          Boolean(cisPassword)
-        : calendarUrl !== (config?.calendarUrl ?? "");
+    const hasDraftChanges =
+      target === "moodle"
+        ? moodleUsername !== (config?.moodleUsername ?? "") ||
+          moodleUrl !== (config?.moodleDashboardUrl ?? "") ||
+          Boolean(moodlePassword)
+        : target === "cis"
+          ? cisUsername !== (config?.cisUsername ?? "") ||
+            cisUrl !== (config?.cisUrl ?? "") ||
+            Boolean(cisPassword)
+          : Boolean(calendarUrl);
 
-  const visibleConnectionCheck = hasDraftChanges ? null : savedConnectionCheck;
+    const visibleConnectionCheck = hasDraftChanges ? null : savedConnectionCheck;
 
-  const connectionStatusKind: "idle" | "checking" | "success" | "error" = checkingConnection
-    ? "checking"
-    : visibleConnectionCheck?.status === "success"
-      ? "success"
-      : visibleConnectionCheck?.status === "failure"
-        ? "error"
-        : "idle";
+    const connectionStatusKind: "idle" | "checking" | "success" | "error" = checkingConnection
+      ? "checking"
+      : visibleConnectionCheck?.status === "success"
+        ? "success"
+        : visibleConnectionCheck?.status === "failure"
+          ? "error"
+          : "idle";
 
-  const connectionStatus = checkingConnection
-    ? "Checking connection…"
-    : visibleConnectionCheck?.message ?? null;
+    const connectionStatus = checkingConnection
+      ? "Checking connection…"
+      : (visibleConnectionCheck?.message ?? null);
 
-  const buildPatch = (): StudyBuddyConfigurationPatch =>
-    target === "moodle"
-      ? {
-          moodleUsername,
-          moodleDashboardUrl: moodleUrl,
-          moodlePassword: moodlePassword
-            ? { operation: "set", value: moodlePassword }
-            : { operation: "unchanged" },
-        }
-      : target === "cis"
+    const buildPatch = (): StudyBuddyConfigurationPatch =>
+      target === "moodle"
         ? {
-            cisUsername,
-            cisUrl,
-            cisPassword: cisPassword
-              ? { operation: "set", value: cisPassword }
+            moodleUsername,
+            moodleDashboardUrl: moodleUrl,
+            moodlePassword: moodlePassword
+              ? { operation: "set", value: moodlePassword }
               : { operation: "unchanged" },
           }
-        : {
-            calendarUrl,
-          };
+        : target === "cis"
+          ? {
+              cisUsername,
+              cisUrl,
+              cisPassword: cisPassword
+                ? { operation: "set", value: cisPassword }
+                : { operation: "unchanged" },
+            }
+          : {
+              calendarUrlSecret: calendarUrl
+                ? { operation: "set", value: calendarUrl }
+                : { operation: "unchanged" },
+            };
 
-  const save = async () => {
-    if (!config) return true;
-    setSaveError(false);
-    try {
-      const secrets =
-        target === "moodle"
-          ? [moodlePassword]
-          : target === "cis"
-            ? [cisPassword]
-            : [];
-      for (const secret of secrets) {
-        if (secret) registerTelemetrySecret(secret);
-      }
-      const next = await ensureLocalApi().server.updateStudyBuddyConfiguration({
-        patch: buildPatch(),
-      });
-      setConfig(next);
-      void telemetry.capture({
-        event: "settings.changed",
-        properties: {
-          section:
-            target === "moodle"
-              ? "study_moodle"
-              : target === "cis"
-                ? "study_cis"
-                : "study_calendar",
-        },
-      });
-      return true;
-    } catch {
-      setSaveError(true);
-      void telemetry.capture({
-        event: "setup.step_failed",
-        properties: {
-          step: target === "moodle" ? "moodle" : target === "cis" ? "cis" : "calendar",
-          reason: "configuration_save",
-        },
-      });
-      return false;
-    }
-  };
-
-  const checkConnection = async () => {
-    if (!config || unavailable || !isConfigured) {
-      updateSettings({
-        studyBuddyConnectionChecks: {
-          ...persistedConnectionChecks,
-          [target]: {
-            target,
-            status: "failure",
-            code: "not-configured",
-            message: "Complete the fields to run the connection check.",
-            checkedAt: new Date().toISOString(),
+    const save = async () => {
+      if (!config) return true;
+      setSaveError(false);
+      try {
+        const secrets =
+          target === "moodle" ? [moodlePassword] : target === "cis" ? [cisPassword] : [calendarUrl];
+        for (const secret of secrets) {
+          if (secret) registerTelemetrySecret(secret);
+        }
+        const next = await ensureLocalApi().server.updateStudyBuddyConfiguration({
+          patch: buildPatch(),
+        });
+        setConfig(next);
+        // Secrets are write-only. Once the backend has persisted one, clear the
+        // draft so it cannot keep the connection result in the "changed" state
+        // (and so the secret is not retained in the setup form).
+        if (target === "moodle") setMoodlePassword("");
+        else if (target === "cis") setCisPassword("");
+        else setCalendarUrl("");
+        setSecretInputResetVersion((current) => current + 1);
+        void telemetry.capture({
+          event: "settings.changed",
+          properties: {
+            section:
+              target === "moodle"
+                ? "study_moodle"
+                : target === "cis"
+                  ? "study_cis"
+                  : "study_calendar",
           },
-        },
-      });
-      return;
-    }
-    setSaveError(false);
-    setCheckingConnection(true);
-    try {
-      const saved = await save();
-      if (!saved) {
+        });
+        return true;
+      } catch {
+        setSaveError(true);
+        void telemetry.capture({
+          event: "setup.step_failed",
+          properties: {
+            step: target === "moodle" ? "moodle" : target === "cis" ? "cis" : "calendar",
+            reason: "configuration_save",
+          },
+        });
+        return false;
+      }
+    };
+
+    const checkConnection = async () => {
+      if (!config || unavailable || !isConfigured) {
         updateSettings({
           studyBuddyConnectionChecks: {
             ...persistedConnectionChecks,
             [target]: {
               target,
               status: "failure",
-              code: "unreachable",
-              message: "Connection check unavailable.",
+              code: "not-configured",
+              message: "Complete the fields to run the connection check.",
               checkedAt: new Date().toISOString(),
             },
           },
         });
         return;
       }
-      const result = await ensureLocalApi().server.testStudyBuddyConnection({ target });
-      updateSettings({
-        studyBuddyConnectionChecks: {
-          ...persistedConnectionChecks,
-          [target]: result,
-        },
-      });
-      void telemetry.capture({
-        event: "study_connection.tested",
-        properties: { target, outcome: result.status },
-      });
-    } catch (testError) {
-      const message =
-        testError instanceof Error ? testError.message : "Connection check unavailable.";
-      const result: StudyBuddyConnectionTestResult = {
-        target,
-        status: "failure",
-        code: "unreachable",
-        message,
-        checkedAt: new Date().toISOString(),
-      };
-      updateSettings({
-        studyBuddyConnectionChecks: {
-          ...persistedConnectionChecks,
-          [target]: result,
-        },
-      });
-      void telemetry.capture({
-        event: "study_connection.tested",
-        properties: { target, outcome: "error" },
-      });
-    } finally {
-      setCheckingConnection(false);
-    }
-  };
-
-  useImperativeHandle(ref, () => ({ save }), [save]);
-
-  return (
-    <div className="space-y-6">
-      <StepIntro
-        title={target === "moodle" ? "Moodle" : target === "cis" ? "CIS" : "Calendar"}
-        description={
-          unavailable
-            ? "Connect a backend first, then configure these fields in Settings → Study Buddy."
-            : target === "calendar"
-              ? "Enter the calendar URL, then run a check when you want to validate it."
-              : "Enter the link, login, and password, then run a check when you want to validate it."
+      setSaveError(false);
+      setCheckingConnection(true);
+      try {
+        const saved = await save();
+        if (!saved) {
+          updateSettings({
+            studyBuddyConnectionChecks: {
+              ...persistedConnectionChecks,
+              [target]: {
+                target,
+                status: "failure",
+                code: "unreachable",
+                message: "Connection check unavailable.",
+                checkedAt: new Date().toISOString(),
+              },
+            },
+          });
+          return;
         }
-        icon={
-          target === "moodle"
-            ? GraduationCapIcon
-            : target === "cis"
-              ? LockKeyholeIcon
-              : LinkIcon
-        }
-      />
-      <Card className="divide-y divide-border/60">
-        {(target === "moodle"
-          ? [
-              {
-                label: "Moodle link",
-                value: moodleUrl,
-                setValue: setMoodleUrl,
-                secret: false,
-              },
-              {
-                label: "Moodle login",
-                value: moodleUsername,
-                setValue: setMoodleUsername,
-                secret: false,
-              },
-              {
-                label: "Moodle password",
-                value: moodlePassword,
-                setValue: setMoodlePassword,
-                secret: true,
-              },
-            ]
-          : target === "cis"
+        const result = await ensureLocalApi().server.testStudyBuddyConnection({ target });
+        updateSettings({
+          studyBuddyConnectionChecks: {
+            ...persistedConnectionChecks,
+            [target]: result,
+          },
+        });
+        void telemetry.capture({
+          event: "study_connection.tested",
+          properties: { target, outcome: result.status },
+        });
+      } catch (testError) {
+        const message =
+          testError instanceof Error ? testError.message : "Connection check unavailable.";
+        const result: StudyBuddyConnectionTestResult = {
+          target,
+          status: "failure",
+          code: "unreachable",
+          message,
+          checkedAt: new Date().toISOString(),
+        };
+        updateSettings({
+          studyBuddyConnectionChecks: {
+            ...persistedConnectionChecks,
+            [target]: result,
+          },
+        });
+        void telemetry.capture({
+          event: "study_connection.tested",
+          properties: { target, outcome: "error" },
+        });
+      } finally {
+        setCheckingConnection(false);
+      }
+    };
+
+    useImperativeHandle(ref, () => ({ save }), [save]);
+
+    return (
+      <div className="space-y-6">
+        <StepIntro
+          title={target === "moodle" ? "Moodle" : target === "cis" ? "CIS" : "Calendar"}
+          description={
+            unavailable
+              ? "Connect a backend first, then configure these fields in Settings → Study Buddy."
+              : target === "calendar"
+                ? "Enter the calendar URL, then run a check when you want to validate it."
+                : "Enter the link, login, and password, then run a check when you want to validate it."
+          }
+          icon={
+            target === "moodle" ? GraduationCapIcon : target === "cis" ? LockKeyholeIcon : LinkIcon
+          }
+        />
+        <Card className="divide-y divide-border/60">
+          {(target === "moodle"
             ? [
                 {
-                  label: "CIS link",
-                  value: cisUrl,
-                  setValue: setCisUrl,
+                  label: "Moodle link",
+                  value: moodleUrl,
+                  setValue: setMoodleUrl,
                   secret: false,
                 },
                 {
-                  label: "CIS login",
-                  value: cisUsername,
-                  setValue: setCisUsername,
+                  label: "Moodle login",
+                  value: moodleUsername,
+                  setValue: setMoodleUsername,
                   secret: false,
                 },
                 {
-                  label: "CIS password",
-                  value: cisPassword,
-                  setValue: setCisPassword,
+                  label: "Moodle password",
+                  value: moodlePassword,
+                  setValue: setMoodlePassword,
                   secret: true,
                 },
               ]
-            : [
-                {
-                  label: "Calendar URL",
-                  value: calendarUrl,
-                  setValue: setCalendarUrl,
-                  secret: false,
-                },
-              ]
-        ).map((field) => (
-          <label key={field.label} className="block px-5 py-4">
-            <span className="text-sm font-medium">{field.label}</span>
-            {field.secret ? (
-              <SecretInput
-                resetKey={`${target}-${field.label}`}
-                label={field.label}
-                className="pt-2"
-                inputClassName="mt-0"
-                disabled={unavailable || !config}
-                autoComplete="new-password"
-                placeholder="Enter secret"
-                onValueChange={field.setValue}
-              />
-            ) : (
-              <Input
-                nativeInput
-                className="mt-2"
-                value={field.value}
-                disabled={unavailable || !config}
-                autoComplete="off"
-                onChange={(event) => field.setValue(event.currentTarget.value)}
-              />
-            )}
-          </label>
-        ))}
-      </Card>
-      <div className="flex items-center gap-3">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={unavailable || !config || checkingConnection}
-          onClick={() => void checkConnection()}
-        >
-          {checkingConnection ? <Spinner className="size-4" /> : null}
-          {checkingConnection ? "Checking" : "Check"}
-        </Button>
-        <div className="flex items-center gap-2">
-          {connectionStatusKind === "success" ? (
-            <CheckCircle2Icon
-              className="size-4 shrink-0 text-emerald-400"
-              aria-label="Connection check passed"
-            />
-          ) : connectionStatusKind === "error" ? (
-            <XCircleIcon
-              className="size-4 shrink-0 text-destructive"
-              aria-label="Connection check failed"
-            />
-          ) : null}
-          <p
-            className={cn(
-              "text-xs leading-5",
-              connectionStatusKind === "success"
-                ? "text-emerald-400"
-                : connectionStatusKind === "error"
-                  ? "text-destructive"
-                  : "text-muted-foreground",
-            )}
+            : target === "cis"
+              ? [
+                  {
+                    label: "CIS link",
+                    value: cisUrl,
+                    setValue: setCisUrl,
+                    secret: false,
+                  },
+                  {
+                    label: "CIS login",
+                    value: cisUsername,
+                    setValue: setCisUsername,
+                    secret: false,
+                  },
+                  {
+                    label: "CIS password",
+                    value: cisPassword,
+                    setValue: setCisPassword,
+                    secret: true,
+                  },
+                ]
+              : [
+                  {
+                    label: "Calendar URL",
+                    value: calendarUrl,
+                    setValue: setCalendarUrl,
+                    secret: true,
+                  },
+                ]
+          ).map((field) => (
+            <label key={field.label} className="block px-5 py-4">
+              <span className="text-sm font-medium">{field.label}</span>
+              {field.secret ? (
+                <SecretInput
+                  resetKey={`${target}-${field.label}-${secretInputResetVersion}`}
+                  label={field.label}
+                  className="pt-2"
+                  inputClassName="mt-0"
+                  disabled={unavailable || !config}
+                  autoComplete="new-password"
+                  placeholder="Enter secret"
+                  onValueChange={field.setValue}
+                />
+              ) : (
+                <Input
+                  nativeInput
+                  className="mt-2"
+                  value={field.value}
+                  disabled={unavailable || !config}
+                  autoComplete="off"
+                  onChange={(event) => field.setValue(event.currentTarget.value)}
+                />
+              )}
+            </label>
+          ))}
+        </Card>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={unavailable || !config || checkingConnection}
+            onClick={() => void checkConnection()}
           >
-            {connectionStatus ?? "Run a check to see a confirmation or error here."}
-          </p>
-        </div>
-      </div>
-      {!unavailable ? (
-        <>
-          {saveError ? (
-            <p className="text-xs text-destructive" role="alert">
-              Configuration was not saved. Check the backend and retry.
+            {checkingConnection ? <Spinner className="size-4" /> : null}
+            {checkingConnection ? "Checking" : "Check"}
+          </Button>
+          <div className="flex items-center gap-2">
+            {connectionStatusKind === "success" ? (
+              <CheckCircle2Icon
+                className="size-4 shrink-0 text-emerald-400"
+                aria-label="Connection check passed"
+              />
+            ) : connectionStatusKind === "error" ? (
+              <XCircleIcon
+                className="size-4 shrink-0 text-destructive"
+                aria-label="Connection check failed"
+              />
+            ) : null}
+            <p
+              className={cn(
+                "text-xs leading-5",
+                connectionStatusKind === "success"
+                  ? "text-emerald-400"
+                  : connectionStatusKind === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+              )}
+            >
+              {connectionStatus ?? "Run a check to see a confirmation or error here."}
             </p>
-          ) : null}
-        </>
-      ) : null}
-    </div>
-  );
-});
+          </div>
+        </div>
+        {!unavailable ? (
+          <>
+            {saveError ? (
+              <p className="text-xs text-destructive" role="alert">
+                Configuration was not saved. Check the backend and retry.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    );
+  },
+);
 
 const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref) {
   const [config, setConfig] = useState<StudyBuddyConfiguration | null>(null);
@@ -1178,7 +1176,10 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
                     <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                       {option.label}
                       {option.value === "review-only" ? (
-                        <Badge variant="secondary" className="h-5 px-2 text-[10px] uppercase tracking-[0.12em]">
+                        <Badge
+                          variant="secondary"
+                          className="h-5 px-2 text-[10px] uppercase tracking-[0.12em]"
+                        >
                           Recommended
                         </Badge>
                       ) : null}

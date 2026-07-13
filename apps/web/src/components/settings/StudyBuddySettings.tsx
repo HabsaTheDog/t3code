@@ -30,7 +30,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { QUIZ_ACCESS_MODE_OPTIONS, type QuizAccessMode } from "./StudyBuddySettings.logic";
 import { registerTelemetrySecret, telemetry } from "../../telemetry/runtime";
 
-type SecretField = "moodlePassword" | "cisPassword";
+type SecretField = "moodlePassword" | "cisPassword" | "calendarUrlSecret";
 type SecretPatches = Partial<Record<SecretField, StudyBuddySecretPatch>>;
 type SyncState = "loading" | "saved" | "dirty" | "saving" | "error";
 
@@ -66,7 +66,6 @@ function isDirtyConfig(
     draft.moodleDashboardUrl !== config.moodleDashboardUrl ||
     draft.cisUsername !== config.cisUsername ||
     draft.cisUrl !== config.cisUrl ||
-    draft.calendarUrl !== config.calendarUrl ||
     draft.quiz.accessMode !== config.quiz.accessMode ||
     draft.quiz.minimumTimeLimitMinutes !== config.quiz.minimumTimeLimitMinutes ||
     draft.quiz.minimumAttemptsLeft !== config.quiz.minimumAttemptsLeft ||
@@ -177,7 +176,6 @@ export function StudyBuddySettingsPanel() {
         moodleDashboardUrl: draftAtSave.moodleDashboardUrl,
         cisUsername: draftAtSave.cisUsername,
         cisUrl: draftAtSave.cisUrl,
-        calendarUrl: draftAtSave.calendarUrl,
         quiz: draftAtSave.quiz,
         ...secretPatchesAtSave,
       };
@@ -432,21 +430,33 @@ export function StudyBuddySettingsPanel() {
             />
           </div>
         </SettingsRow>
-        <SettingsRow title="Calendar URL" description="Calendar feed URL used for schedule lookups.">
-          <div className="pt-3">
-            <Input
-              nativeInput
-              value={draft.calendarUrl}
-              disabled={loading}
-              autoComplete="off"
-              onChange={(event) =>
-                setDraft((current) => {
-                  markDirty();
-                  return { ...current, calendarUrl: event.currentTarget.value };
-                })
-              }
-            />
-          </div>
+        <SettingsRow
+          title="Calendar URL"
+          description="Write-only private feed URL. The saved value is never returned to the browser."
+        >
+          <SecretInput
+            key={`calendar-url-${secretResetVersion}`}
+            label="Calendar URL"
+            resetKey={`calendar-url-${secretResetVersion}`}
+            disabled={loading}
+            placeholder={
+              config.calendarUrlConfigured ? "Configured — enter to replace" : "Enter URL"
+            }
+            onValueChange={(value) =>
+              setSecretPatches((current) => {
+                if (!value) {
+                  const next = { ...current };
+                  delete next.calendarUrlSecret;
+                  return next;
+                }
+                markDirty();
+                return {
+                  ...current,
+                  calendarUrlSecret: { operation: "set", value },
+                };
+              })
+            }
+          />
         </SettingsRow>
       </SettingsSection>
 

@@ -80,9 +80,7 @@ const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     delegatedWork: Schema.fromJsonString(Schema.Array(OrchestrationDelegatedWork)),
-    deferredFinalizations: Schema.fromJsonString(
-      Schema.Array(OrchestrationDeferredFinalization),
-    ),
+    deferredFinalizations: Schema.fromJsonString(Schema.Array(OrchestrationDeferredFinalization)),
   }),
 );
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
@@ -191,9 +189,7 @@ function countActiveDelegatedWork(
 ): number {
   return delegatedWork.filter(
     (entry) =>
-      entry.status === "created" ||
-      entry.status === "running" ||
-      entry.status === "progress",
+      entry.status === "created" || entry.status === "running" || entry.status === "progress",
   ).length;
 }
 

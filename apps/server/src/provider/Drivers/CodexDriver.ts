@@ -53,6 +53,10 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import {
+  ensureStudyBuddyCodexHome,
+  studyBuddyCodexEnvironment,
+} from "../setup/studyBuddyCodexPolicy.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -158,8 +162,27 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
-      const homeLayout = yield* resolveCodexHomeLayout(config);
+      const serverConfig = yield* ServerConfig;
+      const secureCodexPaths = yield* Effect.tryPromise({
+        try: () => ensureStudyBuddyCodexHome(serverConfig),
+        catch: (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to establish the Study Buddy Codex security profile.",
+            cause,
+          }),
+      });
+      const processEnv = studyBuddyCodexEnvironment(
+        secureCodexPaths,
+        mergeProviderInstanceEnvironment(environment),
+      );
+      const securedConfig = {
+        ...config,
+        homePath: secureCodexPaths.codexHome,
+        shadowHomePath: "",
+      } satisfies CodexSettings;
+      const homeLayout = yield* resolveCodexHomeLayout(securedConfig);
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({
         instanceId,
@@ -179,7 +202,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         ),
       );
       const effectiveConfig = {
-        ...config,
+        ...securedConfig,
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;

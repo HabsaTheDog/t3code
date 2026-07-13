@@ -40,6 +40,7 @@ function makeThread(
     deletedAt: null,
     messages: [],
     proposedPlans: [],
+    delegatedWork: [],
     activities: [],
     checkpoints: [],
     session: null,
