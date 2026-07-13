@@ -50,6 +50,8 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    delegatedWork: [],
+    deferredFinalizations: [],
   };
 }
 

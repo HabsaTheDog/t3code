@@ -13,6 +13,8 @@ import type {
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_ACTIVITIES: Thread["activities"] = [];
 const EMPTY_PROPOSED_PLANS: ProposedPlan[] = [];
+const EMPTY_DELEGATED_WORK: Thread["delegatedWork"] = [];
+const EMPTY_DEFERRED_FINALIZATIONS: Thread["deferredFinalizations"] = [];
 const EMPTY_TURN_DIFF_SUMMARIES: TurnDiffSummary[] = [];
 const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
@@ -135,6 +137,8 @@ export function getThreadFromEnvironmentState(
     messages,
     activities,
     proposedPlans,
+    delegatedWork: EMPTY_DELEGATED_WORK,
+    deferredFinalizations: EMPTY_DEFERRED_FINALIZATIONS,
     turnDiffSummaries,
   };
 

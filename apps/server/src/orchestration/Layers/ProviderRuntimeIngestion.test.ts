@@ -2980,6 +2980,176 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("applies structured parent review decisions per delegated work item", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const parentTurnId = asTurnId("turn-parent-review");
+    const reviewTurnId = asTurnId("turn-review");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delegated-work.upsert",
+        commandId: CommandId.make("cmd-review-good-work"),
+        threadId: asThreadId("thread-1"),
+        delegatedWork: {
+          id: "child-good",
+          parentTurnId,
+          task: "Implement verified change",
+          status: "completed",
+          required: true,
+          blockingPolicy: "required",
+          origin: "codex-task",
+          reviewStatus: "pending",
+          childThreadId: null,
+          childSessionId: null,
+          lastProgress: null,
+          result: "Implemented and tested.",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delegated-work.upsert",
+        commandId: CommandId.make("cmd-review-bad-work"),
+        threadId: asThreadId("thread-1"),
+        delegatedWork: {
+          id: "child-bad",
+          parentTurnId,
+          task: "Check risky assumption",
+          status: "completed",
+          required: true,
+          blockingPolicy: "required",
+          origin: "codex-task",
+          reviewStatus: "pending",
+          childThreadId: null,
+          childSessionId: null,
+          lastProgress: null,
+          result: "Claimed success with the wrong file.",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delegated-work.upsert",
+        commandId: CommandId.make("cmd-review-failed-work"),
+        threadId: asThreadId("thread-1"),
+        delegatedWork: {
+          id: "child-failed",
+          parentTurnId,
+          task: "Run verifier",
+          status: "failed",
+          required: true,
+          blockingPolicy: "required",
+          origin: "codex-task",
+          reviewStatus: "pending",
+          childThreadId: null,
+          childSessionId: null,
+          lastProgress: null,
+          result: null,
+          error: "Verifier crashed.",
+          createdAt: now,
+          updatedAt: now,
+          completedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.deferred-finalization.upsert",
+        commandId: CommandId.make("cmd-review-deferred-finalization"),
+        threadId: asThreadId("thread-1"),
+        deferredFinalization: {
+          threadId: asThreadId("thread-1"),
+          turnId: parentTurnId,
+          state: "reviewing",
+          draftFinalText: "Stale draft.",
+          createdAt: now,
+          updatedAt: now,
+          reviewTurnId,
+          reason: "pending_delegated_review",
+        },
+        createdAt: now,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-review-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: reviewTurnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-review-assistant-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: reviewTurnId,
+      itemId: asItemId("assistant-review-final"),
+      createdAt: now,
+      payload: {
+        itemType: "assistant_message",
+        detail:
+          'Final answer uses the verified change and rejects the bad child output.\n<!-- delegated-work-review-decisions {"decisions":[{"delegatedWorkId":"child-good","decision":"accepted","reason":"verified and used","usedInFinalAnswer":true},{"delegatedWorkId":"child-bad","decision":"rejected","reason":"wrong file","usedInFinalAnswer":false}]} -->',
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-review-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: reviewTurnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const reviewedThread = await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.delegatedWork.some(
+          (entry) => entry.id === "child-good" && entry.reviewStatus === "accepted",
+        ) &&
+        thread.delegatedWork.some(
+          (entry) => entry.id === "child-bad" && entry.reviewStatus === "rejected",
+        ) &&
+        thread.delegatedWork.some(
+          (entry) => entry.id === "child-failed" && entry.reviewStatus === "rejected",
+        ) &&
+        (thread.deferredFinalizations ?? []).some(
+          (entry) => entry.turnId === parentTurnId && entry.state === "released",
+        ),
+    );
+
+    expect(reviewedThread.delegatedWork.find((entry) => entry.id === "child-good")).toMatchObject({
+      reviewStatus: "accepted",
+      reviewNote: "verified and used",
+      reviewerTurnId: reviewTurnId,
+    });
+    expect(reviewedThread.delegatedWork.find((entry) => entry.id === "child-bad")).toMatchObject({
+      reviewStatus: "rejected",
+      reviewNote: "wrong file",
+      reviewerTurnId: reviewTurnId,
+    });
+    expect(reviewedThread.delegatedWork.find((entry) => entry.id === "child-failed")).toMatchObject({
+      reviewStatus: "rejected",
+      reviewerTurnId: reviewTurnId,
+    });
+  });
+
   it("projects structured user input request and resolution as thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

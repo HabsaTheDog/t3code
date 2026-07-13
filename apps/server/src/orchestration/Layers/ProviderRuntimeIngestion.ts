@@ -14,6 +14,7 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationDelegatedWork,
+  type OrchestrationDelegatedWorkReviewStatus,
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
@@ -275,6 +276,109 @@ function pendingRequiredDelegatedReviewForTurn(
   );
 }
 
+type ParsedDelegatedWorkReviewDecision = {
+  readonly delegatedWorkId: string;
+  readonly reviewStatus: Exclude<
+    OrchestrationDelegatedWorkReviewStatus,
+    "not_required" | "pending"
+  >;
+  readonly reviewNote?: string;
+};
+
+function normalizeReviewDecisionStatus(
+  value: unknown,
+): ParsedDelegatedWorkReviewDecision["reviewStatus"] | undefined {
+  switch (value) {
+    case "accepted":
+    case "rejected":
+    case "superseded":
+      return value;
+    default:
+      return undefined;
+  }
+}
+
+function sanitizeReviewDecisionNote(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return normalized.length > 1_000 ? `${normalized.slice(0, 997)}...` : normalized;
+}
+
+function parseDelegatedWorkReviewDecisions(
+  assistantText: string,
+): ReadonlyArray<ParsedDelegatedWorkReviewDecision> {
+  const match = assistantText.match(
+    /<!--\s*delegated-work-review-decisions\s*([\s\S]*?)\s*-->/i,
+  );
+  if (!match?.[1]) {
+    return [];
+  }
+  const rawJson = match[1].trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return [];
+  }
+  const decisions =
+    parsed !== null &&
+    typeof parsed === "object" &&
+    Array.isArray((parsed as { decisions?: unknown }).decisions)
+      ? (parsed as { decisions: ReadonlyArray<unknown> }).decisions
+      : [];
+  return decisions.flatMap((entry) => {
+    if (entry === null || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const delegatedWorkId =
+      typeof record.delegatedWorkId === "string"
+        ? record.delegatedWorkId.trim()
+        : typeof record.id === "string"
+          ? record.id.trim()
+          : "";
+    const reviewStatus = normalizeReviewDecisionStatus(record.decision ?? record.reviewStatus);
+    if (!delegatedWorkId || reviewStatus === undefined) {
+      return [];
+    }
+    const reasons = [
+      sanitizeReviewDecisionNote(record.reason),
+      sanitizeReviewDecisionNote(record.corrections),
+    ].filter((value): value is string => value !== undefined);
+    return [
+      {
+        delegatedWorkId,
+        reviewStatus,
+        ...(reasons.length > 0 ? { reviewNote: reasons.join(" Correction: ") } : {}),
+      },
+    ];
+  });
+}
+
+function fallbackReviewDecisionForDelegatedWork(
+  entry: OrchestrationDelegatedWork,
+): ParsedDelegatedWorkReviewDecision {
+  if (entry.status !== "completed") {
+    return {
+      delegatedWorkId: entry.id,
+      reviewStatus: "rejected",
+      reviewNote:
+        "No successful delegated output was available; the parent review did not treat this child result as valid.",
+    };
+  }
+  return {
+    delegatedWorkId: entry.id,
+    reviewStatus: "superseded",
+    reviewNote:
+      "The parent review completed without a structured acceptance decision for this child; the final answer is authoritative.",
+  };
+}
+
 function sameId(left: string | null | undefined, right: string | null | undefined): boolean {
   if (left === null || left === undefined || right === null || right === undefined) {
     return false;
@@ -314,6 +418,17 @@ function findMessageById(
     }
   }
   return undefined;
+}
+
+function assistantTextForTurn(
+  messages: ReadonlyArray<OrchestrationMessage>,
+  turnId: TurnId,
+): string {
+  return messages
+    .filter((message) => message.role === "assistant" && String(message.turnId) === String(turnId))
+    .map((message) => message.text)
+    .filter((text) => text.trim().length > 0)
+    .join("\n");
 }
 
 function findProposedPlanById(
@@ -1957,40 +2072,53 @@ const make = Effect.gen(function* () {
               reviewDeferredFinalization.turnId,
             );
             if (pendingReviews.length > 0) {
-              const acceptedReviews = pendingReviews.filter((entry) => entry.status === "completed");
-              const rejectedReviews = pendingReviews.filter((entry) => entry.status !== "completed");
-              if (acceptedReviews.length > 0) {
-                yield* orchestrationEngine.dispatch({
-                  type: "thread.delegated-work.review",
-                  commandId: yield* providerCommandId(event, "delegated-work-review-accepted"),
-                  threadId: thread.id,
-                  turnId: reviewDeferredFinalization.turnId,
-                  delegatedWorkIds: acceptedReviews.map((entry) => entry.id),
-                  reviewStatus: "accepted",
-                  reviewNote:
-                    "Parent review continuation completed; completed delegated output was incorporated or verified in the final answer.",
-                  reviewerTurnId: turnId,
-                  reviewedAt: now,
-                  createdAt: now,
-                });
-              }
-              if (rejectedReviews.length > 0) {
-                yield* orchestrationEngine.dispatch({
-                  type: "thread.delegated-work.review",
-                  commandId: yield* providerCommandId(event, "delegated-work-review-rejected"),
-                  threadId: thread.id,
-                  turnId: reviewDeferredFinalization.turnId,
-                  delegatedWorkIds: rejectedReviews.map((entry) => entry.id),
-                  reviewStatus: "rejected",
-                  reviewNote:
-                    "Parent review continuation completed; failed, canceled, blocked, or timed-out delegated work was not treated as valid output.",
-                  reviewerTurnId: turnId,
-                  reviewedAt: now,
-                  createdAt: now,
-                });
-                yield* increment(orchestrationDelegatedWorkRejectedTotal, {
-                  count: String(rejectedReviews.length),
-                });
+              const reviewAssistantText = assistantTextForTurn(messages, turnId);
+              const parsedDecisions = new Map(
+                parseDelegatedWorkReviewDecisions(reviewAssistantText).map((decision) => [
+                  decision.delegatedWorkId,
+                  decision,
+                ]),
+              );
+              const reviewDecisions = pendingReviews.map(
+                (entry) =>
+                  parsedDecisions.get(entry.id) ?? fallbackReviewDecisionForDelegatedWork(entry),
+              );
+              let rejectedCount = 0;
+              yield* Effect.forEach(
+                reviewDecisions,
+                (decision, index) =>
+                  Effect.gen(function* () {
+                    if (decision.reviewStatus === "rejected") {
+                      rejectedCount += 1;
+                    }
+                    yield* orchestrationEngine.dispatch({
+                      type: "thread.delegated-work.review",
+                      commandId: yield* providerCommandId(
+                        event,
+                        `delegated-work-review-${decision.reviewStatus}-${index}`,
+                      ),
+                      threadId: thread.id,
+                      turnId: reviewDeferredFinalization.turnId,
+                      delegatedWorkIds: [decision.delegatedWorkId],
+                      reviewStatus: decision.reviewStatus,
+                      reviewNote:
+                        decision.reviewNote ??
+                        "Parent review continuation completed; final assistant answer is authoritative.",
+                      reviewerTurnId: turnId,
+                      reviewedAt: now,
+                      createdAt: now,
+                    });
+                  }),
+                { concurrency: 1 },
+              ).pipe(Effect.asVoid);
+              if (rejectedCount > 0) {
+                yield* increment(
+                  orchestrationDelegatedWorkRejectedTotal,
+                  {
+                    source: "parent-review",
+                  },
+                  rejectedCount,
+                );
               }
               yield* increment(orchestrationDeferredFinalizationTotal, {
                 outcome: "reviewed",

@@ -13,6 +13,7 @@ import { type Thread } from "../types";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  buildLocalDraftThread,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -98,6 +99,31 @@ describe("resolveSendEnvMode", () => {
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
+  });
+});
+
+describe("buildLocalDraftThread", () => {
+  it("initializes orchestration collections required by chat view rendering", () => {
+    const thread = buildLocalDraftThread(
+      ThreadId.make("thread-draft"),
+      {
+        threadId: ThreadId.make("thread-draft"),
+        environmentId: localEnvironmentId,
+        projectId: ProjectId.make("project-1"),
+        logicalProjectKey: "environment-local:project-1",
+        createdAt: "2026-03-29T00:00:00.000Z",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+      },
+      { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      null,
+    );
+
+    expect(thread.delegatedWork).toEqual([]);
+    expect(thread.deferredFinalizations).toEqual([]);
   });
 });
 
@@ -247,6 +273,8 @@ const makeThread = (input?: {
   worktreePath: null,
   turnDiffSummaries: [],
   activities: [],
+  delegatedWork: [],
+  deferredFinalizations: [],
 });
 
 function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
@@ -488,6 +516,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(
@@ -525,6 +555,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(
@@ -571,6 +603,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(
@@ -614,6 +648,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(
@@ -657,6 +693,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(
@@ -707,6 +745,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      delegatedWork: [],
+      deferredFinalizations: [],
     });
 
     expect(

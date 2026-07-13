@@ -356,6 +356,26 @@ export const OrchestrationDelegatedWorkReviewStatus = Schema.Literals([
 export type OrchestrationDelegatedWorkReviewStatus =
   typeof OrchestrationDelegatedWorkReviewStatus.Type;
 
+export const OrchestrationDelegatedWorkReviewDecisionValue = Schema.Literals([
+  "accepted",
+  "rejected",
+  "superseded",
+  "retry_requested",
+]);
+export type OrchestrationDelegatedWorkReviewDecisionValue =
+  typeof OrchestrationDelegatedWorkReviewDecisionValue.Type;
+
+export const OrchestrationDelegatedWorkReviewDecision = Schema.Struct({
+  delegatedWorkId: OrchestrationDelegatedWorkId,
+  decision: OrchestrationDelegatedWorkReviewDecisionValue,
+  reason: Schema.optional(Schema.String),
+  usedInFinalAnswer: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  corrections: Schema.optional(Schema.String),
+  retryPrompt: Schema.optional(Schema.String),
+});
+export type OrchestrationDelegatedWorkReviewDecision =
+  typeof OrchestrationDelegatedWorkReviewDecision.Type;
+
 export const OrchestrationDelegatedWork = Schema.Struct({
   id: OrchestrationDelegatedWorkId,
   parentTurnId: TurnId,

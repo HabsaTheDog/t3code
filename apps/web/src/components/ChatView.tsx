@@ -236,24 +236,28 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+const EMPTY_DELEGATED_WORK: Thread["delegatedWork"] = [];
+const EMPTY_DEFERRED_FINALIZATIONS: Thread["deferredFinalizations"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
 function DelegatedWorkStatusBanner({ thread }: { thread: Thread }) {
-  const activeRequired = thread.delegatedWork.filter(
+  const delegatedWork = thread.delegatedWork ?? EMPTY_DELEGATED_WORK;
+  const deferredFinalizations = thread.deferredFinalizations ?? EMPTY_DEFERRED_FINALIZATIONS;
+  const activeRequired = delegatedWork.filter(
     (entry) =>
       entry.required &&
       entry.blockingPolicy === "required" &&
       (entry.status === "created" || entry.status === "running" || entry.status === "progress"),
   );
-  const pendingReview = thread.delegatedWork.filter(
+  const pendingReview = delegatedWork.filter(
     (entry) =>
       entry.required &&
       entry.blockingPolicy === "required" &&
       entry.reviewStatus === "pending",
   );
-  const reviewing = thread.deferredFinalizations.some((entry) => entry.state === "reviewing");
+  const reviewing = deferredFinalizations.some((entry) => entry.state === "reviewing");
   if (activeRequired.length === 0 && pendingReview.length === 0 && !reviewing) {
     return null;
   }
