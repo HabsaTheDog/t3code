@@ -5,6 +5,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type ProviderOptionSelection,
   type ProjectScript,
   type ProjectId,
   type ProviderApprovalDecision,
@@ -60,7 +61,6 @@ import {
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
 import {
-  deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
@@ -71,9 +71,7 @@ import {
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
-  hasToolActivityForTurn,
   isLatestTurnSettled,
-  formatElapsed,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
@@ -868,9 +866,6 @@ export default function ChatView(props: ChatViewProps) {
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
   );
   const settings = useSettings();
-  const setStickyComposerModelSelection = useComposerDraftStore(
-    (store) => store.setStickyModelSelection,
-  );
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const navigate = useNavigate();
@@ -1590,14 +1585,7 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
-  const latestTurnHasToolActivity = useMemo(
-    () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
-    [activeLatestTurn?.turnId, threadActivities],
-  );
+  const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -1839,7 +1827,6 @@ export default function ChatView(props: ChatViewProps) {
         : // Spread only fires for the few messages that actually changed;
           // unchanged ones early-return their original reference.
           // In-place mutation would break React's immutable state contract.
-          // oxlint-disable-next-line no-map-spread
           messages.map((message) => {
             if (
               message.role !== "user" ||
@@ -1932,25 +1919,6 @@ export default function ChatView(props: ChatViewProps) {
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
-  const completionSummary = useMemo(() => {
-    if (!latestTurnSettled) return null;
-    if (!activeLatestTurn?.startedAt) return null;
-    if (!activeLatestTurn.completedAt) return null;
-    if (!latestTurnHasToolActivity) return null;
-
-    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
-    return elapsed ? `Worked for ${elapsed}` : null;
-  }, [
-    activeLatestTurn?.completedAt,
-    activeLatestTurn?.startedAt,
-    latestTurnHasToolActivity,
-    latestTurnSettled,
-  ]);
-  const completionDividerBeforeEntryId = useMemo(() => {
-    if (!latestTurnSettled) return null;
-    if (!completionSummary) return null;
-    return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
-  }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
   const gitCwd = activeProject
     ? projectScriptCwd({
         project: { cwd: activeProject.cwd },
@@ -3753,7 +3721,11 @@ export default function ChatView(props: ChatViewProps) {
   ]);
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
+    (
+      instanceId: ProviderInstanceId,
+      model: string,
+      options?: ReadonlyArray<ProviderOptionSelection>,
+    ) => {
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -3794,12 +3766,12 @@ export default function ChatView(props: ChatViewProps) {
       const nextModelSelection: ModelSelection = {
         instanceId,
         model: resolvedModel,
+        ...(options ? { options } : {}),
       };
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
       );
-      setStickyComposerModelSelection(nextModelSelection);
       scheduleComposerFocus();
     },
     [
@@ -3807,7 +3779,6 @@ export default function ChatView(props: ChatViewProps) {
       lockedProvider,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
-      setStickyComposerModelSelection,
       providerStatuses,
       settings,
     ],
@@ -3922,6 +3893,7 @@ export default function ChatView(props: ChatViewProps) {
               {...(routeKind === "draft" && draftId ? { draftId } : {})}
               activeThreadTitle={activeThread.title}
               activeProjectName={activeProject?.name}
+              activeProjectKind={activeProject?.projectKind}
               isGitRepo={isGitRepo}
               openInCwd={gitCwd}
               activeProjectScripts={activeProject?.scripts}
@@ -3961,13 +3933,15 @@ export default function ChatView(props: ChatViewProps) {
                 <MessagesTimeline
                   key={activeThread.id}
                   isWorking={isWorking}
-                  activeTurnInProgress={isWorking || !latestTurnSettled}
-                  activeTurnId={activeLatestTurn?.turnId ?? null}
                   activeTurnStartedAt={activeWorkStartedAt}
                   listRef={legendListRef}
                   timelineEntries={timelineEntries}
-                  completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-                  completionSummary={completionSummary}
+                  latestTurn={activeLatestTurn}
+                  runningTurnId={
+                    activeThread.session?.orchestrationStatus === "running"
+                      ? (activeThread.session.activeTurnId ?? null)
+                      : null
+                  }
                   turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                   activeThreadEnvironmentId={activeThread.environmentId}
                   viewerThreadRef={routeThreadRef}

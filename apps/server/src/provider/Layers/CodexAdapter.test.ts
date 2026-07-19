@@ -491,6 +491,94 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps spawned Codex collaboration items to required task starts", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("evt-collab-start"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab-1"),
+        payload: {
+          startedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "collab-1",
+            tool: "spawnAgent",
+            status: "inProgress",
+            senderThreadId: "provider-thread-1",
+            receiverThreadIds: ["child-thread-1"],
+            prompt: "Review the extraction handoff.",
+            agentsStates: { "child-thread-1": { status: "running" } },
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "item.started");
+      assert.equal(events[1]?.type, "task.started");
+      if (events[1]?.type === "task.started") {
+        assert.equal(events[1].payload.taskId, "child-thread-1");
+        assert.equal(events[1].payload.taskType, "codex-collab");
+      }
+    }),
+  );
+
+  it.effect("maps terminal Codex collaboration state to task completion", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.take(adapter.streamEvents, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* runtime.emit({
+        id: asEventId("evt-collab-complete"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab-wait-1"),
+        payload: {
+          completedAtMs: 1_778_000_001_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "collabAgentToolCall",
+            id: "collab-wait-1",
+            tool: "wait",
+            status: "completed",
+            senderThreadId: "provider-thread-1",
+            receiverThreadIds: ["child-thread-1"],
+            agentsStates: {
+              "child-thread-1": { status: "completed", message: "Validated handoff ready." },
+            },
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "item.completed");
+      assert.equal(events[1]?.type, "task.completed");
+      if (events[1]?.type === "task.completed") {
+        assert.equal(events[1].payload.taskId, "child-thread-1");
+        assert.equal(events[1].payload.status, "completed");
+        assert.equal(events[1].payload.summary, "Validated handoff ready.");
+      }
+    }),
+  );
+
   it.effect("maps completed plan items to canonical proposed-plan completion events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -740,6 +828,41 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         firstEvent.value.payload.message,
         "2026-03-31T18:14:06.833399Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 503 Service Unavailable, url: wss://chatgpt.com/backend-api/codex/responses",
       );
+    }),
+  );
+
+  it.effect("preserves subagent provenance on approval requests", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-child-command-approval"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/commandExecution/requestApproval",
+        requestId: ApprovalRequestId.make("req-child-1"),
+        requestKind: "command",
+        originProviderThreadId: "child-provider-thread-1",
+        requestOrigin: "subagent",
+        payload: {
+          threadId: "child-provider-thread-1",
+          turnId: "child-turn-1",
+          itemId: "child-item-1",
+          command: "rm generated.tmp",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      assert.equal(firstEvent.value.threadId, "thread-1");
+      assert.equal(firstEvent.value.payload.requestOrigin, "subagent");
+      assert.equal(firstEvent.value.payload.originProviderThreadId, "child-provider-thread-1");
     }),
   );
 

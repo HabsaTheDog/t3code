@@ -143,6 +143,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly personalityPrompt?: string;
+    readonly studyBuddyExecutionProfile?: "auto" | "fast" | "balanced" | "quality";
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
@@ -357,9 +358,12 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(
-        ServerSettingsService.layerTest(
-          input?.personalityPrompt ? { personalityPrompt: input.personalityPrompt } : {},
-        ),
+        ServerSettingsService.layerTest({
+          ...(input?.personalityPrompt ? { personalityPrompt: input.personalityPrompt } : {}),
+          ...(input?.studyBuddyExecutionProfile
+            ? { studyBuddyExecutionProfile: input.studyBuddyExecutionProfile }
+            : {}),
+        }),
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -654,7 +658,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("forwards codex model options through session start and turn send", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({ studyBuddyExecutionProfile: "fast" });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -688,10 +692,55 @@ describe("ProviderCommandReactor", () => {
     });
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
+      studyBuddyExecutionProfile: "fast",
+      studyBuddyExecutionProfileConfig: expect.objectContaining({
+        id: "fast",
+        kind: "built-in",
+        roles: expect.objectContaining({
+          coordinator: expect.objectContaining({
+            model: "gpt-5.6-terra",
+            reasoningEffort: "low",
+          }),
+          artifactBuilder: expect.objectContaining({ model: "gpt-5.6-luna" }),
+          qualityReviewer: expect.objectContaining({ model: "gpt-5.6-terra" }),
+        }),
+      }),
       modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
         { id: "reasoningEffort", value: "high" },
         { id: "fastMode", value: true },
       ]),
+    });
+  });
+
+  it("uses the profile persisted on the chat instead of the current default", async () => {
+    const harness = await createHarness({ studyBuddyExecutionProfile: "fast" });
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-saved-quality"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-saved-quality"),
+          role: "user",
+          text: "keep this chat on quality",
+          attachments: [],
+        },
+        modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.6-sol", [
+          { id: "reasoningEffort", value: "high" },
+          { id: "studyBuddyExecutionProfileId", value: "quality" },
+        ]),
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      studyBuddyExecutionProfile: "quality",
+      studyBuddyExecutionProfileConfig: expect.objectContaining({ id: "quality" }),
     });
   });
 

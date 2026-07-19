@@ -224,7 +224,11 @@ switch (command) {
     runNode(["scripts/dev-runner.ts", "dev:desktop"]);
     break;
   case "moodle":
-    runNode(["apps/server/src/custom-skills/moodle/cli.ts", ...passthroughArgs]);
+    runNode([
+      path.join(STUDY_BUDDY_ROOT, "node_modules/tsx/dist/cli.mjs"),
+      path.join(STUDY_BUDDY_ROOT, "src/custom-skills/moodle/cli.ts"),
+      ...passthroughArgs,
+    ]);
     break;
   default:
     console.error(

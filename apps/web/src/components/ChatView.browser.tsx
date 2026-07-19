@@ -1015,6 +1015,70 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithQuizPermission(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithPendingUserInput();
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: thread.activities.map((activity) =>
+              activity.kind === "user-input.requested"
+                ? {
+                    ...activity,
+                    payload: {
+                      requestId: "req-browser-quiz-permission",
+                      questions: [
+                        {
+                          id: "study_buddy_quiz_permission_v1",
+                          header: "Quiz access",
+                          question: JSON.stringify({
+                            version: 1,
+                            owner: "study-buddy",
+                            action: "execute_quiz_attempt",
+                            targetUrl: "https://moodle.example/mod/quiz/view.php?id=7",
+                            quizTitle: "Elektrotechnik 2: 1. Selbstcheck | FHTW Moodle",
+                            expiresAt: "2026-07-17T23:00:00.000Z",
+                            metadata: {
+                              timeLimitMinutes: 15,
+                              attemptsAllowed: 3,
+                              attemptsUsed: 1,
+                              attemptsLeft: 2,
+                              hasActiveAttempt: true,
+                            },
+                            capabilities: [
+                              "start_or_continue_attempt",
+                              "read_questions",
+                              "suggest_answers",
+                              "fill_answers",
+                              "change_existing_answers",
+                              "save_or_next_page",
+                            ],
+                            finalQuizSubmission: "denied",
+                          }),
+                          options: [
+                            {
+                              label: "Work on quiz",
+                              description: "Allow Study Buddy to work on this quiz.",
+                            },
+                            {
+                              label: "Do not allow",
+                              description: "Do not access this quiz attempt.",
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  }
+                : activity,
+            ),
+          }
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithPlanFollowUpPrompt(options?: {
   modelSelection?: { instanceId: ProviderInstanceId; model: string };
   planMarkdown?: string;
@@ -1201,7 +1265,7 @@ const worker = setupWorker(
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      void rpcHarness.onMessage(rawData);
+      void rpcHarness.onMessage(client, rawData);
     });
   }),
   ...createAuthenticatedSessionHandlers(() => fixture.serverConfig.auth),
@@ -1821,6 +1885,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await __resetLocalApiForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        consentVersion: 1,
+        onboardingVersion: 1,
+        onboardingStatus: "completed",
+        onboardingCurrentStep: null,
+      }),
+    );
     document.body.innerHTML = "";
     wsRequests.length = 0;
     customWsRpcResolver = null;
@@ -4106,6 +4180,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       "t3code:client-settings:v1",
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
+        consentVersion: 1,
+        onboardingVersion: 1,
+        onboardingStatus: "completed",
+        onboardingCurrentStep: null,
         confirmThreadArchive: true,
       }),
     );
@@ -6013,6 +6091,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("renders quiz permission as a complete native decision card without a follow-up editor", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQuizPermission(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const permissionCard = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-study-buddy-quiz-permission="true"]'),
+        "Unable to find Study Buddy quiz permission card.",
+      );
+      expect(permissionCard.textContent).toContain("Elektrotechnik 2: 1. Selbstcheck");
+      expect(permissionCard.textContent).toContain("15 min");
+      expect(permissionCard.textContent).toContain("2 left");
+      expect(permissionCard.textContent).toContain("Attempt in progress");
+      expect(permissionCard.textContent).toContain("Enter answers");
+      expect(permissionCard.textContent).toContain("Final quiz submission");
+      expect(document.querySelector('[data-chat-composer-footer="true"]')).toBeNull();
+      expect(document.body.textContent).not.toContain("Submit answer");
+      expect(
+        document.querySelector('[contenteditable="true"][data-placeholder*="Type your own"]'),
+      ).toBeNull();
+
+      const approveButton = await waitForButtonContainingText("Work on quiz");
+      approveButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          ) as
+            | {
+                requestId?: string;
+                answers?: Record<string, unknown>;
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            requestId: "req-browser-quiz-permission",
+            answers: { study_buddy_quiz_permission_v1: "Work on quiz" },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("submits pending user input after the final option selection resolves the draft answers", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -6093,7 +6227,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await mounted.setContainerSize({
-        width: 440,
+        width: 1_040,
         height: WIDE_FOOTER_VIEWPORT.height,
       });
       await expectComposerActionsContained();

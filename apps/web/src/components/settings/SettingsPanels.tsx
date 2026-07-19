@@ -52,7 +52,6 @@ import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
-import { DraftTextarea } from "../ui/draft-textarea";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -80,7 +79,7 @@ import {
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useServerObservability, useServerProviders } from "../../rpc/serverState";
-import { requestSetupRerun } from "../../setup/setupCoordinator";
+import { isProviderDriverAvailable } from "../../providerAvailability";
 
 const THEME_OPTIONS = [
   {
@@ -527,15 +526,6 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection title="General">
         <SettingsRow
-          title="Setup assistant"
-          description="Run the guided privacy, provider, and Study Buddy setup again without erasing existing configuration."
-          control={
-            <Button size="sm" variant="outline" onClick={requestSetupRerun}>
-              Run setup again
-            </Button>
-          }
-        />
-        <SettingsRow
           title="Theme"
           description="Choose how T3 Code looks across the app."
           resetAction={
@@ -907,37 +897,6 @@ export function GeneralSettingsPanel() {
             </div>
           }
         />
-
-        <SettingsRow
-          title="Personality"
-          description="Add persistent instructions for how agents should communicate and behave. Plain text and Markdown are supported."
-          resetAction={
-            settings.personalityPrompt !== DEFAULT_UNIFIED_SETTINGS.personalityPrompt ? (
-              <SettingResetButton
-                label="personality"
-                onClick={() =>
-                  updateSettings({
-                    personalityPrompt: DEFAULT_UNIFIED_SETTINGS.personalityPrompt,
-                  })
-                }
-              />
-            ) : null
-          }
-        >
-          <div className="pt-3 pb-4">
-            <DraftTextarea
-              value={settings.personalityPrompt}
-              onCommit={(personalityPrompt) => updateSettings({ personalityPrompt })}
-              placeholder={"Example: Be direct and strict about technical quality. Call me Alex."}
-              aria-label="Agent personality instructions"
-              className="min-h-36 resize-y font-mono text-xs leading-relaxed"
-              spellCheck
-            />
-            <p className="mt-2 text-[11px] text-muted-foreground/70">
-              Saved when you leave the field. Applied when a new agent session starts.
-            </p>
-          </div>
-        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="About">
@@ -983,14 +942,7 @@ export function ProviderSettingsPanel() {
     () => new Map(providerUpdateCandidates.map((candidate) => [candidate.instanceId, candidate])),
     [providerUpdateCandidates],
   );
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
+  const visibleProviderSettings = PROVIDER_SETTINGS;
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const lastCheckedAt =
@@ -1372,6 +1324,7 @@ export function ProviderSettingsPanel() {
                   : undefined
               }
               isUpdating={showInlineUpdateButton ? isDriverUpdateRunning : undefined}
+              isComingSoon={!isProviderDriverAvailable(row.driver)}
             />
           );
         })}

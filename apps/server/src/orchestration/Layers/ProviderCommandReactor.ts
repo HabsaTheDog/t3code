@@ -25,6 +25,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import {
+  baseExecutionProfile,
+  resolveStudyBuddyProfileForModelSelection,
+} from "@t3tools/shared/studyBuddyProfiles";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -586,6 +590,12 @@ const make = Effect.gen(function* () {
             }
           : requestedModelSelection
         : input.modelSelection;
+    const settings = yield* serverSettingsService.getSettings;
+    const studyBuddyExecutionProfileConfig = resolveStudyBuddyProfileForModelSelection(
+      settings,
+      requestedModelSelection,
+    );
+    const studyBuddyExecutionProfile = baseExecutionProfile(studyBuddyExecutionProfileConfig);
 
     return {
       threadId: input.threadId,
@@ -593,6 +603,8 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      studyBuddyExecutionProfile,
+      studyBuddyExecutionProfileConfig,
     };
   });
 

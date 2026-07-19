@@ -6,7 +6,12 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
-import { StudyBuddyConnectionTestResult } from "./studyBuddy.ts";
+import {
+  StudyBuddyConnectionTestResult,
+  StudyBuddyCustomExecutionProfiles,
+  StudyBuddyExecutionProfile,
+  StudyBuddyProfileId,
+} from "./studyBuddy.ts";
 import { TelemetryConsentDecision } from "./telemetry.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -244,7 +249,7 @@ export type CodexSettings = typeof CodexSettings.Type;
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("claude").pipe(
@@ -323,7 +328,7 @@ export type CursorSettings = typeof CursorSettings.Type;
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("opencode").pipe(
@@ -390,6 +395,15 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  studyBuddyExecutionProfile: StudyBuddyExecutionProfile.pipe(
+    Schema.withDecodingDefault(Effect.succeed("balanced" as const)),
+  ),
+  studyBuddyExecutionProfileId: StudyBuddyProfileId.pipe(
+    Schema.withDecodingDefault(Effect.succeed("balanced")),
+  ),
+  studyBuddyCustomExecutionProfiles: StudyBuddyCustomExecutionProfiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -492,6 +506,9 @@ export const ServerSettingsPatch = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
+  studyBuddyExecutionProfile: Schema.optionalKey(StudyBuddyExecutionProfile),
+  studyBuddyExecutionProfileId: Schema.optionalKey(StudyBuddyProfileId),
+  studyBuddyCustomExecutionProfiles: Schema.optionalKey(StudyBuddyCustomExecutionProfiles),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

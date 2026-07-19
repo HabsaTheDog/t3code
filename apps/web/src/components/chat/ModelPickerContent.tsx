@@ -23,6 +23,7 @@ import { cn } from "~/lib/utils";
 import { TooltipProvider } from "../ui/tooltip";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import { isProviderDriverAvailable } from "../../providerAvailability";
 
 type ModelPickerItem = {
   slug: string;
@@ -101,7 +102,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // so jumping into the picker keeps the focused instance visible.
         return props.activeInstanceId;
       }
-      return favorites.length > 0 ? "favorites" : props.activeInstanceId;
+      const availableEntries = instanceEntries.filter((entry) =>
+        isProviderDriverAvailable(entry.driverKind),
+      );
+      const hasAvailableFavorite = favorites.some((favorite) =>
+        availableEntries.some((entry) => entry.instanceId === favorite.provider),
+      );
+      if (hasAvailableFavorite) return "favorites";
+      return availableEntries.some((entry) => entry.instanceId === props.activeInstanceId)
+        ? props.activeInstanceId
+        : (availableEntries[0]?.instanceId ?? props.activeInstanceId);
     },
   );
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
@@ -189,6 +199,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // its models — stale options shouldn't appear in the picker.
         continue;
       }
+      if (props.lockedProvider === null && !isProviderDriverAvailable(entry.driverKind)) {
+        continue;
+      }
       if (!readyInstanceSet.has(instanceId)) {
         continue;
       }
@@ -209,7 +222,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+  }, [modelOptionsByInstance, entryByInstanceId, props.lockedProvider, readyInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -222,9 +235,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const showSidebar = !isSearching && (!isLocked || showLockedInstanceSidebar);
   const sidebarInstanceEntries = showLockedInstanceSidebar
     ? lockedInstanceEntries
-    : instanceEntries;
+    : instanceEntries.filter((entry) => isProviderDriverAvailable(entry.driverKind));
   const instanceOrder = useMemo(
-    () => instanceEntries.map((entry) => entry.instanceId),
+    () =>
+      instanceEntries
+        .filter((entry) => isProviderDriverAvailable(entry.driverKind))
+        .map((entry) => entry.instanceId),
     [instanceEntries],
   );
 

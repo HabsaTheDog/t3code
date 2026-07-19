@@ -22,6 +22,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { StudyBuddyExecutionProfile, StudyBuddyExecutionProfileDefinition } from "./studyBuddy.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -75,6 +76,8 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  studyBuddyExecutionProfile: Schema.optional(StudyBuddyExecutionProfile),
+  studyBuddyExecutionProfileConfig: Schema.optional(StudyBuddyExecutionProfileDefinition),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 
@@ -111,6 +114,7 @@ export const ProviderRespondToUserInputInput = Schema.Struct({
 export type ProviderRespondToUserInputInput = typeof ProviderRespondToUserInputInput.Type;
 
 const ProviderEventKind = Schema.Literals(["session", "notification", "request", "error"]);
+const ProviderRequestOrigin = Schema.Literals(["root", "subagent"]);
 
 export const ProviderEvent = Schema.Struct({
   id: EventId,
@@ -126,6 +130,8 @@ export const ProviderEvent = Schema.Struct({
   itemId: Schema.optional(ProviderItemId),
   requestId: Schema.optional(ApprovalRequestId),
   requestKind: Schema.optional(ProviderRequestKind),
+  originProviderThreadId: Schema.optional(TrimmedNonEmptyString),
+  requestOrigin: Schema.optional(ProviderRequestOrigin),
   textDelta: Schema.optional(Schema.String),
   payload: Schema.optional(Schema.Unknown),
 });

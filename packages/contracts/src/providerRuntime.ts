@@ -421,6 +421,8 @@ const RequestOpenedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   args: Schema.optional(Schema.Unknown),
+  originProviderThreadId: Schema.optional(TrimmedNonEmptyStringSchema),
+  requestOrigin: Schema.optional(Schema.Literals(["root", "subagent"])),
 });
 export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;
 

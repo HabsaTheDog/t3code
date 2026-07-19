@@ -623,6 +623,10 @@ function runtimeEventToActivities(
             ...(requestKind ? { requestKind } : {}),
             requestType: event.payload.requestType,
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.originProviderThreadId
+              ? { originProviderThreadId: event.payload.originProviderThreadId }
+              : {}),
+            ...(event.payload.requestOrigin ? { requestOrigin: event.payload.requestOrigin } : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

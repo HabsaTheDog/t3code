@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldShowOpenInPicker } from "./ChatHeader";
+import { shouldShowExtendedChatActions, shouldShowOpenInPicker } from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -44,5 +44,16 @@ describe("shouldShowOpenInPicker", () => {
         primaryEnvironmentId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowExtendedChatActions", () => {
+  it("hides project scripts, git actions, and changes for quick chats", () => {
+    expect(shouldShowExtendedChatActions("quick-chat")).toBe(false);
+  });
+
+  it("keeps the extended actions for regular project chats", () => {
+    expect(shouldShowExtendedChatActions("regular")).toBe(true);
+    expect(shouldShowExtendedChatActions(undefined)).toBe(true);
   });
 });

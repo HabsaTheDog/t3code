@@ -26,6 +26,11 @@ interface BrowserWsRpcHarnessOptions {
   ) => ReadonlyArray<unknown> | undefined;
 }
 
+interface BrowserWsConnection {
+  readonly scope: Scope.Closeable;
+  readonly serverReady: Promise<RpcServerInstance>;
+}
+
 const STREAM_METHODS = new Set<string>([
   ORCHESTRATION_WS_METHODS.subscribeShell,
   ORCHESTRATION_WS_METHODS.subscribeThread,
@@ -62,9 +67,7 @@ export class BrowserWsRpcHarness {
   readonly requests: Array<NormalizedWsRpcRequestBody> = [];
 
   private readonly parser = RpcSerialization.json.makeUnsafe();
-  private client: BrowserWsClient | null = null;
-  private scope: Scope.Closeable | null = null;
-  private serverReady: Promise<RpcServerInstance> | null = null;
+  private connections = new Map<BrowserWsClient, BrowserWsConnection>();
   private resolveUnary: NonNullable<BrowserWsRpcHarnessOptions["resolveUnary"]> = () => ({});
   private getInitialStreamValues: NonNullable<
     BrowserWsRpcHarnessOptions["getInitialStreamValues"]
@@ -80,32 +83,34 @@ export class BrowserWsRpcHarness {
   }
 
   connect(client: BrowserWsClient): void {
-    if (this.scope) {
-      void Effect.runPromise(Scope.close(this.scope, Exit.void)).catch(() => undefined);
+    const existing = this.connections.get(client);
+    if (existing) {
+      void Effect.runPromise(Scope.close(existing.scope, Exit.void)).catch(() => undefined);
     }
     if (this.streamPubSubs.size === 0) {
       this.initializeStreamPubSubs();
     }
-    this.client = client;
-    this.scope = Effect.runSync(Scope.make());
-    this.serverReady = Effect.runPromise(
-      Scope.provide(this.scope)(
-        RpcServer.makeNoSerialization(WsRpcGroup, this.makeServerOptions()),
+    const scope = Effect.runSync(Scope.make());
+    const serverReady = Effect.runPromise(
+      Scope.provide(scope)(
+        RpcServer.makeNoSerialization(WsRpcGroup, this.makeServerOptions(client)),
       ).pipe(Effect.provide(this.makeLayer())),
     ) as Promise<RpcServerInstance>;
+    this.connections.set(client, { scope, serverReady });
   }
 
   async disconnect(): Promise<void> {
-    if (this.scope) {
-      await Effect.runPromise(Scope.close(this.scope, Exit.void)).catch(() => undefined);
-      this.scope = null;
-    }
+    const connections = [...this.connections.values()];
+    this.connections.clear();
+    await Promise.all(
+      connections.map((connection) =>
+        Effect.runPromise(Scope.close(connection.scope, Exit.void)).catch(() => undefined),
+      ),
+    );
     for (const pubsub of this.streamPubSubs.values()) {
       Effect.runSync(PubSub.shutdown(pubsub));
     }
     this.streamPubSubs.clear();
-    this.serverReady = null;
-    this.client = null;
   }
 
   private initializeStreamPubSubs(): void {
@@ -114,17 +119,18 @@ export class BrowserWsRpcHarness {
     );
   }
 
-  async onMessage(rawData: string): Promise<void> {
-    const server = await this.serverReady;
-    if (!server) {
+  async onMessage(client: BrowserWsClient, rawData: string): Promise<void> {
+    const connection = this.connections.get(client);
+    if (!connection) {
       return;
     }
+    const server = await connection.serverReady;
     const messages = this.parser.decode(rawData);
     for (const message of messages) {
       if (message && typeof message === "object" && "_tag" in message && message._tag === "Ping") {
         const encoded = this.parser.encode(RpcMessage.constPong);
         if (typeof encoded === "string") {
-          this.client?.send(encoded);
+          client.send(encoded);
         }
         continue;
       }
@@ -150,16 +156,16 @@ export class BrowserWsRpcHarness {
     return WsRpcGroup.toLayer(handlers as never);
   }
 
-  private makeServerOptions() {
+  private makeServerOptions(client: BrowserWsClient) {
     return {
       onFromServer: (response: unknown) =>
         Effect.sync(() => {
-          if (!this.client) {
+          if (!this.connections.has(client)) {
             return;
           }
           const encoded = this.parser.encode(response);
           if (typeof encoded === "string") {
-            this.client.send(encoded);
+            client.send(encoded);
           }
         }),
     };

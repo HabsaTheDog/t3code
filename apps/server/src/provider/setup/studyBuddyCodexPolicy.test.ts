@@ -31,6 +31,7 @@ describe("Study Buddy Codex policy", () => {
     expect(rendered).toContain('"**/.env.*" = "deny"');
     expect(rendered).toContain("enabled = false");
     expect(rendered).toContain('inherit = "core"');
+    expect(rendered).toContain("default_mode_request_user_input = true");
   });
 
   it("binds the exact Codex process to the generated home and profile", () => {

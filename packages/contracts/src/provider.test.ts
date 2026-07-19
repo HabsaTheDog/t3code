@@ -115,6 +115,21 @@ describe("ProviderSessionStartInput", () => {
 });
 
 describe("ProviderSendTurnInput", () => {
+  it("accepts the persisted Study Buddy execution profile", () => {
+    const parsed = decodeProviderSendTurnInput({
+      threadId: "thread-1",
+      studyBuddyExecutionProfile: "fast",
+    });
+
+    expect(parsed.studyBuddyExecutionProfile).toBe("fast");
+    expect(() =>
+      decodeProviderSendTurnInput({
+        threadId: "thread-1",
+        studyBuddyExecutionProfile: "maximum",
+      }),
+    ).toThrow();
+  });
+
   it("accepts codex modelSelection", () => {
     const parsed = decodeProviderSendTurnInput({
       threadId: "thread-1",

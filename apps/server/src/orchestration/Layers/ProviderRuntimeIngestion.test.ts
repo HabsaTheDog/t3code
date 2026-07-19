@@ -2239,6 +2239,8 @@ describe("ProviderRuntimeIngestion", () => {
       payload: {
         requestType: "command_execution_approval",
         detail: "pwd",
+        originProviderThreadId: "child-provider-thread-1",
+        requestOrigin: "subagent",
       },
     });
 
@@ -2279,6 +2281,8 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(requestedPayload?.requestKind).toBe("command");
     expect(requestedPayload?.requestType).toBe("command_execution_approval");
+    expect(requestedPayload?.originProviderThreadId).toBe("child-provider-thread-1");
+    expect(requestedPayload?.requestOrigin).toBe("subagent");
 
     const resolved = thread?.activities.find(
       (activity: ProviderRuntimeTestActivity) => activity.id === "evt-request-resolved",

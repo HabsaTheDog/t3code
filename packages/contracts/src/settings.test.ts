@@ -19,6 +19,9 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
     // Legacy `providers` struct is still hydrated with its per-driver defaults
     // so existing call sites keep working through the migration.
     expect(decoded.providers.codex.enabled).toBe(true);
+    expect(decoded.providers.claudeAgent.enabled).toBe(false);
+    expect(decoded.providers.cursor.enabled).toBe(false);
+    expect(decoded.providers.opencode.enabled).toBe(false);
   });
 
   it("decodes a multi-instance map mixing first-party and fork drivers", () => {
@@ -61,6 +64,98 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("ServerSettings.studyBuddyExecutionProfile", () => {
+  it("defaults legacy settings to the balanced profile", () => {
+    expect(decodeServerSettings({}).studyBuddyExecutionProfile).toBe("balanced");
+    expect(decodeServerSettings({}).studyBuddyExecutionProfileId).toBe("balanced");
+    expect(decodeServerSettings({}).studyBuddyCustomExecutionProfiles).toEqual([]);
+    expect(DEFAULT_SERVER_SETTINGS.studyBuddyExecutionProfile).toBe("balanced");
+  });
+
+  it("accepts supported profile patches and rejects unknown profiles", () => {
+    expect(
+      decodeServerSettingsPatch({ studyBuddyExecutionProfile: "quality" })
+        .studyBuddyExecutionProfile,
+    ).toBe("quality");
+    expect(() => decodeServerSettingsPatch({ studyBuddyExecutionProfile: "maximum" })).toThrow();
+  });
+
+  it("enforces the maximum of ten custom profiles", () => {
+    const worker = {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      retryModel: "gpt-test-retry",
+      retryReasoningEffort: "high",
+    };
+    const profile = (index: number) => ({
+      id: `custom-${index}`,
+      name: `Custom ${index}`,
+      description: "Test profile",
+      kind: "custom",
+      roles: {
+        coordinator: {
+          instanceId: "codex",
+          model: "gpt-test",
+          reasoningEffort: "medium",
+        },
+        contentAnalyzer: worker,
+        quizSolver: worker,
+        artifactPlanner: worker,
+        artifactBuilder: worker,
+        qualityReviewer: worker,
+      },
+    });
+
+    expect(
+      decodeServerSettingsPatch({
+        studyBuddyCustomExecutionProfiles: Array.from({ length: 10 }, (_, index) => profile(index)),
+      }).studyBuddyCustomExecutionProfiles,
+    ).toHaveLength(10);
+    expect(() =>
+      decodeServerSettingsPatch({
+        studyBuddyCustomExecutionProfiles: Array.from({ length: 11 }, (_, index) => profile(index)),
+      }),
+    ).toThrow();
+  });
+
+  it("migrates five-role custom profiles with a balanced Quiz Solver default", () => {
+    const worker = {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      retryModel: "gpt-test-retry",
+      retryReasoningEffort: "high",
+    };
+    const decoded = decodeServerSettingsPatch({
+      studyBuddyCustomExecutionProfiles: [
+        {
+          id: "legacy-five-role-profile",
+          name: "Legacy profile",
+          description: "Saved before Quiz Solver existed",
+          kind: "custom",
+          roles: {
+            coordinator: {
+              instanceId: "codex",
+              model: "gpt-test",
+              reasoningEffort: "medium",
+            },
+            contentAnalyzer: worker,
+            artifactPlanner: worker,
+            artifactBuilder: worker,
+            qualityReviewer: worker,
+          },
+        },
+      ],
+    });
+
+    expect(decoded.studyBuddyCustomExecutionProfiles?.[0]?.roles.quizSolver).toEqual({
+      model: "gpt-5.6-terra",
+      reasoningEffort: "high",
+      retryModel: "gpt-5.6-sol",
+      retryReasoningEffort: "high",
+    });
   });
 });
 

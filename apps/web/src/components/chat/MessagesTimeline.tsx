@@ -14,6 +14,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -30,6 +31,8 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -53,8 +56,14 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapTopPercent,
+  TIMELINE_MINIMAP_MIN_ITEMS,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -101,6 +110,7 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onToggleTurnFold: (turnId: TurnId) => void;
 }
 
 interface TimelineRowActivityState {
@@ -120,13 +130,11 @@ const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "d
 
 interface MessagesTimelineProps {
   isWorking: boolean;
-  activeTurnInProgress: boolean;
-  activeTurnId?: TurnId | null;
   activeTurnStartedAt: string | null;
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
-  completionDividerBeforeEntryId: string | null;
-  completionSummary: string | null;
+  latestTurn: TimelineLatestTurn | null;
+  runningTurnId: TurnId | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
@@ -151,13 +159,11 @@ interface MessagesTimelineProps {
 
 export const MessagesTimeline = memo(function MessagesTimeline({
   isWorking,
-  activeTurnInProgress,
-  activeTurnId,
   activeTurnStartedAt,
   listRef,
   timelineEntries,
-  completionDividerBeforeEntryId,
-  completionSummary,
+  latestTurn,
+  runningTurnId,
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
@@ -175,39 +181,110 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   skills = EMPTY_TIMELINE_SKILLS,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
+  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
+  const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  const onToggleTurnFold = useCallback((turnId: TurnId) => {
+    setExpandedTurnIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(turnId)) next.delete(turnId);
+      else next.add(turnId);
+      return next;
+    });
+  }, []);
+
+  // Keep a just-interrupted turn open until the next turn starts, matching T3 Code.
+  const previousLatestTurnRef = useRef(latestTurn);
+  useEffect(() => {
+    const previous = previousLatestTurnRef.current;
+    previousLatestTurnRef.current = latestTurn;
+    if (!latestTurn || !previous) return;
+    if (latestTurn.turnId === previous.turnId) {
+      if (previous.state === "running" && latestTurn.state === "interrupted") {
+        setExpandedTurnIds((existing) => new Set(existing).add(latestTurn.turnId));
+      }
+      return;
+    }
+    setExpandedTurnIds((existing) => {
+      if (!existing.has(previous.turnId)) return existing;
+      const next = new Set(existing);
+      next.delete(previous.turnId);
+      return next;
+    });
+  }, [latestTurn]);
+
   const rawRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
         timelineEntries,
-        completionDividerBeforeEntryId,
-        completionSummary,
+        latestTurn,
+        runningTurnId,
+        expandedTurnIds,
         isWorking,
-        activeTurnInProgress,
-        activeTurnId: activeTurnId ?? null,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
     [
       timelineEntries,
-      completionDividerBeforeEntryId,
-      completionSummary,
+      latestTurn,
+      runningTurnId,
+      expandedTurnIds,
       isWorking,
-      activeTurnInProgress,
-      activeTurnId,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
   );
   const rows = useStableRows(rawRows);
+  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (state) {
       onIsAtEndChange(state.isAtEnd);
     }
-  }, [listRef, onIsAtEndChange]);
+    if (!state || minimapItems.length === 0) return;
+
+    const scrollTop = state.scroll ?? 0;
+    const scrollBottom = scrollTop + (state.scrollLength ?? 0);
+    for (const item of minimapItems) {
+      const strip = minimapStripMap.get(item.id);
+      if (!strip) continue;
+      const rowTop = state.positionAtIndex?.(item.rowIndex);
+      const rowHeight = state.sizeAtIndex?.(item.rowIndex);
+      const inView =
+        typeof rowTop === "number" &&
+        Number.isFinite(rowTop) &&
+        rowTop < scrollBottom &&
+        rowTop + Math.max(1, typeof rowHeight === "number" ? rowHeight : 1) > scrollTop;
+      strip.dataset.inView = inView ? "true" : "false";
+    }
+  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(handleScroll);
+    return () => cancelAnimationFrame(frame);
+  }, [handleScroll, rows.length]);
+
+  useEffect(() => {
+    if (!timelineViewportElement) return;
+    const measure = () => {
+      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
+      const next = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      setMinimapHasPersistentGutter((current) => (current === next ? current : next));
+    };
+    const frame = requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(timelineViewportElement);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [timelineViewportElement, rows.length]);
 
   const previousRowCountRef = useRef(rows.length);
   useEffect(() => {
@@ -241,6 +318,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onToggleTurnFold,
     }),
     [
       timestampFormat,
@@ -255,6 +333,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onToggleTurnFold,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -289,21 +368,36 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <LegendList<MessagesTimelineRow>
-          ref={listRef}
-          data={rows}
-          keyExtractor={keyExtractor}
-          renderItem={renderItem}
-          estimatedItemSize={90}
-          initialScrollAtEnd
-          maintainScrollAtEnd
-          maintainScrollAtEndThreshold={0.1}
-          maintainVisibleContentPosition
-          onScroll={handleScroll}
-          className="ph-no-capture h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-          ListHeaderComponent={TIMELINE_LIST_HEADER}
-          ListFooterComponent={TIMELINE_LIST_FOOTER}
-        />
+        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          <LegendList<MessagesTimelineRow>
+            ref={listRef}
+            data={rows}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd
+            maintainScrollAtEnd
+            maintainScrollAtEndThreshold={0.1}
+            maintainVisibleContentPosition
+            onScroll={handleScroll}
+            className="ph-no-capture h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+            ListHeaderComponent={TIMELINE_LIST_HEADER}
+            ListFooterComponent={TIMELINE_LIST_FOOTER}
+          />
+          <TimelineMinimap
+            items={minimapItems}
+            hasPersistentGutter={minimapHasPersistentGutter}
+            stripMap={minimapStripMap}
+            onSelect={(item) => {
+              onIsAtEndChange(false);
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: 24,
+              });
+            }}
+          />
+        </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -311,6 +405,209 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
+}
+
+interface TimelineMinimapItem {
+  readonly id: string;
+  readonly rowIndex: number;
+  readonly userText: string | null;
+  readonly assistantText: string | null;
+}
+
+function deriveTimelineMinimapItems(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): TimelineMinimapItem[] {
+  const items: TimelineMinimapItem[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind !== "message" || row.message.role !== "user") continue;
+    items.push({
+      id: row.id,
+      rowIndex: index,
+      userText: compactMinimapPreview(row.message.text),
+      assistantText: compactMinimapPreview(resolveFinalAssistantTextForTurn(rows, index)),
+    });
+  }
+  return items;
+}
+
+function resolveFinalAssistantTextForTurn(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  userRowIndex: number,
+) {
+  let finalAssistantText: string | null = null;
+  for (let index = userRowIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind !== "message") continue;
+    if (row.message.role === "user") break;
+    if (row.message.role === "assistant") finalAssistantText = row.message.text ?? null;
+  }
+  return finalAssistantText;
+}
+
+function compactMinimapPreview(text: string | null | undefined) {
+  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+  return compact.length > 0 ? compact : null;
+}
+
+function TimelineMinimap({
+  hasPersistentGutter,
+  items,
+  stripMap,
+  onSelect,
+}: {
+  hasPersistentGutter: boolean;
+  items: ReadonlyArray<TimelineMinimapItem>;
+  stripMap: Map<string, HTMLSpanElement>;
+  onSelect: (item: TimelineMinimapItem) => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const resolvedActiveIndex =
+    activeIndex !== null && activeIndex < items.length ? activeIndex : null;
+  const activeItem = resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null);
+  const activeTopPercent =
+    resolvedActiveIndex === null
+      ? 0
+      : resolveTimelineMinimapTopPercent(resolvedActiveIndex, items.length);
+  const activeTooltipTranslate =
+    resolvedActiveIndex === null
+      ? "-50%"
+      : resolvedActiveIndex === 0
+        ? "0%"
+        : resolvedActiveIndex === items.length - 1
+          ? "-100%"
+          : "-50%";
+
+  const resolveActiveIndexFromPointer = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      return resolveTimelineMinimapIndexFromPointer({
+        itemCount: items.length,
+        railTop: rect.top,
+        railHeight: rect.height,
+        pointerY: event.clientY,
+      });
+    },
+    [items.length],
+  );
+
+  const moveActiveIndex = useCallback(
+    (delta: number) => {
+      setActiveIndex((current) => {
+        const base = current ?? 0;
+        return Math.max(0, Math.min(items.length - 1, base + delta));
+      });
+    },
+    [items.length],
+  );
+
+  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) return null;
+
+  return (
+    <div
+      className={cn(
+        "ph-no-capture group/minimap pointer-events-auto absolute inset-y-0 left-0 z-40 hidden w-20 [@media(pointer:fine)]:block",
+        hasPersistentGutter
+          ? "opacity-100"
+          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
+      )}
+      data-ph-no-capture
+      data-testid="timeline-minimap"
+      data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
+    >
+      <div className="relative h-full w-full select-none">
+        <button
+          type="button"
+          aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
+          className="pointer-events-auto absolute top-1/2 left-2 w-12 -translate-y-1/2 cursor-pointer rounded-sm bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
+          onBlur={() => setActiveIndex(null)}
+          onFocus={() => setActiveIndex((current) => current ?? 0)}
+          onMouseLeave={() => setActiveIndex(null)}
+          onMouseMove={(event) => setActiveIndex(resolveActiveIndexFromPointer(event))}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={(event) => {
+            const nextIndex = resolveActiveIndexFromPointer(event);
+            const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
+            if (nextItem) onSelect(nextItem);
+            event.currentTarget.blur();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              moveActiveIndex(1);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              moveActiveIndex(-1);
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              setActiveIndex(0);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              setActiveIndex(items.length - 1);
+            } else if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              if (activeItem) onSelect(activeItem);
+            }
+          }}
+        >
+          <div className="absolute top-0 left-4 h-full w-px bg-border/20" />
+          {items.map((item, index) => {
+            const activeDistance =
+              resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+            return (
+              <span
+                key={item.id}
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute left-0 h-[3px] -translate-y-1/2 rounded-full bg-muted-foreground/40 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90 motion-reduce:transition-none",
+                  activeDistance === 0
+                    ? "w-8 bg-muted-foreground/80"
+                    : activeDistance === 1
+                      ? "w-6"
+                      : activeDistance === 2
+                        ? "w-4"
+                        : "w-3",
+                )}
+                data-in-view="false"
+                data-minimap-strip
+                ref={(node) => {
+                  if (node) stripMap.set(item.id, node);
+                  else stripMap.delete(item.id);
+                }}
+                style={{ top: `${resolveTimelineMinimapTopPercent(index, items.length)}%` }}
+              />
+            );
+          })}
+          {activeItem ? (
+            <span
+              className="pointer-events-none absolute left-10 w-80 rounded-xl border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/25 backdrop-blur"
+              style={{
+                top: `${activeTopPercent}%`,
+                transform: `translateY(${activeTooltipTranslate})`,
+              }}
+            >
+              <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                {activeItem.userText ?? "User message"}
+              </span>
+              {activeItem.assistantText ? (
+                <span
+                  className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 3,
+                  }}
+                >
+                  {activeItem.assistantText}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +632,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -344,6 +642,26 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     </div>
   );
 });
+
+function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const Icon = row.expanded ? ChevronDownIcon : ChevronRightIcon;
+
+  return (
+    <div className="border-b border-border/60 pb-2 pt-1">
+      <button
+        type="button"
+        aria-expanded={row.expanded}
+        data-scroll-anchor-ignore
+        onClick={() => ctx.onToggleTurnFold(row.turnId)}
+        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-xs text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 motion-reduce:transition-none"
+      >
+        <span>{row.label}</span>
+        <Icon className="size-3.5" />
+      </button>
+    </div>
+  );
+}
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -434,56 +752,39 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
   return (
-    <>
-      {row.showCompletionDivider && (
-        <AssistantCompletionDivider completionSummary={row.completionSummary} />
-      )}
-      <div className="min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
-          {...(ctx.viewerThreadRef ? { viewerThreadRef: ctx.viewerThreadRef } : {})}
-          {...(ctx.onOpenViewerTab ? { onOpenViewerTab: ctx.onOpenViewerTab } : {})}
-        />
-        <AssistantChangedFilesSection
-          turnSummary={row.assistantTurnDiffSummary}
-          routeThreadKey={ctx.routeThreadKey}
-          resolvedTheme={ctx.resolvedTheme}
-          onOpenTurnDiff={ctx.onOpenTurnDiff}
-        />
-        <div className="mt-1.5 flex items-center gap-2">
-          <p className="text-[10px] text-muted-foreground/30">
-            {row.message.streaming ? (
-              <LiveMessageMeta
-                createdAt={row.message.createdAt}
-                durationStart={row.durationStart}
-                timestampFormat={ctx.timestampFormat}
-              />
-            ) : (
-              formatMessageMeta(
-                row.message.createdAt,
-                formatElapsed(row.durationStart, row.message.completedAt),
-                ctx.timestampFormat,
-              )
-            )}
-          </p>
-          <AssistantCopyButton row={row} />
-        </div>
+    <div className="min-w-0 px-1 py-0.5">
+      <ChatMarkdown
+        text={messageText}
+        cwd={ctx.markdownCwd}
+        isStreaming={Boolean(row.message.streaming)}
+        skills={ctx.skills}
+        {...(ctx.viewerThreadRef ? { viewerThreadRef: ctx.viewerThreadRef } : {})}
+        {...(ctx.onOpenViewerTab ? { onOpenViewerTab: ctx.onOpenViewerTab } : {})}
+      />
+      <AssistantChangedFilesSection
+        turnSummary={row.assistantTurnDiffSummary}
+        routeThreadKey={ctx.routeThreadKey}
+        resolvedTheme={ctx.resolvedTheme}
+        onOpenTurnDiff={ctx.onOpenTurnDiff}
+      />
+      <div className="mt-1.5 flex items-center gap-2">
+        <p className="text-[10px] text-muted-foreground/30">
+          {row.message.streaming ? (
+            <LiveMessageMeta
+              createdAt={row.message.createdAt}
+              durationStart={row.durationStart}
+              timestampFormat={ctx.timestampFormat}
+            />
+          ) : (
+            formatMessageMeta(
+              row.message.createdAt,
+              formatElapsed(row.durationStart, row.message.completedAt),
+              ctx.timestampFormat,
+            )
+          )}
+        </p>
+        <AssistantCopyButton row={row} />
       </div>
-    </>
-  );
-}
-
-function AssistantCompletionDivider({ completionSummary }: { completionSummary: string | null }) {
-  return (
-    <div className="my-3 flex items-center gap-3">
-      <span className="h-px flex-1 bg-border" />
-      <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-        {completionSummary ? `Response • ${completionSummary}` : "Response"}
-      </span>
-      <span className="h-px flex-1 bg-border" />
     </div>
   );
 }

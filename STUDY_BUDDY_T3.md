@@ -49,7 +49,9 @@ updates from `upstream`.
 - T3 local data directory: `../output/t3-study-buddy-t3-home/`
 - Quick Chat workspace directory: `../output/t3-study-buddy-t3-home/quick-chats/`
 - User project/workspace directory: selected explicitly in T3 Code
-- Moodle artifact directory: `<selected-workspace>/output/<request-name>/<timestamp>/`
+- Study Buddy data directory: `<selected-workspace>/study-buddy-data/`
+- Project thread runs: `<selected-workspace>/study-buddy-data/threads/<thread-id>/runs/<request-name>/<timestamp>/`
+- Quick Chat runs: `<quick-chat-workspace>/study-buddy-data/runs/<request-name>/<timestamp>/`
 
 The Study Buddy scripts no longer bootstrap a default project. Regular projects
 must be selected explicitly by the user in T3 Code. Quick Chats create
@@ -97,29 +99,39 @@ The dedicated scripts use `T3CODE_PORT_OFFSET=120`.
 
 ## Commands
 
-```bash
-cd "/home/alvaroschroll/Dokumente/Development/Study Buddy 2.0/t3code-fork"
+From the parent Study Buddy repository:
 
-bun run study-buddy:ports
-bun run study-buddy:dev
-bun run study-buddy:dev:no-browser
-bun run study-buddy:app
+```bash
+cd t3code-fork
+pnpm install
+
+pnpm study-buddy:ports
+pnpm study-buddy:dev
+pnpm study-buddy:dev:no-browser
+pnpm study-buddy:app
 ```
 
 `study-buddy:dev` runs the browser-based fork. `study-buddy:app` runs the Electron desktop dev app. Both use separate ports and separate local state from the installed T3 Code app.
 
+The Moodle/CIS runtime lives only in the parent repository under
+`src/custom-skills/moodle/`. This fork keeps the UI settings and connection-test
+adapter, while `moodle:agent` delegates to that canonical Root CLI. Do not add a
+second scraper, quiz graph, assignment graph, or document renderer below
+`apps/server`.
+
 The Moodle skill can be tested directly with:
 
 ```bash
-STUDY_BUDDY_WORKSPACE="/path/to/user/project" bun run moodle:agent -- "Erstelle eine DYN2 Formelsammlung als Typst-Dokument." --url "https://moodle.technikum-wien.at/course/view.php?id=32320" --out output/dyn2.typ
+STUDY_BUDDY_WORKSPACE="/path/to/user/project" pnpm moodle:agent -- "Create a study guide for the authorized demo course." --url "https://moodle.example/course/view.php?id=123" --deliver-to demo-study-guide.pdf
 ```
 
-Set `STUDY_BUDDY_WORKSPACE` or `T3CODE_CWD` for direct CLI tests. Prefer
-omitting `--out` unless you need a specific file name. Without `--out`, the
-runner creates a timestamped run directory below the active artifact directory.
+Set `STUDY_BUDDY_WORKSPACE` or `T3CODE_CWD` for direct CLI tests. Use
+`--deliver-to` only when you need a specific clean filename. The canonical run
+always remains below `study-buddy-data/`; without `--deliver-to`, Study Buddy
+chooses a descriptive filename in the surrounding workspace.
 
 Add CIS pages when Moodle does not contain the needed timetable, exam, or administrative information:
 
 ```bash
-STUDY_BUDDY_WORKSPACE="/path/to/user/project" bun run moodle:agent -- "Erstelle eine Übersicht über relevante Termine und Lernprioritäten." --url "https://moodle.technikum-wien.at/my/" --cis-url "https://cis.technikum-wien.at/cis.php/"
+STUDY_BUDDY_WORKSPACE="/path/to/user/project" pnpm moodle:agent -- "Create a demo schedule and learning-priority overview." --url "https://moodle.example/my/" --cis-url "https://student-portal.example/"
 ```

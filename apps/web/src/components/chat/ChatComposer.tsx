@@ -2,6 +2,7 @@ import type {
   ApprovalRequestId,
   EnvironmentId,
   ModelSelection,
+  ProviderOptionSelection,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -18,7 +19,12 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { createModelSelection } from "@t3tools/shared/model";
+import {
+  resolveStudyBuddyProfileForModelSelection,
+  studyBuddyProfileIdFromModelSelection,
+  studyBuddyCoordinatorOptions,
+} from "@t3tools/shared/studyBuddyProfiles";
 import {
   memo,
   useCallback,
@@ -59,21 +65,18 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
-import { ProviderModelPicker } from "./ProviderModelPicker";
+import { StudyBuddyProfilePicker } from "./StudyBuddyProfilePicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import { isStudyBuddyQuizPermissionQuestion } from "./studyBuddyQuizPermission";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
-import {
-  getComposerProviderState,
-  renderProviderTraitsMenuContent,
-  renderProviderTraitsPicker,
-} from "./composerProviderState";
+import { getComposerProviderState } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
@@ -102,7 +105,6 @@ import {
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
@@ -110,6 +112,7 @@ import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import {
   isQuizAccessMode,
   QUIZ_ACCESS_MODE_OPTIONS,
+  QUIZ_ACCESS_TOOLTIP_DELAY_MS,
   type QuizAccessMode,
 } from "../settings/StudyBuddySettings.logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
@@ -353,19 +356,26 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value} className="min-w-72 py-2">
-              <div className="grid min-w-0 gap-0.5">
-                <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                  <ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                  {option.label}
-                </span>
-                {option.description ? (
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
-                  </span>
-                ) : null}
-              </div>
-            </SelectItem>
+            <Tooltip key={option.value}>
+              <TooltipTrigger
+                delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
+                render={
+                  <SelectItem value={option.value} className="min-w-56 py-2">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                      <ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                      {option.label}
+                    </span>
+                  </SelectItem>
+                }
+              />
+              <TooltipPopup
+                side="left"
+                sideOffset={8}
+                className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
+              >
+                {option.description}
+              </TooltipPopup>
+            </Tooltip>
           ))}
         </SelectPopup>
       </Select>
@@ -588,7 +598,11 @@ export interface ChatComposerProps {
     cursorAdjacentToMention: boolean,
   ) => void;
 
-  onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
+  onProviderModelSelect: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options?: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
@@ -608,8 +622,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const {
     composerDraftTarget,
     environmentId,
-    routeKind,
-    routeThreadRef,
     draftId,
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
@@ -645,8 +657,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadActivities,
     resolvedTheme,
     settings,
-    keybindings,
-    terminalOpen,
     gitCwd,
     promptRef,
     composerRef,
@@ -867,31 +877,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }),
     [providerStatuses, selectedProvider],
   );
-  const selectedModelSelection = useMemo<ModelSelection>(
-    () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
-    [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
+  const storedStudyBuddyModelSelection =
+    composerDraft.modelSelectionByProvider[selectedInstanceId] ?? activeThreadModelSelection;
+  const hasExplicitStudyBuddyProfile = Boolean(
+    studyBuddyProfileIdFromModelSelection(storedStudyBuddyModelSelection),
   );
-  const selectedModelForPicker = selectedModel;
-  // Instance-keyed option list so the picker can show each configured
-  // instance (built-in + custom) as a first-class sidebar entry. The
-  // options are server-reported models plus that exact instance's
-  // configured custom models; selected slugs are not injected into lists.
-  const modelOptionsByInstance = useMemo<
-    ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>
-  >(() => {
-    const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
-    for (const entry of providerInstanceEntries) {
-      out.set(entry.instanceId, getAppModelOptionsForInstance(settings, entry));
-    }
-    return out;
-  }, [providerInstanceEntries, settings]);
-  const selectedModelForPickerWithCustomFallback = useMemo(() => {
-    const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
-    return currentOptions.some((option) => option.slug === selectedModelForPicker)
-      ? selectedModelForPicker
-      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
-  }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
-
+  const activeExecutionProfile = useMemo(
+    () =>
+      resolveStudyBuddyProfileForModelSelection(settings, storedStudyBuddyModelSelection, {
+        preferDefault: !hasExplicitStudyBuddyProfile && (activeThread?.messages.length ?? 0) === 0,
+      }),
+    [
+      activeThread?.messages.length,
+      hasExplicitStudyBuddyProfile,
+      settings,
+      storedStudyBuddyModelSelection,
+    ],
+  );
+  const selectedModelSelection = useMemo<ModelSelection>(() => {
+    const profileOptions = studyBuddyCoordinatorOptions(activeExecutionProfile);
+    const controlledIds = new Set(profileOptions.map((option) => option.id));
+    const retainedOptions = (selectedModelOptionsForDispatch ?? []).filter(
+      (option) => !controlledIds.has(option.id),
+    );
+    return createModelSelection(selectedInstanceId, selectedModel, [
+      ...retainedOptions,
+      ...profileOptions,
+    ]);
+  }, [activeExecutionProfile, selectedInstanceId, selectedModel, selectedModelOptionsForDispatch]);
   // ------------------------------------------------------------------
   // Context window
   // ------------------------------------------------------------------
@@ -920,6 +933,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
+  useEffect(() => {
+    if ((activeThread?.messages.length ?? 0) > 0 && !hasExplicitStudyBuddyProfile) return;
+    const coordinator = activeExecutionProfile.roles.coordinator;
+    onProviderModelSelect(
+      coordinator.instanceId,
+      coordinator.model,
+      studyBuddyCoordinatorOptions(activeExecutionProfile),
+    );
+  }, [
+    activeExecutionProfile,
+    activeThread?.messages.length,
+    hasExplicitStudyBuddyProfile,
+    onProviderModelSelect,
+  ]);
 
   // ------------------------------------------------------------------
   // Refs
@@ -982,7 +1009,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           type: "slash-command",
           command: "model",
           label: "/model",
-          description: "Switch response model for this thread",
+          description: "Switch the complete execution profile for this thread",
         },
         {
           id: "slash:plan",
@@ -1064,6 +1091,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const isComposerApprovalState = activePendingApproval !== null;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const activePendingUserInputQuestion = activePendingUserInput?.questions.find(
+    (question) => question.id === activePendingProgress?.activeQuestion?.id,
+  );
+  const isStudyBuddyQuizPermission = isStudyBuddyQuizPermissionQuestion(
+    activePendingUserInputQuestion,
+  );
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
@@ -1107,47 +1140,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : "No matching command.";
   }, [composerTriggerKind]);
 
-  // ------------------------------------------------------------------
-  // Provider traits UI
-  // ------------------------------------------------------------------
-  const setPromptFromTraits = useCallback(
-    (nextPrompt: string) => {
-      if (nextPrompt === promptRef.current) {
-        scheduleComposerFocus();
-        return;
-      }
-      promptRef.current = nextPrompt;
-      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-      const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
-      setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
-      scheduleComposerFocus();
-    },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
-  );
-
-  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
-  });
-  const providerTraitsPicker = renderProviderTraitsPicker({
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
-  });
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -1165,7 +1157,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
-    isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
+    isMobileViewport &&
+    !isComposerCollapsedMobile &&
+    pendingPrimaryAction !== null &&
+    !isStudyBuddyQuizPermission;
 
   // ------------------------------------------------------------------
   // Prompt helpers
@@ -2108,7 +2103,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
               </div>
             ) : pendingUserInputs.length > 0 ? (
-              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+              <div
+                className={cn(
+                  "bg-muted/20",
+                  isStudyBuddyQuizPermission
+                    ? "rounded-[19px]"
+                    : "rounded-t-[19px] border-b border-border/65",
+                )}
+              >
                 <ComposerPendingUserInputPanel
                   pendingUserInputs={pendingUserInputs}
                   respondingRequestIds={respondingRequestIds}
@@ -2157,49 +2159,51 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onToggleOption={onSelectActivePendingUserInputOption}
                 onAdvance={onAdvanceActivePendingUserInput}
               />
-              <div className="px-3 pb-3 sm:px-4">
-                <div
-                  data-chat-composer-mobile-pending-compact="true"
-                  className={cn(
-                    "flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 p-1.5 pl-3 transition-colors hover:bg-background/80",
-                    !activePendingProgress?.activeQuestion?.multiSelect && "p-0",
-                  )}
-                >
-                  <button
-                    type="button"
+              {!isStudyBuddyQuizPermission ? (
+                <div className="px-3 pb-3 sm:px-4">
+                  <div
+                    data-chat-composer-mobile-pending-compact="true"
                     className={cn(
-                      "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
-                      activePendingProgress?.customAnswer
-                        ? "text-foreground"
-                        : "text-muted-foreground/60",
-                      !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
+                      "flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 p-1.5 pl-3 transition-colors hover:bg-background/80",
+                      !activePendingProgress?.activeQuestion?.multiSelect && "p-0",
                     )}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={expandMobileComposer}
-                    aria-label="Write custom answer"
                   >
-                    {activePendingProgress?.customAnswer || "Write custom answer"}
-                  </button>
-                  {activePendingProgress?.activeQuestion?.multiSelect ? (
-                    <ComposerPrimaryActions
-                      compact
-                      pendingAction={pendingPrimaryAction}
-                      isRunning={false}
-                      showPlanFollowUpPrompt={false}
-                      promptHasText={false}
-                      isSendBusy={isSendBusy}
-                      isConnecting={isConnecting}
-                      isEnvironmentUnavailable={environmentUnavailable !== null}
-                      isPreparingWorktree={false}
-                      hasSendableContent={false}
-                      preserveComposerFocusOnPointerDown
-                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                      onInterrupt={handleInterruptPrimaryAction}
-                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                    />
-                  ) : null}
+                    <button
+                      type="button"
+                      className={cn(
+                        "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
+                        activePendingProgress?.customAnswer
+                          ? "text-foreground"
+                          : "text-muted-foreground/60",
+                        !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
+                      )}
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={expandMobileComposer}
+                      aria-label="Write custom answer"
+                    >
+                      {activePendingProgress?.customAnswer || "Write custom answer"}
+                    </button>
+                    {activePendingProgress?.activeQuestion?.multiSelect ? (
+                      <ComposerPrimaryActions
+                        compact
+                        pendingAction={pendingPrimaryAction}
+                        isRunning={false}
+                        showPlanFollowUpPrompt={false}
+                        promptHasText={false}
+                        isSendBusy={isSendBusy}
+                        isConnecting={isConnecting}
+                        isEnvironmentUnavailable={environmentUnavailable !== null}
+                        isPreparingWorktree={false}
+                        hasSendableContent={false}
+                        preserveComposerFocusOnPointerDown
+                        onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                        onInterrupt={handleInterruptPrimaryAction}
+                        onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -2251,6 +2255,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               "relative px-3 pb-2 sm:px-4",
               hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
               isComposerCollapsedMobile && "hidden",
+              isStudyBuddyQuizPermission && "hidden",
             )}
           >
             {composerMenuOpen && !isComposerApprovalState && (
@@ -2420,7 +2425,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onRespondToApproval={onRespondToApproval}
               />
             </div>
-          ) : (
+          ) : isStudyBuddyQuizPermission ? null : (
             <div
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
@@ -2431,26 +2436,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <ProviderModelPicker
+                <StudyBuddyProfilePicker
+                  activeProfile={activeExecutionProfile}
                   compact={isComposerFooterCompact}
-                  activeInstanceId={selectedInstanceId}
-                  model={selectedModelForPickerWithCustomFallback}
-                  lockedProvider={lockedProvider}
-                  lockedContinuationGroupKey={lockedContinuationGroupKey}
-                  instanceEntries={providerInstanceEntries}
-                  keybindings={keybindings}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  terminalOpen={terminalOpen}
                   open={isComposerModelPickerOpen}
-                  {...(composerProviderState.modelPickerIconClassName
-                    ? {
-                        activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
-                      }
-                    : {})}
-                  onOpenChange={(open) => {
-                    setIsComposerModelPickerOpen(open);
-                  }}
-                  onInstanceModelChange={onProviderModelSelect}
+                  onOpenChange={setIsComposerModelPickerOpen}
+                  onCoordinatorChange={onProviderModelSelect}
                 />
 
                 {isComposerFooterCompact ? (
@@ -2463,7 +2454,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                    traitsMenuContent={providerTraitsMenuContent}
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
                     onQuizAccessModeChange={quizAccess.updateMode}
@@ -2471,12 +2461,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 ) : (
                   <>
-                    {providerTraitsPicker ? (
-                      <>
-                        <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-                        {providerTraitsPicker}
-                      </>
-                    ) : null}
                     <ComposerFooterModeControls
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}

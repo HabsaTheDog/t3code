@@ -30,6 +30,7 @@ dist-electron/
 .electron-runtime/
 node_modules/
 .alchemy/
+.gradle/
 *.log
 .env*
 !.env.example

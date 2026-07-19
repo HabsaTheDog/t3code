@@ -12,6 +12,8 @@ import {
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
+  type StudyBuddyExecutionProfile,
+  type StudyBuddyExecutionProfileDefinition,
   RuntimeMode,
   ThreadId,
   TurnId,
@@ -118,6 +120,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly studyBuddyExecutionProfile?: StudyBuddyExecutionProfile;
+  readonly studyBuddyExecutionProfileConfig?: StudyBuddyExecutionProfileDefinition;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -263,25 +267,33 @@ function readResumeCursorThreadId(
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
   readonly approvalPolicy: EffectCodexSchema.V2ThreadStartParams__AskForApproval;
-  readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
 } {
   switch (input) {
     case "approval-required":
       return {
         approvalPolicy: "untrusted",
-        sandbox: "read-only",
       };
     case "auto-accept-edits":
       return {
         approvalPolicy: "on-request",
-        sandbox: "workspace-write",
       };
     case "full-access":
     default:
       return {
         approvalPolicy: "never",
-        sandbox: "danger-full-access",
       };
+  }
+}
+
+function runtimeModeToPermissionProfile(input: RuntimeMode, studyBuddyActive: boolean): string {
+  switch (input) {
+    case "approval-required":
+      return studyBuddyActive ? "study_buddy_analysis" : ":read-only";
+    case "auto-accept-edits":
+      return studyBuddyActive ? "study_buddy" : ":workspace";
+    case "full-access":
+    default:
+      return ":danger-full-access";
   }
 }
 
@@ -290,37 +302,24 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
-  readonly useConfiguredPermissionProfile?: boolean;
+  readonly studyBuddyActive: boolean;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
     cwd: input.cwd,
-    ...(input.useConfiguredPermissionProfile
-      ? {}
-      : { approvalPolicy: config.approvalPolicy, sandbox: config.sandbox }),
+    // Runtime permissions are protocol configuration, never model instructions. Permission
+    // profiles and the legacy sandbox fields do not compose, so select exactly one profile here.
+    approvalPolicy: config.approvalPolicy,
+    approvalsReviewer: "user",
+    config: {
+      default_permissions: runtimeModeToPermissionProfile(
+        input.runtimeMode,
+        input.studyBuddyActive,
+      ),
+    },
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
-}
-
-function runtimeModeToTurnSandboxPolicy(
-  input: RuntimeMode,
-): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
-  switch (input) {
-    case "approval-required":
-      return {
-        type: "readOnly",
-      };
-    case "auto-accept-edits":
-      return {
-        type: "workspaceWrite",
-      };
-    case "full-access":
-    default:
-      return {
-        type: "dangerFullAccess",
-      };
-  }
 }
 
 function buildCodexCollaborationMode(input: {
@@ -330,6 +329,8 @@ function buildCodexCollaborationMode(input: {
   readonly model?: string;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly personalityPrompt?: string;
+  readonly studyBuddyExecutionProfile?: StudyBuddyExecutionProfile;
+  readonly studyBuddyExecutionProfileConfig?: StudyBuddyExecutionProfileDefinition;
 }): EffectCodexSchema.V2TurnStartParams__CollaborationMode | undefined {
   const modeInstructions =
     input.interactionMode === "plan"
@@ -339,7 +340,12 @@ function buildCodexCollaborationMode(input: {
     appendStudyBuddyDeveloperInstructions(modeInstructions, {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.environment ? { environment: input.environment } : {}),
-      ...(input.model ? { model: input.model } : {}),
+      ...(input.studyBuddyExecutionProfile
+        ? { executionProfile: input.studyBuddyExecutionProfile }
+        : {}),
+      ...(input.studyBuddyExecutionProfileConfig
+        ? { executionProfileConfig: input.studyBuddyExecutionProfileConfig }
+        : {}),
     }),
     input.personalityPrompt,
   );
@@ -377,7 +383,8 @@ export function buildTurnStartParams(input: {
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
   readonly personalityPrompt?: string;
-  readonly useConfiguredPermissionProfile?: boolean;
+  readonly studyBuddyExecutionProfile?: StudyBuddyExecutionProfile;
+  readonly studyBuddyExecutionProfileConfig?: StudyBuddyExecutionProfileDefinition;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -401,17 +408,18 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(input.personalityPrompt ? { personalityPrompt: input.personalityPrompt } : {}),
+    ...(input.studyBuddyExecutionProfile
+      ? { studyBuddyExecutionProfile: input.studyBuddyExecutionProfile }
+      : {}),
+    ...(input.studyBuddyExecutionProfileConfig
+      ? { studyBuddyExecutionProfileConfig: input.studyBuddyExecutionProfileConfig }
+      : {}),
   });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
     input: turnInput,
-    ...(input.useConfiguredPermissionProfile
-      ? {}
-      : {
-          approvalPolicy: config.approvalPolicy,
-          sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
-        }),
+    approvalPolicy: config.approvalPolicy,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -470,7 +478,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
-  readonly useConfiguredPermissionProfile?: boolean;
+  readonly studyBuddyActive: boolean;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -478,9 +486,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
-    ...(input.useConfiguredPermissionProfile !== undefined
-      ? { useConfiguredPermissionProfile: input.useConfiguredPermissionProfile }
-      : {}),
+    studyBuddyActive: input.studyBuddyActive,
   });
 
   if (resumeThreadId === undefined) {
@@ -761,7 +767,7 @@ export const makeCodexSessionRuntime = (
       ...(studyBuddyActive
         ? {
             STUDY_BUDDY_WORKSPACE: options.cwd,
-            ...(options.model ? { STUDY_BUDDY_CODEX_MODEL: options.model } : {}),
+            STUDY_BUDDY_THREAD_ID: String(options.threadId),
           }
         : {}),
     };
@@ -993,6 +999,9 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
+        const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const requestOrigin =
+          rootProviderThreadId && payload.threadId !== rootProviderThreadId ? "subagent" : "root";
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -1024,6 +1033,8 @@ export const makeCodexSessionRuntime = (
           method: "item/commandExecution/requestApproval",
           requestId,
           requestKind: "command",
+          originProviderThreadId: payload.threadId,
+          requestOrigin,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
           payload,
@@ -1049,6 +1060,9 @@ export const makeCodexSessionRuntime = (
         const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
         const turnId = TurnId.make(payload.turnId);
         const itemId = ProviderItemId.make(payload.itemId);
+        const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const requestOrigin =
+          rootProviderThreadId && payload.threadId !== rootProviderThreadId ? "subagent" : "root";
         const decision = yield* Deferred.make<ProviderApprovalDecision>();
 
         yield* Ref.update(pendingApprovalsRef, (current) => {
@@ -1080,6 +1094,8 @@ export const makeCodexSessionRuntime = (
           method: "item/fileChange/requestApproval",
           requestId,
           requestKind: "file-change",
+          originProviderThreadId: payload.threadId,
+          requestOrigin,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
           payload,
@@ -1249,7 +1265,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
-        useConfiguredPermissionProfile: env.STUDY_BUDDY_CODEX_PERMISSION_PROFILE === "study_buddy",
+        studyBuddyActive,
       });
 
       const providerThreadId = opened.thread.id;
@@ -1311,14 +1327,18 @@ export const makeCodexSessionRuntime = (
             environment: env,
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
-            useConfiguredPermissionProfile:
-              env.STUDY_BUDDY_CODEX_PERMISSION_PROFILE === "study_buddy",
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(input.studyBuddyExecutionProfile
+              ? { studyBuddyExecutionProfile: input.studyBuddyExecutionProfile }
+              : {}),
+            ...(input.studyBuddyExecutionProfileConfig
+              ? { studyBuddyExecutionProfileConfig: input.studyBuddyExecutionProfileConfig }
+              : {}),
             ...(options.personalityPrompt ? { personalityPrompt: options.personalityPrompt } : {}),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);

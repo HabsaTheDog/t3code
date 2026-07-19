@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 import { randomBytes } from "node:crypto";
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import type {
@@ -14,6 +15,8 @@ import type {
 const PREVIEW_ROUTE_PREFIX = "/api/filesystem/preview/";
 const TICKET_TTL_MS = 5 * 60_000;
 const MIB = 1024 * 1024;
+const MARKDOWN_LINK_HREF_PATTERN =
+  /\[[^\]]*]\(\s*(<[^>\r\n]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\s*\)/g;
 
 interface StoredPreviewTicket {
   readonly absolutePath: string;
@@ -96,6 +99,62 @@ function isWithinRoot(rootPath: string, candidatePath: string): boolean {
   );
 }
 
+function decodeMarkdownPath(value: string): string | null {
+  const unwrapped = value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
+  const withoutFragment = unwrapped.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
+  if (withoutFragment.length === 0) return null;
+  try {
+    return decodeURIComponent(withoutFragment);
+  } catch {
+    return withoutFragment;
+  }
+}
+
+function assistantMessageReferencesPath(messageText: string, requestedPath: string): boolean {
+  const normalizedRequestedPath = path.normalize(requestedPath);
+  for (const match of messageText.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = match[1];
+    if (!href) continue;
+    const decodedPath = decodeMarkdownPath(href);
+    if (!decodedPath || !path.isAbsolute(decodedPath)) continue;
+    if (path.normalize(decodedPath) === normalizedRequestedPath) return true;
+  }
+  return false;
+}
+
+async function isAuthorizedTemporaryDelivery(input: {
+  readonly requestedPath: string;
+  readonly absolutePath: string;
+  readonly previewInput: FilesystemCreatePreviewTicketInput;
+  readonly snapshot: OrchestrationReadModel;
+}): Promise<boolean> {
+  const scope = input.previewInput.scope;
+  if (scope.kind !== "thread") return false;
+  const threadId = scope.threadId;
+
+  const temporaryRoot = await realpath(os.tmpdir());
+  const normalizedRequestedPath = path.resolve(input.requestedPath);
+  if (
+    !isWithinRoot(temporaryRoot, normalizedRequestedPath) ||
+    !isWithinRoot(temporaryRoot, input.absolutePath)
+  ) {
+    return false;
+  }
+
+  const requestedInfo = await lstat(normalizedRequestedPath);
+  if (!requestedInfo.isFile() || requestedInfo.isSymbolicLink()) return false;
+
+  const thread = input.snapshot.threads.find((entry) => entry.id === threadId);
+  if (!thread) return false;
+
+  return thread.messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      !message.streaming &&
+      assistantMessageReferencesPath(message.text, normalizedRequestedPath),
+  );
+}
+
 function purgeExpiredTickets(now = Date.now()): void {
   for (const [token, ticket] of tickets) {
     if (ticket.expiresAtMs <= now) {
@@ -118,7 +177,16 @@ export async function createFilesystemPreviewTicket(
     ? input.filePath
     : path.resolve(realRoot, input.filePath);
   const absolutePath = await realpath(requestedPath);
-  if (!isWithinRoot(realRoot, absolutePath)) {
+  const isWorkspaceFile = isWithinRoot(realRoot, absolutePath);
+  const isTemporaryDelivery = isWorkspaceFile
+    ? false
+    : await isAuthorizedTemporaryDelivery({
+        requestedPath,
+        absolutePath,
+        previewInput: input,
+        snapshot,
+      });
+  if (!isWorkspaceFile && !isTemporaryDelivery) {
     throw new Error("Preview file must stay within the selected workspace.");
   }
 

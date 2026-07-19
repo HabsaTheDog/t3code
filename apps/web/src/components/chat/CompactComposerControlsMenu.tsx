@@ -14,6 +14,7 @@ import {
 import {
   isQuizAccessMode,
   QUIZ_ACCESS_MODE_OPTIONS,
+  QUIZ_ACCESS_TOOLTIP_DELAY_MS,
   type QuizAccessMode,
 } from "../settings/StudyBuddySettings.logic";
 import { Button } from "../ui/button";
@@ -29,6 +30,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const runtimeModeOptions: ReadonlyArray<{
   value: RuntimeMode;
@@ -150,12 +152,26 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
               }}
             >
               {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
-                <MenuRadioItem key={option.value} value={option.value}>
-                  <span className="flex items-center gap-2">
-                    <ShieldCheckIcon className="size-4 text-muted-foreground" />
-                    {option.label}
-                  </span>
-                </MenuRadioItem>
+                <Tooltip key={option.value}>
+                  <TooltipTrigger
+                    delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
+                    render={
+                      <MenuRadioItem value={option.value}>
+                        <span className="flex items-center gap-2">
+                          <ShieldCheckIcon className="size-4 text-muted-foreground" />
+                          {option.label}
+                        </span>
+                      </MenuRadioItem>
+                    }
+                  />
+                  <TooltipPopup
+                    side="left"
+                    sideOffset={8}
+                    className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
+                  >
+                    {option.description}
+                  </TooltipPopup>
+                </Tooltip>
               ))}
             </MenuRadioGroup>
           </MenuSubPopup>

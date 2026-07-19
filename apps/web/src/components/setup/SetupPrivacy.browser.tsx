@@ -530,6 +530,60 @@ describe.sequential("first-run privacy and setup", () => {
     await completed.unmount();
   });
 
+  it.sequential("keeps the setup header aligned and lists quiz safety choices vertically", async () => {
+    resetSettings({
+      analyticsConsent: "rejected",
+      conversationConsent: "rejected",
+      consentVersion: 1,
+      onboardingStatus: "in-progress",
+      onboardingCurrentStep: "quiz-safety",
+    });
+    const screen = await renderSetup();
+
+    await expect
+      .element(page.getByRole("heading", { name: "Quiz safety", level: 1 }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Step 6 of 6")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Quiz safety is non-negotiable", level: 2 }))
+      .toBeInTheDocument();
+
+    await vi.waitFor(() => {
+      const header = document.querySelector<HTMLElement>('[data-setup-header="true"]');
+      const stepIndicator = header?.querySelector<HTMLElement>("p");
+      const introHeading = document.querySelector<HTMLElement>('[data-setup-intro-heading="true"]');
+      const options = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-quiz-access-option]"),
+      );
+
+      expect(header).toBeTruthy();
+      expect(stepIndicator).toBeTruthy();
+      expect(introHeading).toBeTruthy();
+      expect(options).toHaveLength(4);
+
+      const headerRect = header!.getBoundingClientRect();
+      const stepRect = stepIndicator!.getBoundingClientRect();
+      expect(
+        Math.abs(stepRect.left + stepRect.width / 2 - (headerRect.left + headerRect.width / 2)),
+      ).toBeLessThanOrEqual(1.5);
+
+      const introChildren = Array.from(introHeading!.children) as HTMLElement[];
+      expect(introChildren).toHaveLength(2);
+      const introIconRect = introChildren[0]!.getBoundingClientRect();
+      const introTitleRect = introChildren[1]!.querySelector("h2")!.getBoundingClientRect();
+      expect(introTitleRect.top).toBeGreaterThanOrEqual(introIconRect.top);
+      expect(introTitleRect.top - introIconRect.top).toBeLessThanOrEqual(8);
+
+      const optionRects = options.map((option) => option.getBoundingClientRect());
+      for (let index = 1; index < optionRects.length; index += 1) {
+        expect(optionRects[index]!.top).toBeGreaterThan(optionRects[index - 1]!.bottom);
+        expect(Math.abs(optionRects[index]!.width - optionRects[0]!.width)).toBeLessThanOrEqual(1);
+      }
+    });
+
+    await screen.unmount();
+  });
+
   it.sequential("honors the developer setup URL override for completed installations", async () => {
     resetSettings({
       analyticsConsent: "rejected",

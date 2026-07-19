@@ -85,10 +85,7 @@ export function publicStudyBuddyConfiguration(
     cisUsername: values[CONFIG_KEYS.cisUsername] ?? "",
     cisUrl: publicUrl(firstUrl(values[CONFIG_KEYS.cisUrl]) ?? DEFAULT_CIS_URL),
     cisPasswordConfigured: hasSecret(values[CONFIG_KEYS.cisPassword]),
-    // Calendar feed URLs frequently contain bearer tokens in opaque path
-    // segments. They are write-only even when no credential-looking query key
-    // is present.
-    calendarUrl: "",
+    calendarUrl: values[CONFIG_KEYS.calendarUrl] ?? "",
     calendarUrlConfigured: hasSecret(values[CONFIG_KEYS.calendarUrl]),
     quiz: {
       accessMode: parseQuizMode(values[CONFIG_KEYS.quizMode]),

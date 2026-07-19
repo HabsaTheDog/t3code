@@ -22,6 +22,9 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       <div className="flex flex-wrap items-center gap-2">
         <span className="uppercase text-sm tracking-[0.2em]">PENDING APPROVAL</span>
         <span className="text-sm font-medium">{approvalSummary}</span>
+        {approval.requestOrigin === "subagent" ? (
+          <span className="text-xs text-muted-foreground">Requested by a subagent</span>
+        ) : null}
         {pendingCount > 1 ? (
           <span className="text-xs text-muted-foreground">1/{pendingCount}</span>
         ) : null}

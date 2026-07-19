@@ -52,6 +52,9 @@ approval_policy = "on-request"
 web_search = "disabled"
 allow_login_shell = false
 
+[features]
+default_mode_request_user_input = true
+
 [permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}]
 description = "Study Buddy workspace access with credentials denied."
 extends = ":workspace"

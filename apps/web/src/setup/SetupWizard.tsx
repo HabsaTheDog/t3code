@@ -7,15 +7,18 @@ import type {
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
+  BookOpenIcon,
   CheckCircle2Icon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CircleHelpIcon,
   CircleIcon,
   BotIcon,
   GraduationCapIcon,
   LinkIcon,
   LockKeyholeIcon,
   ShieldCheckIcon,
+  WandSparklesIcon,
   WifiIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -380,13 +383,17 @@ function SetupWizard({
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <header className="drag-region flex h-[52px] items-center justify-between border-b border-border/60 px-5 lg:px-10 wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Step {stepIndex + 1} of {steps.length}
-              </p>
-              <h1 className="mt-1 text-xl font-semibold tracking-tight">{step.label}</h1>
-            </div>
+          <header
+            data-setup-header="true"
+            className="drag-region grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center border-b border-border/60 px-5 lg:px-10 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+          >
+            <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">
+              {step.label}
+            </h1>
+            <p className="rounded-full border border-border/70 bg-card/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground shadow-sm backdrop-blur">
+              Step {stepIndex + 1} of {steps.length}
+            </p>
+            <div aria-hidden="true" />
           </header>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 lg:px-10 lg:py-12">
@@ -1134,6 +1141,12 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
 
   useImperativeHandle(ref, () => ({ save: saveMode }), [saveMode]);
 
+  const modeIcons: Record<QuizAccessMode, typeof ShieldCheckIcon> = {
+    "review-only": BookOpenIcon,
+    "ask-before-attempt": CircleHelpIcon,
+    "quiz-assist": WandSparklesIcon,
+  };
+
   return (
     <div className="space-y-6">
       <StepIntro
@@ -1142,62 +1155,74 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
         icon={ShieldCheckIcon}
       />
       <div className="space-y-4">
-        <Card className="border-border/80 p-6 shadow-sm">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">Quiz access mode</p>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Pick the exact safety envelope you want. The selection is saved when you continue.
-              </p>
-            </div>
-            <ShieldCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" />
+        <div className="flex items-start gap-3 px-1">
+          <div className="grid size-9 shrink-0 place-items-center rounded-xl border bg-card shadow-sm">
+            <ShieldCheckIcon className="size-4 text-primary" aria-hidden="true" />
           </div>
-          <RadioGroup
-            className="mt-5 grid gap-3 xl:grid-cols-2"
-            value={mode}
-            onValueChange={(value) => {
-              if (isQuizAccessMode(value)) setMode(value);
-            }}
-          >
-            {QUIZ_ACCESS_MODE_OPTIONS.map((option) => {
-              const selected = mode === option.value;
-              return (
-                <label
-                  key={option.value}
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold">Quiz access mode</h3>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Pick the exact safety envelope you want. The selection is saved when you continue.
+            </p>
+          </div>
+        </div>
+        <RadioGroup
+          className="grid gap-3"
+          value={mode}
+          onValueChange={(value) => {
+            if (isQuizAccessMode(value)) setMode(value);
+          }}
+        >
+          {QUIZ_ACCESS_MODE_OPTIONS.map((option) => {
+            const selected = mode === option.value;
+            const ModeIcon = modeIcons[option.value];
+            return (
+              <label
+                key={option.value}
+                data-quiz-access-option={option.value}
+                className={cn(
+                  "group flex cursor-pointer items-start gap-4 rounded-2xl border bg-card px-5 py-4 text-left shadow-sm transition-colors",
+                  selected
+                    ? "border-primary/45 bg-primary/8"
+                    : "border-border/75 hover:border-border hover:bg-accent/35",
+                )}
+              >
+                <span
                   className={cn(
-                    "group flex cursor-pointer items-start gap-3 rounded-2xl border p-4 text-left transition",
+                    "grid size-10 shrink-0 place-items-center rounded-xl border transition-colors",
                     selected
-                      ? "border-primary/40 bg-primary/8 shadow-sm"
-                      : "border-border/70 bg-background/50 hover:border-border hover:bg-accent/40",
+                      ? "border-primary/25 bg-primary/12 text-primary"
+                      : "border-border/70 bg-muted/45 text-muted-foreground group-hover:text-foreground",
                   )}
                 >
-                  <RadioGroupItem value={option.value} className="mt-0.5" />
-                  <span className="min-w-0">
-                    <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                      {option.label}
-                      {option.value === "review-only" ? (
-                        <Badge
-                          variant="secondary"
-                          className="h-5 px-2 text-[10px] uppercase tracking-[0.12em]"
-                        >
-                          Recommended
-                        </Badge>
-                      ) : null}
-                    </span>
-                    <span className="mt-1 block text-sm leading-6 text-muted-foreground">
-                      {option.description}
-                    </span>
+                  <ModeIcon className="size-[18px]" aria-hidden="true" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                    {option.label}
+                    {option.value === "review-only" ? (
+                      <Badge
+                        variant="secondary"
+                        className="h-5 px-2 text-[10px] uppercase tracking-[0.12em]"
+                      >
+                        Recommended
+                      </Badge>
+                    ) : null}
                   </span>
-                </label>
-              );
-            })}
-          </RadioGroup>
-          {saveError ? (
-            <p className="mt-3 text-xs text-destructive" role="alert">
-              Quiz safety settings were not saved.
-            </p>
-          ) : null}
-        </Card>
+                  <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                    {option.description}
+                  </span>
+                </span>
+                <RadioGroupItem value={option.value} className="mt-2.5 shrink-0" />
+              </label>
+            );
+          })}
+        </RadioGroup>
+        {saveError ? (
+          <p className="text-xs text-destructive" role="alert">
+            Quiz safety settings were not saved.
+          </p>
+        ) : null}
       </div>
       <p className="text-xs leading-5 text-muted-foreground">
         This selection is saved automatically when you continue.
@@ -1217,11 +1242,15 @@ function StepIntro({
 }) {
   return (
     <div className="max-w-2xl">
-      <div className="grid size-11 place-items-center rounded-xl border bg-card">
-        <Icon className="size-5 text-primary" />
+      <div data-setup-intro-heading="true" className="flex items-start gap-3">
+        <div className="grid size-11 shrink-0 place-items-center rounded-xl border bg-card shadow-sm">
+          <Icon className="size-5 text-primary" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 pt-1.5">
+          <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
       </div>
-      <h2 className="mt-5 text-2xl font-semibold tracking-tight">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
     </div>
   );
 }

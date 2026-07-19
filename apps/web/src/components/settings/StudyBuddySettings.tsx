@@ -4,35 +4,47 @@ import type {
   StudyBuddyConnectionTarget,
   StudyBuddySecretPatch,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   AlertTriangleIcon,
-  BrainCircuitIcon,
-  CalendarCheckIcon,
+  BotIcon,
   CheckCircle2Icon,
   GraduationCapIcon,
   KeyRoundIcon,
-  PencilLineIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
+  XCircleIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { requestSetupRerun } from "../../setup/setupCoordinator";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { DraftTextarea } from "../ui/draft-textarea";
 import { Input } from "../ui/input";
 import { SecretInput } from "../ui/secret-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { QUIZ_ACCESS_MODE_OPTIONS, type QuizAccessMode } from "./StudyBuddySettings.logic";
 import { registerTelemetrySecret, telemetry } from "../../telemetry/runtime";
+import { cn } from "../../lib/utils";
 
-type SecretField = "moodlePassword" | "cisPassword" | "calendarUrlSecret";
+type SecretField = "moodlePassword" | "cisPassword";
 type SecretPatches = Partial<Record<SecretField, StudyBuddySecretPatch>>;
-type SyncState = "loading" | "saved" | "dirty" | "saving" | "error";
+type ConnectionStatus = {
+  state: "checking" | "success" | "failure";
+  message?: string;
+};
 
 const EMPTY_CONFIG: StudyBuddyConfiguration = {
   exists: false,
@@ -66,6 +78,7 @@ function isDirtyConfig(
     draft.moodleDashboardUrl !== config.moodleDashboardUrl ||
     draft.cisUsername !== config.cisUsername ||
     draft.cisUrl !== config.cisUrl ||
+    draft.calendarUrl !== config.calendarUrl ||
     draft.quiz.accessMode !== config.quiz.accessMode ||
     draft.quiz.minimumTimeLimitMinutes !== config.quiz.minimumTimeLimitMinutes ||
     draft.quiz.minimumAttemptsLeft !== config.quiz.minimumAttemptsLeft ||
@@ -74,52 +87,9 @@ function isDirtyConfig(
   );
 }
 
-function SaveStatusBadge({ state }: { state: SyncState }) {
-  const content = (() => {
-    switch (state) {
-      case "loading":
-        return {
-          icon: <Spinner className="size-3" />,
-          label: "Loading",
-          variant: "secondary" as const,
-        };
-      case "saving":
-        return {
-          icon: <Spinner className="size-3" />,
-          label: "Saving",
-          variant: "secondary" as const,
-        };
-      case "dirty":
-        return {
-          icon: <PencilLineIcon className="size-3" />,
-          label: "Unsaved changes",
-          variant: "outline" as const,
-        };
-      case "error":
-        return {
-          icon: <AlertTriangleIcon className="size-3" />,
-          label: "Save failed",
-          variant: "destructive" as const,
-        };
-      case "saved":
-      default:
-        return {
-          icon: <CheckCircle2Icon className="size-3" />,
-          label: "Saved",
-          variant: "success" as const,
-        };
-    }
-  })();
-
-  return (
-    <Badge className="gap-1.5" variant={content.variant}>
-      {content.icon}
-      {content.label}
-    </Badge>
-  );
-}
-
 export function StudyBuddySettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
   const [config, setConfig] = useState<StudyBuddyConfiguration>(EMPTY_CONFIG);
   const [draft, setDraft] = useState<StudyBuddyConfiguration>(EMPTY_CONFIG);
   const [secretPatches, setSecretPatches] = useState<SecretPatches>({});
@@ -128,9 +98,9 @@ export function StudyBuddySettingsPanel() {
   const [changeGeneration, setChangeGeneration] = useState(0);
   const [secretResetVersion, setSecretResetVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [testStatus, setTestStatus] = useState<Partial<Record<StudyBuddyConnectionTarget, string>>>(
-    {},
-  );
+  const [testStatus, setTestStatus] = useState<
+    Partial<Record<StudyBuddyConnectionTarget, ConnectionStatus>>
+  >({});
   const lastSavedGenerationRef = useRef(0);
   const lastFailedGenerationRef = useRef(-1);
   const latestGenerationRef = useRef(0);
@@ -176,6 +146,7 @@ export function StudyBuddySettingsPanel() {
         moodleDashboardUrl: draftAtSave.moodleDashboardUrl,
         cisUsername: draftAtSave.cisUsername,
         cisUrl: draftAtSave.cisUrl,
+        calendarUrl: draftAtSave.calendarUrl,
         quiz: draftAtSave.quiz,
         ...secretPatchesAtSave,
       };
@@ -196,7 +167,6 @@ export function StudyBuddySettingsPanel() {
           event: "settings.changed",
           properties: { section: "study_buddy" },
         });
-        toastManager.add({ type: "success", title: "Study Buddy settings saved" });
       } catch (saveError) {
         const message = errorMessage(saveError);
         lastFailedGenerationRef.current = generationAtSave;
@@ -218,16 +188,6 @@ export function StudyBuddySettingsPanel() {
     [config, draft, secretPatches],
   );
 
-  const syncState: SyncState = loading
-    ? "loading"
-    : saving
-      ? "saving"
-      : error
-        ? "error"
-        : hasDirtyChanges
-          ? "dirty"
-          : "saved";
-
   useEffect(() => {
     if (loading || saving || !hasDirtyChanges) {
       return;
@@ -248,16 +208,29 @@ export function StudyBuddySettingsPanel() {
   }, [changeGeneration, draft, hasDirtyChanges, loading, save, saving, secretPatches]);
 
   const testConnection = useCallback(async (target: StudyBuddyConnectionTarget) => {
-    setTestStatus((current) => ({ ...current, [target]: "Checking…" }));
+    setTestStatus((current) => ({ ...current, [target]: { state: "checking" } }));
     try {
       const result = await ensureLocalApi().server.testStudyBuddyConnection({ target });
-      setTestStatus((current) => ({ ...current, [target]: result.message }));
+      setTestStatus((current) => ({
+        ...current,
+        [target]: { state: result.status, message: result.message },
+      }));
+      toastManager.add({
+        type: result.status === "success" ? "success" : "error",
+        title: result.status === "success" ? "Connection successful" : "Connection failed",
+        description: result.message,
+      });
       void telemetry.capture({
         event: "study_connection.tested",
         properties: { target, outcome: result.status },
       });
     } catch (testError) {
-      setTestStatus((current) => ({ ...current, [target]: errorMessage(testError) }));
+      const message = errorMessage(testError);
+      setTestStatus((current) => ({
+        ...current,
+        [target]: { state: "failure", message },
+      }));
+      toastManager.add({ type: "error", title: "Connection failed", description: message });
       void telemetry.capture({
         event: "study_connection.tested",
         properties: { target, outcome: "failed" },
@@ -271,22 +244,27 @@ export function StudyBuddySettingsPanel() {
         <div>
           <h1 className="text-lg font-semibold tracking-tight">Study Buddy</h1>
           <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-            Passwords stay hidden by default and can be revealed while editing. Changes save
-            automatically after you pause typing.
+            Saved secrets are write-only and never sent back to this screen. You can reveal a new
+            value while editing it. Changes save automatically.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={loading || saving}
-            onClick={() => void load()}
-          >
-            <RefreshCwIcon className="size-3.5" />
-            Reload
-          </Button>
-          <SaveStatusBadge state={syncState} />
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="size-5 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                disabled={loading || saving}
+                aria-label="Reload Study Buddy settings"
+                onClick={() => void load()}
+              >
+                <RefreshCwIcon className={`size-3 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+            }
+          />
+          <TooltipPopup side="bottom">Reload settings</TooltipPopup>
+        </Tooltip>
       </div>
 
       {error ? (
@@ -297,16 +275,44 @@ export function StudyBuddySettingsPanel() {
         </Alert>
       ) : null}
 
-      <SettingsSection title="Model support" icon={<BrainCircuitIcon className="size-3.5" />}>
+      <SettingsSection title="Assistant" icon={<BotIcon className="size-3.5" />}>
         <SettingsRow
-          title="Study Buddy pipeline"
-          description="Study Buddy currently runs its internal Moodle/CIS pipeline through Codex. Other providers remain available for regular chat."
+          title="Setup assistant"
+          description="Run the guided privacy, provider, and Study Buddy setup again without erasing existing configuration."
+          control={
+            <Button size="sm" variant="outline" onClick={requestSetupRerun}>
+              Run setup again
+            </Button>
+          }
+        />
+        <SettingsRow
+          title="Personality"
+          description="Add persistent instructions for how agents should communicate and behave. Plain text and Markdown are supported."
+          resetAction={
+            settings.personalityPrompt !== DEFAULT_UNIFIED_SETTINGS.personalityPrompt ? (
+              <SettingResetButton
+                label="personality"
+                onClick={() =>
+                  updateSettings({
+                    personalityPrompt: DEFAULT_UNIFIED_SETTINGS.personalityPrompt,
+                  })
+                }
+              />
+            ) : null
+          }
         >
-          <div className="flex flex-wrap gap-2 pt-3">
-            <Badge variant="default">Codex available</Badge>
-            <Badge variant="secondary">Claude coming soon</Badge>
-            <Badge variant="secondary">Cursor coming soon</Badge>
-            <Badge variant="secondary">OpenCode coming soon</Badge>
+          <div className="pt-3">
+            <DraftTextarea
+              value={settings.personalityPrompt}
+              onCommit={(personalityPrompt) => updateSettings({ personalityPrompt })}
+              placeholder="Example: Be direct and strict about technical quality. Call me Alex."
+              aria-label="Agent personality instructions"
+              className="min-h-36 resize-y font-mono text-xs leading-relaxed"
+              spellCheck
+            />
+            <p className="mt-2 text-[11px] text-muted-foreground/70">
+              Saved when you leave the field. Applied when a new agent session starts.
+            </p>
           </div>
         </SettingsRow>
       </SettingsSection>
@@ -330,13 +336,23 @@ export function StudyBuddySettingsPanel() {
         </SettingsRow>
         <SettingsRow
           title="Moodle password"
-          description="Hidden by default. Use the icon to reveal what you type."
+          description={
+            config.moodlePasswordConfigured
+              ? "Saved securely. Enter a new password only to replace it."
+              : "Enter your Moodle password."
+          }
+          status={config.moodlePasswordConfigured ? <ConfiguredStatus /> : undefined}
         >
           <SecretInput
             key={`moodle-password-${secretResetVersion}`}
             label="Moodle password"
             resetKey={`moodle-password-${secretResetVersion}`}
             disabled={loading}
+            placeholder={
+              config.moodlePasswordConfigured
+                ? "Password saved — enter to replace"
+                : "Enter password"
+            }
             onValueChange={(value) =>
               setSecretPatches((current) => {
                 if (!value) {
@@ -371,13 +387,21 @@ export function StudyBuddySettingsPanel() {
         </SettingsRow>
         <SettingsRow
           title="CIS password"
-          description="Hidden by default. Use the icon to reveal what you type."
+          description={
+            config.cisPasswordConfigured
+              ? "Saved securely. Enter a new password only to replace it."
+              : "Enter your CIS password."
+          }
+          status={config.cisPasswordConfigured ? <ConfiguredStatus /> : undefined}
         >
           <SecretInput
             key={`cis-password-${secretResetVersion}`}
             label="CIS password"
             resetKey={`cis-password-${secretResetVersion}`}
             disabled={loading}
+            placeholder={
+              config.cisPasswordConfigured ? "Password saved — enter to replace" : "Enter password"
+            }
             onValueChange={(value) =>
               setSecretPatches((current) => {
                 if (!value) {
@@ -397,7 +421,18 @@ export function StudyBuddySettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="Sources" icon={<GraduationCapIcon className="size-3.5" />}>
-        <SettingsRow title="Moodle URL" description="Dashboard, course, or activity URL.">
+        <SettingsRow
+          title="Moodle URL"
+          description="Dashboard, course, or activity URL."
+          control={
+            <ConnectionCheckButton
+              target="moodle"
+              status={testStatus.moodle}
+              disabled={loading}
+              onTest={testConnection}
+            />
+          }
+        >
           <div className="pt-3">
             <Input
               nativeInput
@@ -415,7 +450,18 @@ export function StudyBuddySettingsPanel() {
             />
           </div>
         </SettingsRow>
-        <SettingsRow title="CIS URL" description="Schedules, rooms, exams, and administration.">
+        <SettingsRow
+          title="CIS URL"
+          description="Schedules, rooms, exams, and administration."
+          control={
+            <ConnectionCheckButton
+              target="cis"
+              status={testStatus.cis}
+              disabled={loading}
+              onTest={testConnection}
+            />
+          }
+        >
           <div className="pt-3">
             <Input
               nativeInput
@@ -432,31 +478,32 @@ export function StudyBuddySettingsPanel() {
         </SettingsRow>
         <SettingsRow
           title="Calendar URL"
-          description="Write-only private feed URL. The saved value is never returned to the browser."
+          description="Private iCalendar feed URL."
+          control={
+            <ConnectionCheckButton
+              target="calendar"
+              status={testStatus.calendar}
+              disabled={loading}
+              onTest={testConnection}
+            />
+          }
         >
-          <SecretInput
-            key={`calendar-url-${secretResetVersion}`}
-            label="Calendar URL"
-            resetKey={`calendar-url-${secretResetVersion}`}
-            disabled={loading}
-            placeholder={
-              config.calendarUrlConfigured ? "Configured — enter to replace" : "Enter URL"
-            }
-            onValueChange={(value) =>
-              setSecretPatches((current) => {
-                if (!value) {
-                  const next = { ...current };
-                  delete next.calendarUrlSecret;
-                  return next;
-                }
-                markDirty();
-                return {
-                  ...current,
-                  calendarUrlSecret: { operation: "set", value },
-                };
-              })
-            }
-          />
+          <div className="pt-3">
+            <Input
+              nativeInput
+              type="url"
+              value={draft.calendarUrl}
+              disabled={loading}
+              placeholder="https://…/calendar.ics"
+              aria-label="Calendar URL"
+              onChange={(event) =>
+                setDraft((current) => {
+                  markDirty();
+                  return { ...current, calendarUrl: event.currentTarget.value };
+                })
+              }
+            />
+          </div>
         </SettingsRow>
       </SettingsSection>
 
@@ -492,36 +539,67 @@ export function StudyBuddySettingsPanel() {
           }
         />
       </SettingsSection>
-
-      <SettingsSection title="Connection checks" icon={<CalendarCheckIcon className="size-3.5" />}>
-        {(["moodle", "cis", "calendar"] as const).map((target) => (
-          <SettingsRow
-            key={target}
-            title={target === "cis" ? "CIS" : `${target[0]?.toUpperCase()}${target.slice(1)}`}
-            description={
-              testStatus[target] ??
-              (target === "calendar"
-                ? "Fetches HTTPS and parses iCalendar data."
-                : "Checks login and page reachability without starting quizzes.")
-            }
-            control={
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={loading}
-                onClick={() => void testConnection(target)}
-              >
-                {testStatus[target]?.startsWith("Checking") ? (
-                  <Spinner className="size-3.5" />
-                ) : (
-                  <CheckCircle2Icon className="size-3.5" />
-                )}
-                Test
-              </Button>
-            }
-          />
-        ))}
-      </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ConfiguredStatus() {
+  return (
+    <span className="inline-flex items-center gap-1 font-medium text-success">
+      <CheckCircle2Icon className="size-3" />
+      Configured
+    </span>
+  );
+}
+
+function ConnectionCheckButton({
+  target,
+  status,
+  disabled,
+  onTest,
+}: {
+  target: StudyBuddyConnectionTarget;
+  status: ConnectionStatus | undefined;
+  disabled: boolean;
+  onTest: (target: StudyBuddyConnectionTarget) => Promise<void>;
+}) {
+  const checking = status?.state === "checking";
+  const label = checking
+    ? "Checking…"
+    : status?.state === "success"
+      ? "Connected"
+      : status?.state === "failure"
+        ? "Failed"
+        : "Test connection";
+  const button = (
+    <Button
+      size="sm"
+      variant="outline"
+      className={cn(
+        status?.state === "success" && "border-success/40 text-success hover:text-success",
+        status?.state === "failure" &&
+          "border-destructive/40 text-destructive hover:text-destructive",
+      )}
+      disabled={disabled || checking}
+      aria-label={`Test ${target === "cis" ? "CIS" : target} connection`}
+      onClick={() => void onTest(target)}
+    >
+      {checking ? (
+        <Spinner className="size-3.5" />
+      ) : status?.state === "failure" ? (
+        <XCircleIcon className="size-3.5" />
+      ) : (
+        <CheckCircle2Icon className="size-3.5" />
+      )}
+      {label}
+    </Button>
+  );
+
+  if (!status?.message) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipPopup side="top">{status.message}</TooltipPopup>
+    </Tooltip>
   );
 }

@@ -45,6 +45,7 @@ import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+import { resolveStudyBuddyCodexPolicyPaths } from "../setup/studyBuddyCodexPolicy.ts";
 
 const TestHttpClientLive = Layer.succeed(
   HttpClient.HttpClient,
@@ -135,6 +136,8 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         drivers: [CodexDriver],
         configMap,
       });
+      const serverConfig = yield* ServerConfig;
+      const secureContinuationGroupKey = `codex:home:${resolveStudyBuddyCodexPolicyPaths(serverConfig).codexHome}`;
 
       const instances = yield* registry.listInstances;
       expect(instances.map((instance) => instance.instanceId).toSorted()).toEqual(
@@ -160,15 +163,13 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
-      expect(personalSnapshot.continuation?.groupKey).toBe(
-        "codex:home:/home/julius/.codex_personal",
-      );
+      expect(personalSnapshot.continuation?.groupKey).toBe(secureContinuationGroupKey);
 
       const workSnapshot = yield* work!.snapshot.getSnapshot;
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
-      expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(workSnapshot.continuation?.groupKey).toBe(secureContinuationGroupKey);
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
@@ -337,10 +338,12 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       // — that's enough signal to validate the stamping wrapper without
       // spawning real binaries.
       const codexSnapshot = yield* codex!.snapshot.getSnapshot;
+      const serverConfig = yield* ServerConfig;
+      const secureContinuationGroupKey = `codex:home:${resolveStudyBuddyCodexPolicyPaths(serverConfig).codexHome}`;
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
-      expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(codexSnapshot.continuation?.groupKey).toBe(secureContinuationGroupKey);
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
       expect(claudeSnapshot.instanceId).toBe(claudeId);

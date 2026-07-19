@@ -35,6 +35,7 @@ const SEMANTIC_EVENTS = new Set([
   "turn.completed",
   "turn.interrupted",
   "turn.failed",
+  "orchestration.task.completed",
   "feature.used",
   "settings.changed",
 ]);

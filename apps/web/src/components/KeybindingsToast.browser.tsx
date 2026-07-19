@@ -2,6 +2,7 @@ import "../index.css";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
@@ -319,7 +320,7 @@ const worker = setupWorker(
     client.addEventListener("message", (event) => {
       const rawData = event.data;
       if (typeof rawData !== "string") return;
-      void rpcHarness.onMessage(rawData);
+      void rpcHarness.onMessage(client, rawData);
     });
   }),
   ...createAuthenticatedSessionHandlers(() => fixture.serverConfig.auth),
@@ -558,6 +559,16 @@ describe("Keybindings update toast", () => {
     });
     await __resetLocalApiForTests();
     localStorage.clear();
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        consentVersion: 1,
+        onboardingVersion: 1,
+        onboardingStatus: "completed",
+        onboardingCurrentStep: null,
+      }),
+    );
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
       draftsByThreadKey: {},

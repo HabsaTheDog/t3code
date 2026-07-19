@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, it } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+  buildStudyBuddyDeveloperInstructions,
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
@@ -57,9 +58,6 @@ describe("buildTurnStartParams", () => {
     assert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
-      sandboxPolicy: {
-        type: "dangerFullAccess",
-      },
       input: [
         {
           type: "text",
@@ -99,9 +97,6 @@ describe("buildTurnStartParams", () => {
     assert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
-      sandboxPolicy: {
-        type: "workspaceWrite",
-      },
       input: [
         {
           type: "text",
@@ -136,9 +131,6 @@ describe("buildTurnStartParams", () => {
     assert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
       input: [
         {
           type: "text",
@@ -148,17 +140,16 @@ describe("buildTurnStartParams", () => {
     });
   });
 
-  it("does not override the configured Study Buddy permission profile", () => {
+  it("keeps full-access deterministic even when Study Buddy config is present", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "Inspect the workspace",
-        useConfiguredPermissionProfile: true,
       }),
     );
 
-    assert.equal(params.approvalPolicy, undefined);
+    assert.equal(params.approvalPolicy, "never");
     assert.equal(params.sandboxPolicy, undefined);
     assert.deepStrictEqual(params.input, [{ type: "text", text: "Inspect the workspace" }]);
   });
@@ -208,15 +199,39 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
+      /enables the native `request_user_input` tool in Default mode/,
+    );
+    assert.doesNotMatch(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /request_user_input` tool is unavailable in Default mode/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Ordinary chat text such as `approve`, `allow`, or `yes` is not permission/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Do not send a final assistant response while this permission is pending/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /study_buddy_quiz_permission_v1/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Reuse that same approval-request path for every technical continuation run/,
+    );
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
       /\/home\/student\/\.agents\/skills\/study-buddy\/scripts\/study_buddy_task\.sh/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /\/tmp\/selected-project\/output\/<request-name>\/<timestamp>/,
+      /\/tmp\/selected-project\/study-buddy-data\/<thread>\/runs\/<request-name>\/<timestamp>/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /\[PDF öffnen\]\(<\/absolute\/path\/document\.pdf>\)/,
+      /\[descriptive-filename\.pdf\]\(\/tmp\/descriptive-filename\.pdf\)/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
@@ -224,7 +239,7 @@ describe("buildTurnStartParams", () => {
     );
   });
 
-  it("passes the selected Codex model into Study Buddy wrapper instructions", () => {
+  it("keeps the selected orchestrator model separate from the Study Buddy task policy", () => {
     const params = Effect.runSync(
       buildTurnStartParams({
         threadId: "provider-thread-1",
@@ -242,11 +257,115 @@ describe("buildTurnStartParams", () => {
     assert.equal(params.model, "gpt-5-codex");
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /Codex model for Study Buddy runs: `gpt-5-codex`/,
+      /Explicit global Study Buddy model override: `none; use the task policy`/,
+    );
+    assert.doesNotMatch(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /--codex-model "gpt-5-codex"/,
+    );
+  });
+
+  it("passes the saved execution profile to every Study Buddy workflow command", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Erstelle einen Lernzettel",
+        cwd: "/tmp/selected-project",
+        studyBuddyExecutionProfile: "quality",
+        environment: {
+          HOME: "/home/student",
+          STUDY_BUDDY_ROOT: "/study-buddy",
+        },
+      }),
+    );
+
+    const instructions = params.collaborationMode?.settings.developer_instructions ?? "";
+    assert.match(instructions, /Active Study Buddy execution profile: `quality` \(`quality`\)/);
+    assert.match(instructions, /doc "<prompt>" --execution-profile "quality"/);
+    assert.match(
+      instructions,
+      /interactive-study-guide "<exact user prompt>" --execution-profile "quality"[\s\S]*canonical end-to-end route/,
+    );
+    assert.match(
+      instructions,
+      /extract "<source-focused prompt using the user's exact course words>" --execution-profile "quality"[\s\S]*--source-run-dir "<successful-extraction-run>"/,
+    );
+    assert.match(
+      instructions,
+      /never ask the user for a full course title before attempting evidence-based dashboard and course-page resolution/i,
+    );
+    assert.match(
+      instructions,
+      /inspect a bounded shortlist of plausible course pages, compare their descriptions, sections, and resources/i,
+    );
+  });
+
+  it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {
+    const worker = {
+      model: "gpt-worker",
+      reasoningEffort: "medium" as const,
+      retryModel: "gpt-worker-retry",
+      retryReasoningEffort: "high" as const,
+    };
+    const instructions = buildStudyBuddyDeveloperInstructions({
+      executionProfile: "custom",
+      executionProfileConfig: {
+        id: "custom-quiz",
+        name: "Custom quiz",
+        description: "Custom Quiz Solver profile",
+        kind: "custom",
+        roles: {
+          coordinator: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-coordinator",
+            reasoningEffort: "medium",
+          },
+          contentAnalyzer: worker,
+          quizSolver: {
+            model: "gpt-quiz",
+            reasoningEffort: "high",
+            retryModel: "gpt-quiz-retry",
+            retryReasoningEffort: "xhigh",
+          },
+          artifactPlanner: worker,
+          artifactBuilder: worker,
+          qualityReviewer: worker,
+        },
+      },
+      environment: {
+        HOME: "/home/student",
+        STUDY_BUDDY_ROOT: "/study-buddy",
+      },
+    });
+
+    assert.match(instructions ?? "", /"quiz_solver":\{"model":"gpt-quiz"/);
+    assert.match(instructions ?? "", /"retryModel":"gpt-quiz-retry"/);
+  });
+
+  it("documents an explicit Study Buddy global model override", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Erstelle einen Lernzettel",
+        cwd: "/tmp/selected-project",
+        model: "gpt-5-codex",
+        environment: {
+          HOME: "/home/student",
+          STUDY_BUDDY_ROOT: "/study-buddy",
+          STUDY_BUDDY_CODEX_MODEL: "gpt-5.6-terra",
+        },
+      }),
+    );
+
+    assert.match(
+      params.collaborationMode?.settings.developer_instructions ?? "",
+      /Explicit global Study Buddy model override: `gpt-5\.6-terra`/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /doc "<prompt>" --codex-model "gpt-5-codex"/,
+      /doc "<prompt>" --execution-profile "balanced" --codex-model "gpt-5\.6-terra"/,
     );
   });
 });
@@ -299,7 +418,50 @@ describe("isRecoverableThreadResumeError", () => {
 });
 
 describe("openCodexThread", () => {
-  it("lets the configured permission profile own new thread permissions", async () => {
+  it("selects a deterministic permission profile for every runtime mode", async () => {
+    const cases = [
+      ["approval-required", "study_buddy_analysis", "untrusted"],
+      ["auto-accept-edits", "study_buddy", "on-request"],
+      ["full-access", ":danger-full-access", "never"],
+    ] as const;
+
+    for (const [runtimeMode, expectedProfile, expectedApprovalPolicy] of cases) {
+      let payload: CodexRpc.ClientRequestParamsByMethod["thread/start"] | undefined;
+      const client = {
+        request: <M extends "thread/start" | "thread/resume">(
+          method: M,
+          input: CodexRpc.ClientRequestParamsByMethod[M],
+        ) => {
+          if (method === "thread/start") payload = input;
+          return Effect.succeed(
+            makeThreadOpenResponse(
+              `thread-${runtimeMode}`,
+            ) as CodexRpc.ClientRequestResponsesByMethod[M],
+          );
+        },
+      };
+
+      await Effect.runPromise(
+        openCodexThread({
+          client,
+          threadId: ThreadId.make(`local-${runtimeMode}`),
+          runtimeMode,
+          cwd: "/tmp/project",
+          requestedModel: undefined,
+          serviceTier: undefined,
+          resumeThreadId: undefined,
+          studyBuddyActive: true,
+        }),
+      );
+
+      assert.equal(payload?.approvalPolicy, expectedApprovalPolicy);
+      assert.equal(payload?.approvalsReviewer, "user");
+      assert.deepStrictEqual(payload?.config, { default_permissions: expectedProfile });
+      assert.equal(payload?.sandbox, undefined);
+    }
+  });
+
+  it("sends the selected permissions when opening a new thread", async () => {
     let payload: CodexRpc.ClientRequestParamsByMethod["thread/start"] | undefined;
     const client = {
       request: <M extends "thread/start" | "thread/resume">(
@@ -322,12 +484,13 @@ describe("openCodexThread", () => {
         requestedModel: undefined,
         serviceTier: undefined,
         resumeThreadId: undefined,
-        useConfiguredPermissionProfile: true,
+        studyBuddyActive: true,
       }),
     );
 
-    assert.equal(payload?.approvalPolicy, undefined);
+    assert.equal(payload?.approvalPolicy, "never");
     assert.equal(payload?.sandbox, undefined);
+    assert.deepStrictEqual(payload?.config, { default_permissions: ":danger-full-access" });
   });
 
   it("falls back to thread/start when resume fails recoverably", async () => {
@@ -360,6 +523,7 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        studyBuddyActive: false,
       }),
     );
 
@@ -400,6 +564,7 @@ describe("openCodexThread", () => {
           requestedModel: "gpt-5.3-codex",
           serviceTier: undefined,
           resumeThreadId: "stale-thread",
+          studyBuddyActive: false,
         }),
       ),
       (error: unknown) =>

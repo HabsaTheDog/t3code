@@ -8,7 +8,14 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 const scrollToEndSpy = vi.fn();
-const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
+const scrollToIndexSpy = vi.fn();
+const getStateSpy = vi.fn(() => ({
+  isAtEnd: true,
+  scroll: 0,
+  scrollLength: 1_000,
+  positionAtIndex: (index: number) => index * 100,
+  sizeAtIndex: () => 80,
+}));
 
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
@@ -26,6 +33,7 @@ vi.mock("@legendapp/list/react", async () => {
       () =>
         ({
           scrollToEnd: scrollToEndSpy,
+          scrollToIndex: scrollToIndexSpy,
           getState: getStateSpy,
         }) as unknown as LegendListRef,
     );
@@ -51,12 +59,10 @@ const MESSAGE_CREATED_AT = "2026-04-13T12:00:00.000Z";
 function buildProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
-    activeTurnId: null,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
-    completionDividerBeforeEntryId: null,
-    completionSummary: null,
+    latestTurn: null,
+    runningTurnId: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: vi.fn(),
@@ -94,9 +100,70 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildCompletedExchanges() {
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    text: string,
+    turnId: string | null,
+    createdAt: string,
+    completedAt?: string,
+  ) => ({
+    id,
+    kind: "message" as const,
+    createdAt,
+    message: {
+      id: id as never,
+      role,
+      text,
+      turnId: turnId as never,
+      createdAt,
+      ...(completedAt ? { completedAt } : {}),
+      streaming: false,
+    },
+  });
+  const work = (id: string, turnId: string, createdAt: string, detail: string) => ({
+    id,
+    kind: "work" as const,
+    createdAt,
+    entry: {
+      id,
+      turnId: turnId as never,
+      createdAt,
+      label: "Tool call",
+      detail,
+      tone: "tool" as const,
+    },
+  });
+
+  return [
+    message("user-1", "user", "First question", null, "2026-04-13T12:00:00.000Z"),
+    work("work-1", "turn-1", "2026-04-13T12:00:03.000Z", "First hidden tool"),
+    message(
+      "assistant-1",
+      "assistant",
+      "First answer",
+      "turn-1",
+      "2026-04-13T12:00:08.000Z",
+      "2026-04-13T12:00:10.000Z",
+    ),
+    message("user-2", "user", "Second question", null, "2026-04-13T12:00:20.000Z"),
+    work("work-2", "turn-2", "2026-04-13T12:00:23.000Z", "Second hidden tool"),
+    message(
+      "assistant-2",
+      "assistant",
+      "Second answer",
+      "turn-2",
+      "2026-04-13T12:00:24.000Z",
+      "2026-04-13T12:00:25.000Z",
+    ),
+  ];
+}
+
 describe("MessagesTimeline", () => {
   afterEach(() => {
     scrollToEndSpy.mockReset();
+    scrollToIndexSpy.mockReset();
     getStateSpy.mockClear();
     vi.restoreAllMocks();
     document.body.innerHTML = "";
@@ -257,6 +324,62 @@ describe("MessagesTimeline", () => {
 
       const messageBody = document.querySelector("[data-user-message-body='true']");
       expect(messageBody?.getAttribute("data-user-message-collapsed")).toBe("true");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("expands completed exchanges independently", async () => {
+    const screen = await render(
+      <MessagesTimeline {...buildProps()} timelineEntries={buildCompletedExchanges()} />,
+    );
+
+    try {
+      await expect.element(page.getByText("First hidden tool")).not.toBeInTheDocument();
+      await expect.element(page.getByText("Second hidden tool")).not.toBeInTheDocument();
+
+      const firstFold = page.getByRole("button", { name: "Worked for 10s" });
+      await expect.element(firstFold).toHaveAttribute("aria-expanded", "false");
+      await firstFold.click();
+
+      await expect.element(page.getByText("First hidden tool")).toBeVisible();
+      await expect.element(page.getByText("Second hidden tool")).not.toBeInTheDocument();
+      await expect.element(firstFold).toHaveAttribute("aria-expanded", "true");
+
+      await firstFold.click();
+      await expect.element(page.getByText("First hidden tool")).not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders the enlarged minimap and supports keyboard navigation", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline {...props} timelineEntries={buildCompletedExchanges()} />,
+    );
+
+    try {
+      const minimap = document.querySelector("[data-testid='timeline-minimap']");
+      const rail = minimap?.querySelector("button") as HTMLButtonElement | null;
+      expect(minimap).not.toBeNull();
+      expect(rail?.className).toContain("w-12");
+      expect(document.querySelectorAll("[data-minimap-strip]")).toHaveLength(2);
+      expect(document.querySelector("[data-minimap-strip]")?.className).toContain("h-[3px]");
+
+      rail?.focus();
+      rail?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+      await expect
+        .element(page.getByRole("button", { name: "Jump to message: Second question" }))
+        .toBeVisible();
+      rail?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+      expect(scrollToIndexSpy).toHaveBeenCalledWith({
+        index: 3,
+        animated: true,
+        viewOffset: 24,
+      });
+      expect(props.onIsAtEndChange).toHaveBeenCalledWith(false);
     } finally {
       await screen.unmount();
     }

@@ -6,6 +6,7 @@ import {
   CloudIcon,
   ExternalLinkIcon,
   GraduationCapIcon,
+  GaugeIcon,
   GitBranchIcon,
   KeyboardIcon,
   Link2Icon,
@@ -33,6 +34,7 @@ export type SettingsSectionPath =
   | "/settings/providers"
   | "/settings/privacy"
   | "/settings/study-buddy"
+  | "/settings/execution-profiles"
   | "/settings/source-control"
   | "/settings/cloud"
   | "/settings/connections"
@@ -44,8 +46,9 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
   badgeLabel?: string;
 }> = [
-  { label: "Study Buddy", to: "/settings/study-buddy", icon: GraduationCapIcon },
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Study Buddy", to: "/settings/study-buddy", icon: GraduationCapIcon },
+  { label: "Execution profiles", to: "/settings/execution-profiles", icon: GaugeIcon },
   { label: "Privacy & Data", to: "/settings/privacy", icon: ShieldCheckIcon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },

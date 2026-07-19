@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  createBrowserLoginConfig,
-  ensureAgentBrowserLoggedIn,
-  ensureLoggedIn,
-} from "../browserAuth.ts";
+import { createBrowserLoginConfig, ensureLoggedIn } from "../browserAuth.ts";
 
 describe("ensureLoggedIn connection validation", () => {
   it("rejects an HTTP error page instead of treating it as a reachable dashboard", async () => {
@@ -203,37 +199,5 @@ describe("ensureLoggedIn connection validation", () => {
     );
     await expect(failure).rejects.not.toThrow(password);
     await expect(failure).rejects.toThrow("[REDACTED_CREDENTIAL]");
-  });
-
-  it("blocks agent-browser CLI credential filling when a login form is present", async () => {
-    const fill = vi.fn(async () => ({ stdout: "", stderr: "" }));
-    const lockAuthentication = vi.fn();
-    const failAuthentication = vi.fn();
-    const client = {
-      open: vi.fn(async () => ({ stdout: "", stderr: "" })),
-      snapshot: vi.fn(async () => ({
-        origin: "https://moodle.example",
-        refs: { p1: { role: "textbox", name: "Password" } },
-        snapshot: 'textbox "Password" [ref=p1]',
-      })),
-      fill,
-      lockAuthentication,
-      failAuthentication,
-    };
-
-    await expect(
-      ensureAgentBrowserLoggedIn(
-        client as never,
-        createBrowserLoginConfig({
-          serviceName: "Moodle",
-          targetUrl: "https://moodle.example/login/index.php",
-          username: "student",
-          password: "argv-canary",
-        }),
-      ),
-    ).rejects.toThrow("command-line filling is blocked");
-    expect(fill).not.toHaveBeenCalled();
-    expect(lockAuthentication).toHaveBeenCalledOnce();
-    expect(failAuthentication).toHaveBeenCalledOnce();
   });
 });

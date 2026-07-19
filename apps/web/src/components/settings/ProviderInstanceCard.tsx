@@ -3,6 +3,7 @@
 import {
   ArrowUpCircleIcon,
   ChevronDownIcon,
+  Clock3Icon,
   CopyIcon,
   DownloadIcon,
   LoaderIcon,
@@ -423,6 +424,7 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly isComingSoon?: boolean | undefined;
 }
 
 /**
@@ -467,28 +469,38 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  isComingSoon = false,
 }: ProviderInstanceCardProps) {
-  const enabled = instance.enabled ?? true;
+  const enabled = isComingSoon ? false : (instance.enabled ?? true);
   // The server-reported status wins when present; otherwise fall back to
   // "disabled"/"warning" based on the local `enabled` flag so the dot
   // reflects the persisted intent even before the first probe completes.
-  const statusKey: ProviderStatusKey =
-    (liveProvider?.status as ProviderStatusKey | undefined) ?? (enabled ? "warning" : "disabled");
+  const statusKey: ProviderStatusKey = isComingSoon
+    ? "disabled"
+    : ((liveProvider?.status as ProviderStatusKey | undefined) ??
+      (enabled ? "warning" : "disabled"));
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const rawSummary = getProviderSummary(liveProvider);
   const authEmail = liveProvider?.auth.email;
   const hasAuthenticatedEmail =
-    liveProvider?.auth.status === "authenticated" && Boolean(authEmail?.trim());
+    !isComingSoon && liveProvider?.auth.status === "authenticated" && Boolean(authEmail?.trim());
   const authenticatedDetail = hasAuthenticatedEmail
     ? (liveProvider?.auth.label ?? liveProvider?.auth.type ?? null)
     : null;
-  const summary = rawSummary;
-  const versionLabel = getProviderVersionLabel(liveProvider?.version);
-  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
-  const updateCommand = versionAdvisory?.updateCommand ?? null;
-  const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
+  const summary = isComingSoon
+    ? {
+        headline: "Coming soon",
+        detail: `${displayName} support is still in development.`,
+      }
+    : rawSummary;
+  const versionLabel = isComingSoon ? null : getProviderVersionLabel(liveProvider?.version);
+  const versionAdvisory = isComingSoon
+    ? null
+    : getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
+  const FallbackIconComponent = driverOption?.icon;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
@@ -612,7 +624,12 @@ export function ProviderInstanceCard({
           {instanceId}
         </code>
       ) : null}
-      {driverOption?.badgeLabel ? (
+      {isComingSoon ? (
+        <Badge variant="secondary" size="sm" className="shrink-0 gap-1">
+          <Clock3Icon className="size-3" aria-hidden />
+          Coming soon
+        </Badge>
+      ) : driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
         </Badge>
@@ -661,7 +678,7 @@ export function ProviderInstanceCard({
       ) : (
         <>
           <span>{summary.headline}</span>
-          <ProviderAuthEmail email={authEmail} separator prefix="Email" />
+          {isComingSoon ? null : <ProviderAuthEmail email={authEmail} separator prefix="Email" />}
         </>
       )}
       {summary.detail ? <span>- {summary.detail}</span> : null}
@@ -793,8 +810,9 @@ export function ProviderInstanceCard({
             </Button>
             <Switch
               checked={enabled}
+              disabled={isComingSoon}
               onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-              aria-label={`Enable ${displayName}`}
+              aria-label={isComingSoon ? `${displayName} is coming soon` : `Enable ${displayName}`}
             />
           </div>
         </div>

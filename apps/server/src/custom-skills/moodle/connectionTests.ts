@@ -8,7 +8,11 @@ import * as Effect from "effect/Effect";
 import { chromium } from "playwright";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "./browserAuth.ts";
-import { fetchCalendarText, normalizeCalendarUrl, parseCalendarEvents } from "./calendarAdapter.ts";
+import {
+  fetchCalendarText,
+  normalizeCalendarUrl,
+  validateCalendarText,
+} from "./calendarConnection.ts";
 import {
   readStoredStudyBuddyConfiguration,
   type StoredStudyBuddyConfiguration,
@@ -36,7 +40,7 @@ interface ConnectionTestDependencies {
 const liveDependencies: ConnectionTestDependencies = {
   readConfiguration: readStoredStudyBuddyConfiguration,
   fetchCalendar: fetchCalendarText,
-  parseCalendar: parseCalendarEvents,
+  parseCalendar: validateCalendarText,
   launchBrowser: () => chromium.launch({ headless: true }),
   ensureLogin: (page, config) => ensureLoggedIn(page as never, config),
   now: () => new Date().toISOString(),

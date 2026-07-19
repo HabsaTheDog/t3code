@@ -1,9 +1,60 @@
 import * as Equal from "effect/Equal";
-import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
+import { formatDuration, type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type TurnId } from "@t3tools/contracts";
+import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
+export const TIMELINE_MINIMAP_ITEM_SPACING = 12;
+export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
+export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
+export const TIMELINE_CONTENT_MAX_WIDTH = 768;
+export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 64;
+
+export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
+  const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
+  return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
+}
+
+export function resolveTimelineMinimapTopPercent(index: number, itemCount: number): number {
+  if (itemCount <= 1) return 0;
+  return (Math.max(0, Math.min(index, itemCount - 1)) / (itemCount - 1)) * 100;
+}
+
+export function resolveTimelineMinimapIndexFromPointer(input: {
+  readonly itemCount: number;
+  readonly railTop: number;
+  readonly railHeight: number;
+  readonly pointerY: number;
+}): number | null {
+  if (input.itemCount <= 0 || input.railHeight <= 0) return null;
+  if (input.itemCount === 1) return 0;
+  const progress = Math.max(0, Math.min(1, (input.pointerY - input.railTop) / input.railHeight));
+  return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
+}
+
+export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number): boolean {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return false;
+  const contentWidth = Math.min(viewportWidth, TIMELINE_CONTENT_MAX_WIDTH);
+  const sideGutter = Math.max(0, (viewportWidth - contentWidth) / 2);
+  return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
+}
+
+function computeElapsedMs(startIso: string, endIso: string): number | null {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function maxIsoTimestamp(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
 
 export interface TimelineDurationMessage {
   id: string;
@@ -11,6 +62,11 @@ export interface TimelineDurationMessage {
   createdAt: string;
   completedAt?: string | undefined;
 }
+
+export type TimelineLatestTurn = Pick<
+  OrchestrationLatestTurn,
+  "turnId" | "state" | "startedAt" | "completedAt"
+>;
 
 export type MessagesTimelineRow =
   | {
@@ -20,13 +76,19 @@ export type MessagesTimelineRow =
       groupedEntries: WorkLogEntry[];
     }
   | {
+      kind: "turn-fold";
+      id: string;
+      createdAt: string;
+      turnId: TurnId;
+      label: string;
+      expanded: boolean;
+    }
+  | {
       kind: "message";
       id: string;
       createdAt: string;
       message: ChatMessage;
       durationStart: string;
-      showCompletionDivider: boolean;
-      completionSummary: string | null;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
@@ -110,13 +172,126 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
   return new Set(lastAssistantMessageIdByResponseKey.values());
 }
 
+interface TurnFold {
+  turnId: TurnId;
+  createdAt: string;
+  hiddenEntryIds: ReadonlySet<string>;
+  label: string;
+}
+
+function deriveUnsettledTurnId(
+  latestTurn: TimelineLatestTurn | null,
+  runningTurnId: TurnId | null,
+): TurnId | null {
+  if (runningTurnId !== null) return runningTurnId;
+  if (!latestTurn) return null;
+  const isSettled = latestTurn.completedAt !== null && latestTurn.state !== "running";
+  return isSettled ? null : latestTurn.turnId;
+}
+
+/** Fold commentary and tool activity for each settled turn, preserving its final answer. */
+function deriveTurnFolds(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  terminalAssistantMessageIds: ReadonlySet<string>;
+  latestTurn: TimelineLatestTurn | null;
+  unsettledTurnId: TurnId | null;
+}): ReadonlyMap<string, TurnFold> {
+  interface TurnGroup {
+    entries: Array<TimelineEntry>;
+    terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
+    hasStreamingMessage: boolean;
+    startBoundary: string | null;
+  }
+
+  const groupsByTurnId = new Map<TurnId, TurnGroup>();
+  let pendingUserBoundary: string | null = null;
+
+  for (const entry of input.timelineEntries) {
+    if (entry.kind === "message" && entry.message.role === "user") {
+      pendingUserBoundary = entry.message.createdAt;
+      continue;
+    }
+    const turnId =
+      entry.kind === "message" && entry.message.role === "assistant"
+        ? (entry.message.turnId ?? null)
+        : entry.kind === "work"
+          ? (entry.entry.turnId ?? null)
+          : null;
+    if (!turnId) continue;
+
+    let group = groupsByTurnId.get(turnId);
+    if (!group) {
+      group = {
+        entries: [],
+        terminalEntry: null,
+        hasStreamingMessage: false,
+        startBoundary: pendingUserBoundary,
+      };
+      pendingUserBoundary = null;
+      groupsByTurnId.set(turnId, group);
+    }
+    group.entries.push(entry);
+    if (entry.kind === "message") {
+      if (input.terminalAssistantMessageIds.has(entry.message.id)) group.terminalEntry = entry;
+      if (entry.message.streaming) group.hasStreamingMessage = true;
+    }
+  }
+
+  const foldsByAnchorEntryId = new Map<string, TurnFold>();
+  for (const [turnId, group] of groupsByTurnId) {
+    if (turnId === input.unsettledTurnId || group.hasStreamingMessage) continue;
+
+    const hiddenEntryIds = new Set<string>();
+    for (const entry of group.entries) {
+      if (entry.id !== group.terminalEntry?.id) hiddenEntryIds.add(entry.id);
+    }
+    if (hiddenEntryIds.size === 0) continue;
+
+    const firstEntry = group.entries[0];
+    const lastEntry = group.entries.at(-1);
+    if (!firstEntry || !lastEntry) continue;
+
+    const isLatestInterruptedTurn =
+      input.latestTurn?.turnId === turnId && input.latestTurn.state === "interrupted";
+    const lastEntryEnd =
+      lastEntry.kind === "message"
+        ? (lastEntry.message.completedAt ?? lastEntry.createdAt)
+        : lastEntry.createdAt;
+    const elapsedMs =
+      input.latestTurn?.turnId === turnId &&
+      input.latestTurn.startedAt &&
+      input.latestTurn.completedAt
+        ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
+        : computeElapsedMs(
+            group.startBoundary ?? firstEntry.createdAt,
+            maxIsoTimestamp(group.terminalEntry?.message.completedAt ?? null, lastEntryEnd) ??
+              lastEntryEnd,
+          );
+    const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
+    const label = isLatestInterruptedTurn
+      ? duration
+        ? `You stopped after ${duration}`
+        : "You stopped this response"
+      : duration
+        ? `Worked for ${duration}`
+        : "Worked";
+
+    foldsByAnchorEntryId.set(firstEntry.id, {
+      turnId,
+      createdAt: firstEntry.createdAt,
+      hiddenEntryIds,
+      label,
+    });
+  }
+  return foldsByAnchorEntryId;
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
-  completionDividerBeforeEntryId: string | null;
-  completionSummary?: string | null;
+  latestTurn?: TimelineLatestTurn | null;
+  runningTurnId?: TurnId | null;
+  expandedTurnIds?: ReadonlySet<TurnId>;
   isWorking: boolean;
-  activeTurnInProgress?: boolean;
-  activeTurnId?: TurnId | null;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
@@ -126,6 +301,22 @@ export function deriveMessagesTimelineRows(input: {
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(input.timelineEntries);
+  const unsettledTurnId = deriveUnsettledTurnId(
+    input.latestTurn ?? null,
+    input.runningTurnId ?? null,
+  );
+  const foldsByAnchorEntryId = deriveTurnFolds({
+    timelineEntries: input.timelineEntries,
+    terminalAssistantMessageIds,
+    latestTurn: input.latestTurn ?? null,
+    unsettledTurnId,
+  });
+  const collapsedEntryIds = new Set<string>();
+  for (const fold of foldsByAnchorEntryId.values()) {
+    if (!input.expandedTurnIds?.has(fold.turnId)) {
+      for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
+    }
+  }
 
   for (let index = 0; index < input.timelineEntries.length; index += 1) {
     const timelineEntry = input.timelineEntries[index];
@@ -133,12 +324,33 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
+    if (turnFold) {
+      nextRows.push({
+        kind: "turn-fold",
+        id: `turn-fold:${turnFold.turnId}`,
+        createdAt: turnFold.createdAt,
+        turnId: turnFold.turnId,
+        label: turnFold.label,
+        expanded: input.expandedTurnIds?.has(turnFold.turnId) ?? false,
+      });
+    }
+
+    if (collapsedEntryIds.has(timelineEntry.id)) continue;
+
     if (timelineEntry.kind === "work") {
       const groupedEntries = [timelineEntry.entry];
       let cursor = index + 1;
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
-        if (!nextEntry || nextEntry.kind !== "work") break;
+        if (
+          !nextEntry ||
+          nextEntry.kind !== "work" ||
+          collapsedEntryIds.has(nextEntry.id) ||
+          foldsByAnchorEntryId.has(nextEntry.id)
+        ) {
+          break;
+        }
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
@@ -164,13 +376,8 @@ export function deriveMessagesTimelineRows(input: {
 
     const assistantTurnStillInProgress =
       timelineEntry.message.role === "assistant" &&
-      input.activeTurnInProgress === true &&
-      input.activeTurnId != null &&
-      timelineEntry.message.turnId === input.activeTurnId;
-
-    const showCompletionDivider =
-      timelineEntry.message.role === "assistant" &&
-      input.completionDividerBeforeEntryId === timelineEntry.id;
+      unsettledTurnId !== null &&
+      timelineEntry.message.turnId === unsettledTurnId;
 
     nextRows.push({
       kind: "message",
@@ -179,8 +386,6 @@ export function deriveMessagesTimelineRows(input: {
       message: timelineEntry.message,
       durationStart:
         durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
-      showCompletionDivider,
-      completionSummary: showCompletionDivider ? (input.completionSummary ?? null) : null,
       showAssistantCopyButton:
         timelineEntry.message.role === "assistant" &&
         terminalAssistantMessageIds.has(timelineEntry.message.id),
@@ -235,6 +440,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
 
+    case "turn-fold": {
+      const bf = b as typeof a;
+      return a.createdAt === bf.createdAt && a.label === bf.label && a.expanded === bf.expanded;
+    }
+
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
@@ -246,8 +456,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.durationStart === bm.durationStart &&
-        a.showCompletionDivider === bm.showCompletionDivider &&
-        a.completionSummary === bm.completionSummary &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&

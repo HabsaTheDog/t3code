@@ -789,14 +789,8 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
   });
 
-  it("shows the persistent personality editor in general settings", async () => {
-    setServerConfigSnapshot({
-      ...createBaseServerConfig(),
-      settings: {
-        ...DEFAULT_SERVER_SETTINGS,
-        personalityPrompt: "Be direct and call me Alex.",
-      },
-    });
+  it("keeps Study Buddy assistant settings out of general settings", async () => {
+    setServerConfigSnapshot(createBaseServerConfig());
 
     mounted = await renderWithTestRouter(
       <AppAtomRegistryProvider>
@@ -804,13 +798,12 @@ describe("GeneralSettingsPanel observability", () => {
       </AppAtomRegistryProvider>,
     );
 
-    const editor = page.getByLabelText("Agent personality instructions");
-    await expect.element(editor).toHaveValue("Be direct and call me Alex.");
     await expect
-      .element(
-        page.getByText("Saved when you leave the field. Applied when a new agent session starts."),
-      )
-      .toBeInTheDocument();
+      .element(page.getByLabelText("Agent personality instructions"))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Run setup again" }))
+      .not.toBeInTheDocument();
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {

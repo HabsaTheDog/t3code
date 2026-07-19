@@ -35,7 +35,7 @@ describe("typed Study Buddy configuration", () => {
     expect(next).toContain("CIS_USERNAME=if00cis\n");
   });
 
-  it("returns public site URLs while keeping passwords and calendar bearer URLs hidden", () => {
+  it("returns public source URLs while keeping passwords hidden", () => {
     const raw = [
       "MOODLE_USERNAME=if00test",
       "MOODLE_PASSWORD=secret",
@@ -53,9 +53,21 @@ describe("typed Study Buddy configuration", () => {
     expect(result.moodlePasswordConfigured).toBe(true);
     expect(result.cisPasswordConfigured).toBe(true);
     expect(result.calendarUrlConfigured).toBe(true);
-    expect(result.calendarUrl).toBe("");
+    expect(result.calendarUrl).toBe("https://calendar.example/private-token.ics");
     expect(result.moodleDashboardUrl).toBe("https://moodle.example/my/?id=42");
-    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(JSON.stringify(result)).not.toContain("secret-two");
+  });
+
+  it("falls back to review-only for an unsupported stored quiz mode", () => {
+    const raw = "MOODLE_QUIZ_ACCESS_MODE=retired-mode\n";
+    const result = publicStudyBuddyConfiguration({
+      envPath: "/private/.env.local",
+      exists: true,
+      raw,
+      values: parseEnvDocument(raw),
+    });
+
+    expect(result.quiz.accessMode).toBe("review-only");
   });
 
   it("applies password secret operations, stores calendar URLs, and writes mode 0600", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, Clock3Icon } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -29,6 +29,7 @@ import { toastManager } from "../ui/toast";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 import { AnimatedHeight } from "../AnimatedHeight";
+import { isProviderDriverAvailable } from "../../providerAvailability";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -308,23 +309,32 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   {DRIVER_OPTIONS.map((option) => {
                     const IconComponent = option.icon;
                     const isSelected = option.value === driver;
+                    const isComingSoon = !isProviderDriverAvailable(option.value);
                     return (
                       <RadioPrimitive.Root
                         key={option.value}
                         value={option.value}
+                        disabled={isComingSoon}
                         className={cn(
                           "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
                           "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                          isSelected
-                            ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
-                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
+                          isComingSoon
+                            ? "cursor-not-allowed border-border bg-background opacity-55"
+                            : isSelected
+                              ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
+                              : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
                         )}
                       >
                         <IconComponent className="size-5 shrink-0" aria-hidden />
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                           {option.label}
                         </span>
-                        {option.badgeLabel ? (
+                        {isComingSoon ? (
+                          <Badge variant="secondary" size="sm" className="gap-1">
+                            <Clock3Icon className="size-3" aria-hidden />
+                            Coming soon
+                          </Badge>
+                        ) : option.badgeLabel ? (
                           <Badge variant="warning" size="sm">
                             {option.badgeLabel}
                           </Badge>
@@ -350,8 +360,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                           {option.label}
                         </span>
-                        <Badge variant="warning" size="sm">
-                          Coming Soon
+                        <Badge variant="secondary" size="sm" className="gap-1">
+                          <Clock3Icon className="size-3" aria-hidden />
+                          Coming soon
                         </Badge>
                       </RadioPrimitive.Root>
                     );

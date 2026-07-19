@@ -6,6 +6,8 @@ export interface QuizAccessModeOption {
   readonly description: string;
 }
 
+export const QUIZ_ACCESS_TOOLTIP_DELAY_MS = 250;
+
 export const QUIZ_ACCESS_MODE_OPTIONS: readonly QuizAccessModeOption[] = [
   {
     value: "review-only",
@@ -17,7 +19,7 @@ export const QUIZ_ACCESS_MODE_OPTIONS: readonly QuizAccessModeOption[] = [
     value: "ask-before-attempt",
     label: "Ask before attempt",
     description:
-      "May prepare suggestions, but stops for explicit permission before risky quiz work.",
+      "Inspects quiz metadata, then shows a cooperative local confirmation before starting or continuing the attempt. This is a UX guardrail, not a security boundary against software with full machine access.",
   },
   {
     value: "quiz-assist",

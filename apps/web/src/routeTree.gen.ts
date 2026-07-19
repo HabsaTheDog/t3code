@@ -20,6 +20,7 @@ import { Route as SettingsProvidersRouteImport } from './routes/settings.provide
 import { Route as SettingsPrivacyRouteImport } from './routes/settings.privacy'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
+import { Route as SettingsExecutionProfilesRouteImport } from './routes/settings.execution-profiles'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsCloudRouteImport } from './routes/settings.cloud'
@@ -81,6 +82,12 @@ const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsExecutionProfilesRoute =
+  SettingsExecutionProfilesRouteImport.update({
+    id: '/execution-profiles',
+    path: '/execution-profiles',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
@@ -122,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/execution-profiles': typeof SettingsExecutionProfilesRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/privacy': typeof SettingsPrivacyRoute
@@ -139,6 +147,7 @@ export interface FileRoutesByTo {
   '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/execution-profiles': typeof SettingsExecutionProfilesRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/privacy': typeof SettingsPrivacyRoute
@@ -159,6 +168,7 @@ export interface FileRoutesById {
   '/settings/cloud': typeof SettingsCloudRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/execution-profiles': typeof SettingsExecutionProfilesRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/privacy': typeof SettingsPrivacyRoute
@@ -180,6 +190,7 @@ export interface FileRouteTypes {
     | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/execution-profiles'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/privacy'
@@ -197,6 +208,7 @@ export interface FileRouteTypes {
     | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/execution-profiles'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/privacy'
@@ -216,6 +228,7 @@ export interface FileRouteTypes {
     | '/settings/cloud'
     | '/settings/connections'
     | '/settings/diagnostics'
+    | '/settings/execution-profiles'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/privacy'
@@ -313,6 +326,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/execution-profiles': {
+      id: '/settings/execution-profiles'
+      path: '/execution-profiles'
+      fullPath: '/settings/execution-profiles'
+      preLoaderRoute: typeof SettingsExecutionProfilesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/diagnostics': {
       id: '/settings/diagnostics'
       path: '/diagnostics'
@@ -377,6 +397,7 @@ interface SettingsRouteChildren {
   SettingsCloudRoute: typeof SettingsCloudRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsExecutionProfilesRoute: typeof SettingsExecutionProfilesRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsPrivacyRoute: typeof SettingsPrivacyRoute
@@ -390,6 +411,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsCloudRoute: SettingsCloudRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsExecutionProfilesRoute: SettingsExecutionProfilesRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsPrivacyRoute: SettingsPrivacyRoute,

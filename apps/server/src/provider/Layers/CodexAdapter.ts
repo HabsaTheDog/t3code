@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -20,6 +21,7 @@ import {
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
@@ -484,6 +486,103 @@ function mapItemLifecycle(
   };
 }
 
+function mapCollabAgentTaskEvents(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+  lifecycle: "item.started" | "item.completed",
+): ReadonlyArray<ProviderRuntimeEvent> {
+  const payload =
+    lifecycle === "item.started"
+      ? readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload)
+      : readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
+  const item = payload?.item;
+  if (!item || item.type !== "collabAgentToolCall") {
+    return [];
+  }
+
+  const receiverIds = new Set([...item.receiverThreadIds, ...Object.keys(item.agentsStates)]);
+  const description = trimText(item.prompt) ?? `Codex ${item.tool} delegated work`;
+  return [...receiverIds].map((receiverThreadId) => {
+    const state = item.agentsStates[receiverThreadId];
+    const eventId = EventId.make(`${event.id}:delegated:${receiverThreadId}`);
+    const base = {
+      ...runtimeEventBase(event, canonicalThreadId),
+      eventId,
+    };
+
+    if (lifecycle === "item.started" && item.tool === "spawnAgent") {
+      return {
+        ...base,
+        type: "task.started" as const,
+        payload: {
+          taskId: RuntimeTaskId.make(receiverThreadId),
+          taskType: "codex-collab",
+          description,
+        },
+      };
+    }
+
+    if (state?.status === "completed") {
+      return {
+        ...base,
+        type: "task.completed" as const,
+        payload: {
+          taskId: RuntimeTaskId.make(receiverThreadId),
+          status: "completed" as const,
+          ...(trimText(state.message) ? { summary: trimText(state.message) } : {}),
+        },
+      };
+    }
+
+    if (state?.status === "errored" || state?.status === "notFound") {
+      return {
+        ...base,
+        type: "task.completed" as const,
+        payload: {
+          taskId: RuntimeTaskId.make(receiverThreadId),
+          status: "failed" as const,
+          summary: trimText(state.message) ?? `Codex subagent ${state.status}.`,
+        },
+      };
+    }
+
+    if (state?.status === "interrupted" || state?.status === "shutdown") {
+      return {
+        ...base,
+        type: "task.completed" as const,
+        payload: {
+          taskId: RuntimeTaskId.make(receiverThreadId),
+          status: "stopped" as const,
+          summary: trimText(state.message) ?? `Codex subagent ${state.status}.`,
+        },
+      };
+    }
+
+    if (lifecycle === "item.completed" && item.tool === "spawnAgent") {
+      return {
+        ...base,
+        type: "task.started" as const,
+        payload: {
+          taskId: RuntimeTaskId.make(receiverThreadId),
+          taskType: "codex-collab",
+          description,
+        },
+      };
+    }
+
+    return {
+      ...base,
+      type: "task.progress" as const,
+      payload: {
+        taskId: RuntimeTaskId.make(receiverThreadId),
+        description,
+        ...(trimText(state?.message) ? { summary: trimText(state?.message) } : {}),
+        lastToolName: item.tool,
+      },
+    };
+  });
+}
+
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -575,6 +674,10 @@ function mapToRuntimeEvents(
           requestType: toRequestTypeFromMethod(event.method),
           ...(detail ? { detail } : {}),
           ...(event.payload !== undefined ? { args: event.payload } : {}),
+          ...(event.originProviderThreadId
+            ? { originProviderThreadId: event.originProviderThreadId }
+            : {}),
+          ...(event.requestOrigin ? { requestOrigin: event.requestOrigin } : {}),
         },
       },
     ];
@@ -826,7 +929,10 @@ function mapToRuntimeEvents(
 
   if (event.method === "item/started") {
     const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
-    return started ? [started] : [];
+    return [
+      ...(started ? [started] : []),
+      ...mapCollabAgentTaskEvents(event, canonicalThreadId, "item.started"),
+    ];
   }
 
   if (event.method === "item/completed") {
@@ -852,7 +958,10 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    return [
+      ...(completed ? [completed] : []),
+      ...mapCollabAgentTaskEvents(event, canonicalThreadId, "item.completed"),
+    ];
   }
 
   if (
@@ -1531,6 +1640,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(fastMode === true ? { serviceTier: "fast" } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.studyBuddyExecutionProfile !== undefined
+          ? { studyBuddyExecutionProfile: input.studyBuddyExecutionProfile }
+          : {}),
+        ...(input.studyBuddyExecutionProfileConfig !== undefined
+          ? { studyBuddyExecutionProfileConfig: input.studyBuddyExecutionProfileConfig }
+          : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));

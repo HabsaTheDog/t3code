@@ -1,7 +1,6 @@
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalTimers:off
 import type { Page } from "playwright";
-import type { AgentBrowserClient } from "./agentBrowserClient.ts";
 import { BrowserAuthenticationGate, redactSensitiveValues } from "./browserSecurity.ts";
 
 export interface BrowserLoginConfig {
@@ -187,59 +186,6 @@ function assertExpectedOrigin(
   const actual = new URL(actualUrl);
   if (!allowedOrigins.has(actual.origin)) {
     throw new Error(`${serviceName} redirected to an unexpected origin.`);
-  }
-}
-
-export async function dismissCommonOverlays(page: Page): Promise<void> {
-  for (const selector of [
-    "text=Continue",
-    "text=Weiter",
-    "button:has-text('Continue')",
-    "button:has-text('Weiter')",
-  ]) {
-    const target = page.locator(selector).first();
-    if (await target.count().catch(() => 0)) {
-      await target.click().catch(() => undefined);
-    }
-  }
-}
-
-export async function ensureAgentBrowserLoggedIn(
-  client: AgentBrowserClient,
-  config: BrowserLoginConfig,
-): Promise<void> {
-  if (client.secureLogin) {
-    await client.secureLogin(config);
-    return;
-  }
-  await client.open(config.targetUrl);
-  const discovery = await client.snapshot({ interactive: true, urls: false, compact: true });
-  const refs = Object.values(discovery.refs);
-  const hasLoginForm = refs.some((ref) =>
-    /(?:password|passcode|current-password)/i.test(`${ref.role ?? ""} ${ref.name ?? ""}`),
-  );
-  if (!hasLoginForm) {
-    return;
-  }
-  client.lockAuthentication?.();
-  client.failAuthentication?.();
-  throw new Error(
-    `${config.serviceName} requires login. Secure credential injection is only available through the Playwright broker; agent-browser command-line filling is blocked.`,
-  );
-}
-
-export async function dismissCommonAgentBrowserOverlays(client: AgentBrowserClient): Promise<void> {
-  const snapshot = await client
-    .snapshot({ interactive: true, urls: false, compact: true })
-    .catch(() => null);
-  if (!snapshot) {
-    return;
-  }
-  const overlayRef = Object.entries(snapshot.refs).find(([, ref]) =>
-    /^(continue|weiter)$/i.test(ref.name || ""),
-  )?.[0];
-  if (overlayRef) {
-    await client.click(`@${overlayRef}`).catch(() => undefined);
   }
 }
 

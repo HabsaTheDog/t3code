@@ -18,6 +18,10 @@ import { createModelCapabilities, createModelSelection } from "@t3tools/shared/m
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { TraitsMenuContent } from "./TraitsPicker";
 import { useComposerDraftStore } from "../../composerDraftStore";
+import {
+  QUIZ_ACCESS_MODE_OPTIONS,
+  QUIZ_ACCESS_TOOLTIP_DELAY_MS,
+} from "../settings/StudyBuddySettings.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
@@ -369,6 +373,20 @@ describe("CompactComposerControlsMenu", () => {
       expect(submenuText).toContain("Review previous attempts");
       expect(submenuText).toContain("Ask before attempt");
       expect(submenuText).toContain("Quiz assist");
+    });
+
+    const askBeforeDescription = QUIZ_ACCESS_MODE_OPTIONS.find(
+      (option) => option.value === "ask-before-attempt",
+    )?.description;
+    expect(askBeforeDescription).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toContain(askBeforeDescription);
+
+    await page.getByText("Ask before attempt", { exact: true }).hover();
+    await new Promise((resolve) => setTimeout(resolve, QUIZ_ACCESS_TOOLTIP_DELAY_MS - 150));
+    expect(document.body.textContent ?? "").not.toContain(askBeforeDescription);
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain(askBeforeDescription);
     });
   });
 });

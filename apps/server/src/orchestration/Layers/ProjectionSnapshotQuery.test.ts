@@ -334,6 +334,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             },
           ],
           delegatedWork: [],
+          deferredFinalizations: [],
           activities: [
             {
               id: asEventId("activity-1"),
@@ -436,6 +437,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
           activeDelegatedWorkCount: 0,
+          activeRequiredDelegatedWorkCount: 0,
+          pendingDelegatedReviewCount: 0,
         },
       ]);
 
