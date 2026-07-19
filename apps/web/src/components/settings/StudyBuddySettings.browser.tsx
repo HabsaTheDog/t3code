@@ -7,10 +7,10 @@ import { render } from "vitest-browser-react";
 const harness = vi.hoisted(() => {
   const config = {
     exists: true,
-    moodleUsername: "mr25b093",
+    moodleUsername: "student123",
     moodleDashboardUrl: "https://moodle.technikum-wien.at/my/",
     moodlePasswordConfigured: true,
-    cisUsername: "mr25b093",
+    cisUsername: "student123",
     cisUrl: "https://cis.technikum-wien.at/cis.php/",
     cisPasswordConfigured: true,
     calendarUrl: "https://calendar.example/my-calendar.ics",

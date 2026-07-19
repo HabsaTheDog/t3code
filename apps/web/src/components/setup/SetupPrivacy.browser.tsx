@@ -352,7 +352,7 @@ describe.sequential("first-run privacy and setup", () => {
       .toBeInTheDocument();
 
     await page.getByLabelText("Moodle link").fill("https://moodle.example/");
-    await page.getByLabelText("Moodle login").fill("mr25b093");
+    await page.getByLabelText("Moodle login").fill("student123");
     await page.getByLabelText("Moodle password", { exact: true }).fill("secret");
     await page.getByRole("button", { name: "Check" }).click();
 
@@ -360,7 +360,7 @@ describe.sequential("first-run privacy and setup", () => {
       expect(updateStudyBuddyConfigurationMock).toHaveBeenCalledWith(
         expect.objectContaining({
           patch: expect.objectContaining({
-            moodleUsername: "mr25b093",
+            moodleUsername: "student123",
             moodleDashboardUrl: "https://moodle.example/",
             moodlePassword: expect.objectContaining({
               operation: "set",
