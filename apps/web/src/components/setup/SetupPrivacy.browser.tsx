@@ -559,7 +559,7 @@ describe.sequential("first-run privacy and setup", () => {
       expect(header).toBeTruthy();
       expect(stepIndicator).toBeTruthy();
       expect(introHeading).toBeTruthy();
-      expect(options).toHaveLength(4);
+      expect(options).toHaveLength(3);
 
       const headerRect = header!.getBoundingClientRect();
       const stepRect = stepIndicator!.getBoundingClientRect();
