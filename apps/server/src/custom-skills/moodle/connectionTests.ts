@@ -99,6 +99,10 @@ export const testStudyBuddyConnection = (
               targetUrl,
               username,
               password,
+              // This probe launches a brand-new browser without stored cookies.
+              // Reachability alone is not proof that the configured credentials
+              // work, so require the service to accept an actual login form.
+              requireCredentialSubmission: true,
               allowedOrigins: parseAllowedOrigins(
                 stored.values[
                   isMoodle ? "MOODLE_LOGIN_ALLOWED_ORIGINS" : "CIS_LOGIN_ALLOWED_ORIGINS"

@@ -397,6 +397,24 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
+  it("renders Codex actions without waiting for slow provider discovery", async () => {
+    let finishRefresh: (() => void) | undefined;
+    harness.refreshProviders.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRefresh = () => resolve({});
+        }),
+    );
+
+    const screen = await render(<ProviderSetupStep />);
+
+    await expect.element(page.getByRole("button", { name: "Install Codex" })).toBeInTheDocument();
+    await expect.element(page.getByText("Checking provider capabilities…")).not.toBeInTheDocument();
+
+    finishRefresh?.();
+    await screen.unmount();
+  });
+
   it("shows failed jobs and retries the same allowlisted action", async () => {
     harness.providers = [
       provider({ instanceId: "codex", driver: "codex", installed: true, version: "0.144.3" }),

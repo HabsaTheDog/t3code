@@ -181,6 +181,9 @@ function SetupWizard({
   const [stepSaveError, setStepSaveError] = useState<string | null>(null);
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
+  const [sessionConnectionChecks, setSessionConnectionChecks] = useState<
+    Partial<Record<StudyBuddyConnectionTarget, StudyBuddyConnectionTestResult>>
+  >({});
   const studyConfigurationStepRef = useRef<StepSaveHandle>(null);
   const quizSafetyStepRef = useRef<StepSaveHandle>(null);
   const providerSetupStepRef = useRef<ProviderSetupStepHandle>(null);
@@ -435,16 +438,32 @@ function SetupWizard({
                   key="moodle"
                   ref={studyConfigurationStepRef}
                   target="moodle"
+                  connectionCheck={sessionConnectionChecks.moodle ?? null}
+                  onConnectionCheck={(result) =>
+                    setSessionConnectionChecks((current) => ({ ...current, moodle: result }))
+                  }
                 />
               ) : null}
               {step.id === "cis" ? (
-                <StudyConfigurationStep key="cis" ref={studyConfigurationStepRef} target="cis" />
+                <StudyConfigurationStep
+                  key="cis"
+                  ref={studyConfigurationStepRef}
+                  target="cis"
+                  connectionCheck={sessionConnectionChecks.cis ?? null}
+                  onConnectionCheck={(result) =>
+                    setSessionConnectionChecks((current) => ({ ...current, cis: result }))
+                  }
+                />
               ) : null}
               {step.id === "calendar" ? (
                 <StudyConfigurationStep
                   key="calendar"
                   ref={studyConfigurationStepRef}
                   target="calendar"
+                  connectionCheck={sessionConnectionChecks.calendar ?? null}
+                  onConnectionCheck={(result) =>
+                    setSessionConnectionChecks((current) => ({ ...current, calendar: result }))
+                  }
                 />
               ) : null}
               {step.id === "quiz-safety" ? <QuizSafetyStep ref={quizSafetyStepRef} /> : null}
@@ -740,8 +759,14 @@ function ProviderStep({
   );
 }
 
-const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyConnectionTarget }>(
-  function StudyConfigurationStep({ target }, ref) {
+interface StudyConfigurationStepProps {
+  target: StudyBuddyConnectionTarget;
+  connectionCheck: StudyBuddyConnectionTestResult | null;
+  onConnectionCheck: (result: StudyBuddyConnectionTestResult) => void;
+}
+
+const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStepProps>(
+  function StudyConfigurationStep({ target, connectionCheck, onConnectionCheck }, ref) {
     const settings = useSettings();
     const { updateSettings } = useUpdateSettings();
     const [config, setConfig] = useState<StudyBuddyConfiguration | null>(null);
@@ -757,7 +782,6 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyCo
     const [calendarUrl, setCalendarUrl] = useState("");
     const [secretInputResetVersion, setSecretInputResetVersion] = useState(0);
     const persistedConnectionChecks = settings.studyBuddyConnectionChecks ?? {};
-    const savedConnectionCheck = persistedConnectionChecks[target] ?? null;
 
     useEffect(() => {
       void ensureLocalApi()
@@ -807,7 +831,21 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyCo
             Boolean(cisPassword)
           : Boolean(calendarUrl);
 
-    const visibleConnectionCheck = hasDraftChanges ? null : savedConnectionCheck;
+    // A setup rerun is a new validation session. Persisted results remain useful
+    // as history, but showing an old success here makes untested credentials look
+    // green. Keep only checks performed during this mounted wizard, while still
+    // retaining them when the user moves back and forth between its steps.
+    const visibleConnectionCheck = hasDraftChanges ? null : connectionCheck;
+
+    const recordConnectionCheck = (result: StudyBuddyConnectionTestResult) => {
+      onConnectionCheck(result);
+      updateSettings({
+        studyBuddyConnectionChecks: {
+          ...persistedConnectionChecks,
+          [target]: result,
+        },
+      });
+    };
 
     const connectionStatusKind: "idle" | "checking" | "success" | "error" = checkingConnection
       ? "checking"
@@ -891,17 +929,12 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyCo
 
     const checkConnection = async () => {
       if (!config || unavailable || !isConfigured) {
-        updateSettings({
-          studyBuddyConnectionChecks: {
-            ...persistedConnectionChecks,
-            [target]: {
-              target,
-              status: "failure",
-              code: "not-configured",
-              message: "Complete the fields to run the connection check.",
-              checkedAt: new Date().toISOString(),
-            },
-          },
+        recordConnectionCheck({
+          target,
+          status: "failure",
+          code: "not-configured",
+          message: "Complete the fields to run the connection check.",
+          checkedAt: new Date().toISOString(),
         });
         return;
       }
@@ -910,27 +943,17 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyCo
       try {
         const saved = await save();
         if (!saved) {
-          updateSettings({
-            studyBuddyConnectionChecks: {
-              ...persistedConnectionChecks,
-              [target]: {
-                target,
-                status: "failure",
-                code: "unreachable",
-                message: "Connection check unavailable.",
-                checkedAt: new Date().toISOString(),
-              },
-            },
+          recordConnectionCheck({
+            target,
+            status: "failure",
+            code: "unreachable",
+            message: "Connection check unavailable.",
+            checkedAt: new Date().toISOString(),
           });
           return;
         }
         const result = await ensureLocalApi().server.testStudyBuddyConnection({ target });
-        updateSettings({
-          studyBuddyConnectionChecks: {
-            ...persistedConnectionChecks,
-            [target]: result,
-          },
-        });
+        recordConnectionCheck(result);
         void telemetry.capture({
           event: "study_connection.tested",
           properties: { target, outcome: result.status },
@@ -945,12 +968,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, { target: StudyBuddyCo
           message,
           checkedAt: new Date().toISOString(),
         };
-        updateSettings({
-          studyBuddyConnectionChecks: {
-            ...persistedConnectionChecks,
-            [target]: result,
-          },
-        });
+        recordConnectionCheck(result);
         void telemetry.capture({
           event: "study_connection.tested",
           properties: { target, outcome: "error" },

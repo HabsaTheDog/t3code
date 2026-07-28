@@ -271,11 +271,13 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       setLoadError(null);
       try {
         const api = ensureLocalApi().server;
-        const [nextCapabilities] = await Promise.all([
-          api.getProviderSetupCapabilities(),
-          api.refreshProviders().catch(() => undefined),
-        ]);
+        const nextCapabilities = await api.getProviderSetupCapabilities();
         setCapabilities(nextCapabilities);
+        // Provider discovery may spawn the Codex executable and can take several
+        // seconds on a cold start. The setup actions are static backend
+        // capabilities, so render them immediately and refresh status in the
+        // background instead of holding the entire Codex step behind discovery.
+        void api.refreshProviders().catch(() => undefined);
       } catch {
         setLoadError("Provider setup is unavailable until a backend is connected.");
         setCapabilities([]);

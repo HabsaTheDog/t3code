@@ -11,6 +11,7 @@ export interface BrowserLoginConfig {
   readonly allowedOrigins: ReadonlySet<string>;
   readonly allowInteractiveUserAction: boolean;
   readonly interactiveTimeoutMs: number;
+  readonly requireCredentialSubmission: boolean;
 }
 
 const DEFAULT_LOGIN_SELECTORS = {
@@ -59,6 +60,7 @@ export function createBrowserLoginConfig(input: {
   readonly allowedOrigins?: readonly string[];
   readonly allowInteractiveUserAction?: boolean;
   readonly interactiveTimeoutMs?: number;
+  readonly requireCredentialSubmission?: boolean;
 }): BrowserLoginConfig {
   const target = new URL(input.targetUrl);
   const loopback = ["localhost", "127.0.0.1", "::1"].includes(target.hostname);
@@ -74,14 +76,15 @@ export function createBrowserLoginConfig(input: {
     allowedOrigins: new Set([targetOrigin, ...(input.allowedOrigins ?? [])]),
     allowInteractiveUserAction: input.allowInteractiveUserAction ?? false,
     interactiveTimeoutMs: input.interactiveTimeoutMs ?? 5 * 60_000,
+    requireCredentialSubmission: input.requireCredentialSubmission ?? false,
   };
 }
 
 export async function ensureLoggedIn(page: Page, config: BrowserLoginConfig): Promise<void> {
   const authenticationGate = new BrowserAuthenticationGate();
   const response = await page.goto(config.targetUrl, {
-    waitUntil: "networkidle",
-    timeout: 45_000,
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
   });
   if (!response || !response.ok()) {
     throw new Error(
@@ -90,7 +93,15 @@ export async function ensureLoggedIn(page: Page, config: BrowserLoginConfig): Pr
   }
   assertExpectedOrigin(page.url(), config.allowedOrigins, config.serviceName);
   const loginForm = await findLoginForm(page, config.allowedOrigins);
-  if (!loginForm && !(await hasAuthenticationSurface(page, config.allowedOrigins))) {
+  const authenticationSurface = loginForm
+    ? true
+    : await hasAuthenticationSurface(page, config.allowedOrigins);
+  if (!authenticationSurface) {
+    if (config.requireCredentialSubmission) {
+      throw new Error(
+        `${config.serviceName} credentials could not be verified because the configured page did not present a login form in a fresh browser session.`,
+      );
+    }
     return;
   }
 
@@ -126,10 +137,8 @@ export async function ensureLoggedIn(page: Page, config: BrowserLoginConfig): Pr
         throw new Error(`${config.serviceName} login form does not expose a submit control.`);
       }
 
-      await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 45_000 }).catch(() => undefined),
-        submit.click(),
-      ]);
+      await submit.click();
+      await page.waitForLoadState("domcontentloaded", { timeout: 15_000 }).catch(() => undefined);
       assertExpectedOrigin(page.url(), config.allowedOrigins, config.serviceName);
     }
 
@@ -153,7 +162,7 @@ export async function ensureLoggedIn(page: Page, config: BrowserLoginConfig): Pr
     // allowed. Cookies remain in the isolated context, while the login DOM and
     // its JavaScript heap are replaced by a clean authenticated document.
     const authenticatedUrl = page.url();
-    await page.goto(authenticatedUrl, { waitUntil: "networkidle", timeout: 45_000 });
+    await page.goto(authenticatedUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
     assertExpectedOrigin(page.url(), config.allowedOrigins, config.serviceName);
     if (await hasAuthenticationSurface(page, config.allowedOrigins)) {
       throw new Error(`${config.serviceName} authentication did not persist after secure reload.`);

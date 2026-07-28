@@ -400,10 +400,14 @@ describe.sequential("first-run privacy and setup", () => {
     expect(testStudyBuddyConnectionMock).not.toHaveBeenCalled();
     await expect.element(page.getByRole("heading", { name: "CIS", level: 1 })).toBeInTheDocument();
 
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect.element(page.getByText("Connection successful")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Connection check passed")).toBeInTheDocument();
+
     await screen.unmount();
   });
 
-  it.sequential("restores the last passed connection check when returning to a setup step", async () => {
+  it.sequential("does not present a result from an earlier setup run as a fresh check", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -424,8 +428,11 @@ describe.sequential("first-run privacy and setup", () => {
 
     await expect
       .element(page.getByText("Moodle login and page reachability succeeded."))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByLabelText("Connection check passed")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("Run a check to see a confirmation or error here."))
       .toBeInTheDocument();
-    await expect.element(page.getByLabelText("Connection check passed")).toBeInTheDocument();
     await expect
       .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
       .toBeInTheDocument();

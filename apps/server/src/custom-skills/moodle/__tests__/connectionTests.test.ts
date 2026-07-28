@@ -72,7 +72,10 @@ describe("Study Buddy connection tests", () => {
         checkedAt,
       });
       const loginConfig = ensureLogin.mock.calls[0]?.[1];
-      expect(loginConfig).toMatchObject({ targetUrl: input.expectedUrl });
+      expect(loginConfig).toMatchObject({
+        targetUrl: input.expectedUrl,
+        requireCredentialSubmission: true,
+      });
       expect(loginConfig?.resolveUsername()).toBe("student");
       expect(loginConfig?.allowedOrigins).toEqual(new Set([new URL(input.expectedUrl).origin]));
       expect(JSON.stringify(result)).not.toContain("secret");

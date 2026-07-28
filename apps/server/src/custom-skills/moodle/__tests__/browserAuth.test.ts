@@ -74,6 +74,36 @@ describe("ensureLoggedIn connection validation", () => {
     ).resolves.toBeUndefined();
     expect(filled).toContainEqual({ selector: "#username", value: "student" });
     expect(filled).toContainEqual({ selector: "#password", value: "secret" });
+    expect(page.goto).toHaveBeenCalledWith(
+      "https://moodle.example/login/index.php",
+      expect.objectContaining({ waitUntil: "domcontentloaded", timeout: 30_000 }),
+    );
+  });
+
+  it("does not treat a public landing page as proof that credentials work", async () => {
+    const page = {
+      goto: vi.fn(async () => ({ ok: () => true, status: () => 200 })),
+      url: vi.fn(() => "https://cis.example/cis.php/"),
+      locator: vi.fn(() => ({
+        first: () => ({
+          count: async () => 0,
+          textContent: async () => null,
+        }),
+      })),
+    };
+
+    await expect(
+      ensureLoggedIn(
+        page as never,
+        createBrowserLoginConfig({
+          serviceName: "CIS",
+          targetUrl: "https://cis.example/cis.php/",
+          username: "student",
+          password: "secret",
+          requireCredentialSubmission: true,
+        }),
+      ),
+    ).rejects.toThrow("credentials could not be verified");
   });
 
   it("surfaces a visible login error instead of a generic still-on-login-page message", async () => {
