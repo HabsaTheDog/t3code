@@ -9,6 +9,7 @@ import {
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -108,6 +109,7 @@ import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
+import { useFavoriteThreads } from "../favoriteThreads";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
@@ -306,6 +308,7 @@ interface SidebarThreadRowProps {
   projectCwd: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
+  isFavorite: boolean;
   jumpLabel: string | null;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
@@ -343,6 +346,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const {
     orderedProjectThreadKeys,
     isActive,
+    isFavorite,
     jumpLabel,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
@@ -855,16 +859,25 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     <TooltipPopup side="top">{jumpLabel}</TooltipPopup>
                   </Tooltip>
                 ) : (
-                  <span
-                    className={`text-[10px] tabular-nums ${
-                      isHighlighted
-                        ? "text-foreground/72 dark:text-foreground/82"
-                        : "text-muted-foreground/40"
-                    }`}
-                  >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
+                  <span className="inline-flex items-center gap-1">
+                    {isFavorite ? (
+                      <StarIcon
+                        role="img"
+                        aria-label="Favorite thread"
+                        className="size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
+                      />
+                    ) : null}
+                    <span
+                      className={`text-[10px] tabular-nums ${
+                        isHighlighted
+                          ? "text-foreground/72 dark:text-foreground/82"
+                          : "text-muted-foreground/40"
+                      }`}
+                    >
+                      {formatRelativeTimeLabel(
+                        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                      )}
+                    </span>
                   </span>
                 )}
               </span>
@@ -889,6 +902,7 @@ interface SidebarProjectThreadListProps {
   projectCwd: string;
   activeRouteThreadKey: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  favoriteThreadKeySet: ReadonlySet<string>;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
@@ -940,6 +954,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     projectCwd,
     activeRouteThreadKey,
     threadJumpLabelByKey,
+    favoriteThreadKeySet,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
     renamingTitle,
@@ -991,6 +1006,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               projectCwd={projectCwd}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
+              isFavorite={favoriteThreadKeySet.has(threadKey)}
               jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
               appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
               renamingThreadKey={renamingThreadKey}
@@ -1061,6 +1077,8 @@ interface SidebarProjectItemProps {
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  favoriteThreadKeySet: ReadonlySet<string>;
+  toggleFavoriteThread: (threadKey: string) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1081,6 +1099,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     archiveThread,
     deleteThread,
     threadJumpLabelByKey,
+    favoriteThreadKeySet,
+    toggleFavoriteThread,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2116,6 +2136,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          {
+            id: favoriteThreadKeySet.has(threadKey) ? "remove-from-favorites" : "add-to-favorites",
+            label: favoriteThreadKeySet.has(threadKey)
+              ? "Remove from favorites"
+              : "Add to favorites",
+          },
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2151,6 +2177,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "rename") {
         startThreadRename(threadKey, thread.title);
+        return;
+      }
+
+      if (clicked === "add-to-favorites" || clicked === "remove-from-favorites") {
+        toggleFavoriteThread(threadKey);
         return;
       }
 
@@ -2205,11 +2236,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyPathToClipboard,
       copyThreadIdToClipboard,
       deleteThread,
+      favoriteThreadKeySet,
       handleNewThread,
       markThreadUnread,
       memberProjectByScopedKey,
       project.workspaceRoot,
       startThreadRename,
+      toggleFavoriteThread,
     ],
   );
 
@@ -2333,6 +2366,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         projectCwd={project.workspaceRoot}
         activeRouteThreadKey={activeRouteThreadKey}
         threadJumpLabelByKey={threadJumpLabelByKey}
+        favoriteThreadKeySet={favoriteThreadKeySet}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
         renamingTitle={renamingTitle}
@@ -2751,6 +2785,8 @@ interface SidebarProjectsContentProps {
   newThreadShortcutLabel: string | null;
   commandPaletteShortcutLabel: string | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  favoriteThreadKeySet: ReadonlySet<string>;
+  toggleFavoriteThread: (threadKey: string) => void;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -2791,6 +2827,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     newThreadShortcutLabel,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
+    favoriteThreadKeySet,
+    toggleFavoriteThread,
     attachThreadListAutoAnimateRef,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -2931,6 +2969,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
+                        favoriteThreadKeySet={favoriteThreadKeySet}
+                        toggleFavoriteThread={toggleFavoriteThread}
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                         expandThreadListForProject={expandThreadListForProject}
                         collapseThreadListForProject={collapseThreadListForProject}
@@ -2963,6 +3003,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
+                favoriteThreadKeySet={favoriteThreadKeySet}
+                toggleFavoriteThread={toggleFavoriteThread}
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
                 expandThreadListForProject={expandThreadListForProject}
                 collapseThreadListForProject={collapseThreadListForProject}
@@ -2988,6 +3030,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function Sidebar() {
   const projects = useProjects();
+  const { favoriteThreadKeySet, toggleFavoriteThread } = useFavoriteThreads();
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -3621,6 +3664,8 @@ export default function Sidebar() {
             newThreadShortcutLabel={newThreadShortcutLabel}
             commandPaletteShortcutLabel={commandPaletteShortcutLabel}
             threadJumpLabelByKey={visibleThreadJumpLabelByKey}
+            favoriteThreadKeySet={favoriteThreadKeySet}
+            toggleFavoriteThread={toggleFavoriteThread}
             attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
             expandThreadListForProject={expandThreadListForProject}
             collapseThreadListForProject={collapseThreadListForProject}

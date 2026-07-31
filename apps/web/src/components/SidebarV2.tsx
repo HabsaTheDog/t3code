@@ -32,6 +32,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   Trash2Icon,
   Undo2Icon,
@@ -162,6 +163,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useFavoriteThreads } from "../favoriteThreads";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -400,6 +402,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   // the user visits the thread.
   wokeAt: string | null;
   isActive: boolean;
+  isFavorite: boolean;
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
@@ -831,6 +834,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
             {prBadge}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
+                {props.isFavorite ? (
+                  <StarIcon
+                    role="img"
+                    aria-label="Favorite thread"
+                    className="mr-1 size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
+                  />
+                ) : null}
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
@@ -951,33 +961,42 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
-                  {topStatus ? (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 font-medium",
-                        topStatus.className,
-                      )}
-                    >
-                      {topStatus.icon === "working" ? (
-                        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                      ) : topStatus.icon === "done" ? (
-                        <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-                      ) : topStatus.icon === "woke" ? (
-                        <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                      ) : null}
-                      {/* The label alone is the live region: a role="status"
-                          wrapper around the ticking duration would make
-                          screen readers announce every second. */}
-                      <span role="status">{topStatus.label}</span>
-                      {status === "working" ? (
-                        <span aria-hidden>
-                          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-                        </span>
-                      ) : null}
-                    </span>
-                  ) : (
-                    threadTimeLabel(thread)
-                  )}
+                  <span className="inline-flex items-center gap-1">
+                    {props.isFavorite ? (
+                      <StarIcon
+                        role="img"
+                        aria-label="Favorite thread"
+                        className="size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
+                      />
+                    ) : null}
+                    {topStatus ? (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 font-medium",
+                          topStatus.className,
+                        )}
+                      >
+                        {topStatus.icon === "working" ? (
+                          <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                        ) : topStatus.icon === "done" ? (
+                          <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                        ) : topStatus.icon === "woke" ? (
+                          <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                        ) : null}
+                        {/* The label alone is the live region: a role="status"
+                            wrapper around the ticking duration would make
+                            screen readers announce every second. */}
+                        <span role="status">{topStatus.label}</span>
+                        {status === "working" ? (
+                          <span aria-hidden>
+                            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : (
+                      threadTimeLabel(thread)
+                    )}
+                  </span>
                 </span>
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
@@ -1170,6 +1189,7 @@ const SidebarV2SearchResultRow = memo(function SidebarV2SearchResultRow(props: {
 
 export default function SidebarV2() {
   const projects = useProjects();
+  const { favoriteThreadKeySet, toggleFavoriteThread } = useFavoriteThreads();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
@@ -2312,6 +2332,14 @@ export default function SidebarV2() {
                     },
                   ]
                 : []),
+              {
+                id: favoriteThreadKeySet.has(threadKey)
+                  ? "remove-from-favorites"
+                  : "add-to-favorites",
+                label: favoriteThreadKeySet.has(threadKey)
+                  ? "Remove from favorites"
+                  : "Add to favorites",
+              },
               ...(supportsSettlement
                 ? [
                     isSettled
@@ -2384,6 +2412,10 @@ export default function SidebarV2() {
             }
             return;
           }
+          case "add-to-favorites":
+          case "remove-from-favorites":
+            toggleFavoriteThread(threadKey);
+            return;
           case "settle":
             attemptSettle(threadRef);
             return;
@@ -2475,11 +2507,13 @@ export default function SidebarV2() {
       copyBranchToClipboard,
       copyPathToClipboard,
       deleteThread,
+      favoriteThreadKeySet,
       handleMultiSelectContextMenu,
       markThreadUnread,
       projectCwdByKey,
       serverConfigs,
       startThreadRename,
+      toggleFavoriteThread,
       updateThreadMetadata,
     ],
   );
@@ -2876,6 +2910,7 @@ export default function SidebarV2() {
                         // rows resolve to null on their own.
                         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                         isActive={routeThreadKey === threadKey}
+                        isFavorite={favoriteThreadKeySet.has(threadKey)}
                         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                         currentEnvironmentId={primaryEnvironmentId}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
