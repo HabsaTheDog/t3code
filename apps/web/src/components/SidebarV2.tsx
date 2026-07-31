@@ -32,6 +32,7 @@ import {
   SearchIcon,
   ServerIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   Trash2Icon,
   Undo2Icon,
@@ -445,6 +446,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const isFavorite = useUiStateStore((state) => state.favoriteThreadKeys.includes(threadKey));
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -830,7 +832,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               the time/jump label yields to the settle affordance. */}
             {prBadge}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
-              <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
+              <span className="inline-flex items-center justify-end gap-1 tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
+                {isFavorite ? (
+                  <StarIcon
+                    aria-label="Favorite"
+                    className="size-3 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+                  />
+                ) : null}
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
@@ -947,10 +955,16 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     buttons; without it the invisible label eats their clicks. */}
                 <span
                   className={cn(
-                    "pointer-events-none self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+                    "pointer-events-none inline-flex items-center gap-1 self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
+                  {isFavorite ? (
+                    <StarIcon
+                      aria-label="Favorite"
+                      className="size-3 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+                    />
+                  ) : null}
                   {topStatus ? (
                     <span
                       className={cn(
@@ -1244,6 +1258,7 @@ export default function SidebarV2() {
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
+  const toggleThreadFavorite = useUiStateStore((s) => s.toggleThreadFavorite);
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -2335,6 +2350,12 @@ export default function SidebarV2() {
                   ]
                 : []),
               { id: "rename", label: "Rename thread" },
+              {
+                id: "toggle-favorite",
+                label: useUiStateStore.getState().favoriteThreadKeys.includes(threadKey)
+                  ? "Remove from favorites"
+                  : "Add to favorites",
+              },
               ...(supportsTitleRegeneration
                 ? [
                     {
@@ -2395,6 +2416,9 @@ export default function SidebarV2() {
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);
+            return;
+          case "toggle-favorite":
+            toggleThreadFavorite(threadKey);
             return;
           case "regenerate-title": {
             if (isRegeneratingTitle) return;
@@ -2480,6 +2504,7 @@ export default function SidebarV2() {
       projectCwdByKey,
       serverConfigs,
       startThreadRename,
+      toggleThreadFavorite,
       updateThreadMetadata,
     ],
   );
