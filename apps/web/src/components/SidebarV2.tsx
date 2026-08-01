@@ -832,15 +832,15 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            {props.isFavorite ? (
+              <StarIcon
+                role="img"
+                aria-label="Favorite thread"
+                className="size-3 shrink-0 fill-current text-amber-500 dark:text-amber-400"
+              />
+            ) : null}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
               <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
-                {props.isFavorite ? (
-                  <StarIcon
-                    role="img"
-                    aria-label="Favorite thread"
-                    className="mr-1 size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
-                  />
-                ) : null}
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
@@ -947,6 +947,13 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {props.isFavorite ? (
+                <StarIcon
+                  role="img"
+                  aria-label="Favorite thread"
+                  className="size-3 shrink-0 fill-current text-amber-500 dark:text-amber-400"
+                />
+              ) : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -961,42 +968,33 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
-                  <span className="inline-flex items-center gap-1">
-                    {props.isFavorite ? (
-                      <StarIcon
-                        role="img"
-                        aria-label="Favorite thread"
-                        className="size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
-                      />
-                    ) : null}
-                    {topStatus ? (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1 font-medium",
-                          topStatus.className,
-                        )}
-                      >
-                        {topStatus.icon === "working" ? (
-                          <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                        ) : topStatus.icon === "done" ? (
-                          <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-                        ) : topStatus.icon === "woke" ? (
-                          <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                        ) : null}
-                        {/* The label alone is the live region: a role="status"
-                            wrapper around the ticking duration would make
-                            screen readers announce every second. */}
-                        <span role="status">{topStatus.label}</span>
-                        {status === "working" ? (
-                          <span aria-hidden>
-                            <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-                          </span>
-                        ) : null}
-                      </span>
-                    ) : (
-                      threadTimeLabel(thread)
-                    )}
-                  </span>
+                  {topStatus ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 font-medium",
+                        topStatus.className,
+                      )}
+                    >
+                      {topStatus.icon === "working" ? (
+                        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                      ) : topStatus.icon === "done" ? (
+                        <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                      ) : topStatus.icon === "woke" ? (
+                        <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
+                      ) : null}
+                      {/* The label alone is the live region: a role="status"
+                          wrapper around the ticking duration would make
+                          screen readers announce every second. */}
+                      <span role="status">{topStatus.label}</span>
+                      {status === "working" ? (
+                        <span aria-hidden>
+                          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    threadTimeLabel(thread)
+                  )}
                 </span>
                 {props.settlementSupported || showSnoozeButton ? (
                   <span
