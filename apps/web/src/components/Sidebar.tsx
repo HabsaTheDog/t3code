@@ -827,6 +827,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </Tooltip>
               )
             ) : null}
+            {isFavorite ? (
+              <StarIcon
+                role="img"
+                aria-label="Favorite thread"
+                className="mr-1 size-3 shrink-0 fill-current text-amber-500 dark:text-amber-400"
+              />
+            ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
                 {isRemoteThread && !isDesktopLocalThread && (
@@ -859,25 +866,16 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     <TooltipPopup side="top">{jumpLabel}</TooltipPopup>
                   </Tooltip>
                 ) : (
-                  <span className="inline-flex items-center gap-1">
-                    {isFavorite ? (
-                      <StarIcon
-                        role="img"
-                        aria-label="Favorite thread"
-                        className="size-3 fill-current text-amber-500/80 dark:text-amber-400/80"
-                      />
-                    ) : null}
-                    <span
-                      className={`text-[10px] tabular-nums ${
-                        isHighlighted
-                          ? "text-foreground/72 dark:text-foreground/82"
-                          : "text-muted-foreground/40"
-                      }`}
-                    >
-                      {formatRelativeTimeLabel(
-                        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                      )}
-                    </span>
+                  <span
+                    className={`text-[10px] tabular-nums ${
+                      isHighlighted
+                        ? "text-foreground/72 dark:text-foreground/82"
+                        : "text-muted-foreground/40"
+                    }`}
+                  >
+                    {formatRelativeTimeLabel(
+                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                    )}
                   </span>
                 )}
               </span>
