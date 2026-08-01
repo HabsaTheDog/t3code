@@ -831,14 +831,14 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            {isFavorite ? (
+              <StarIcon
+                aria-label="Favorite"
+                className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+              />
+            ) : null}
             <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
-              <span className="inline-flex items-center justify-end gap-1 tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
-                {isFavorite ? (
-                  <StarIcon
-                    aria-label="Favorite"
-                    className="size-3 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
-                  />
-                ) : null}
+              <span className="inline-flex justify-end tabular-nums text-muted-foreground/55 transition-opacity group-hover/v2-row:opacity-0">
                 {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                   // Snoozed rows show when they come BACK, not when they were
                   // last touched — the return ticket is the row's whole story.
@@ -945,6 +945,12 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {isFavorite ? (
+                <StarIcon
+                  aria-label="Favorite"
+                  className="size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+                />
+              ) : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -955,16 +961,10 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                     buttons; without it the invisible label eats their clicks. */}
                 <span
                   className={cn(
-                    "pointer-events-none inline-flex items-center gap-1 self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
+                    "pointer-events-none self-center justify-self-end tabular-nums text-muted-foreground/65 transition-opacity group-focus-within/v2-status-slot:absolute group-focus-within/v2-status-slot:right-0 group-hover/v2-row:absolute group-hover/v2-row:right-0 group-hover/v2-row:opacity-0",
                     snoozeMenuOpen && "absolute right-0 opacity-0",
                   )}
                 >
-                  {isFavorite ? (
-                    <StarIcon
-                      aria-label="Favorite"
-                      className="size-3 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
-                    />
-                  ) : null}
                   {topStatus ? (
                     <span
                       className={cn(

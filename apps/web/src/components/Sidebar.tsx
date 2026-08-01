@@ -825,14 +825,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 </Tooltip>
               )
             ) : null}
+            {isFavorite ? (
+              <StarIcon
+                aria-label="Favorite"
+                className="mr-1 size-3 shrink-0 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
+              />
+            ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
-                {isFavorite ? (
-                  <StarIcon
-                    aria-label="Favorite"
-                    className="size-3 fill-amber-400 text-amber-500 dark:fill-amber-300 dark:text-amber-400"
-                  />
-                ) : null}
                 {isRemoteThread && !isDesktopLocalThread && (
                   <Tooltip>
                     <TooltipTrigger
