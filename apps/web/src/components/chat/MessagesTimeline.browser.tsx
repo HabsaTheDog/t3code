@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vite-plus/test/browser";
@@ -71,6 +71,7 @@ function buildProps() {
     isRevertingCheckpoint: false,
     onImageExpand: vi.fn(),
     activeThreadEnvironmentId: EnvironmentId.make("environment-local"),
+    activeThreadId: ThreadId.make("thread-1"),
     markdownCwd: undefined,
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,

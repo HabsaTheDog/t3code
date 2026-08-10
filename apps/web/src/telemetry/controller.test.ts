@@ -20,7 +20,7 @@ function consent(patch: Partial<TelemetryConsentSnapshot> = {}): TelemetryConsen
 
 function posthogSpy() {
   return {
-    initialize: vi.fn(async () => undefined),
+    initialize: vi.fn<PostHogTelemetryClient["initialize"]>(async () => undefined),
     capture: vi.fn(),
     shutdown: vi.fn(),
   } satisfies PostHogTelemetryClient;
@@ -32,6 +32,7 @@ function outboxFactory() {
     new TelemetryOutbox({
       indexedDB: new IDBFactory(),
       databaseName: `controller-test-${Math.random()}`,
+      clock: { now: () => Date.parse("2026-06-27T10:01:00.000Z") },
       random: {
         uuid: () => `queue-${++nextId}`,
         unit: () => 0.5,
@@ -135,6 +136,71 @@ describe("TelemetryController consent lifecycle", () => {
     controller.stop();
   });
 
+  it("routes sanitized SDK heatmaps through the consent-gated durable uploader", async () => {
+    const posthog = posthogSpy();
+    const fetchSpy = vi.fn<typeof fetch>(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const controller = new TelemetryController({
+      projectToken: "phc_test",
+      createOutbox: outboxFactory(),
+      posthogClient: posthog,
+      clock: { now: () => Date.parse("2026-06-27T10:01:00.000Z") },
+      random: { uuid: () => `sdk-${Math.random()}`, unit: () => 0.5 },
+    });
+    await controller.hydrate(
+      consent({
+        analyticsConsent: "accepted",
+        analyticsEnabledAt: "2026-06-27T10:00:00.000Z",
+      }),
+    );
+    const initializeInput = posthog.initialize.mock.calls[0]?.[0];
+    expect(initializeInput?.beforeSend).toEqual(expect.any(Function));
+    const beforeSend = initializeInput?.beforeSend;
+    if (typeof beforeSend !== "function") throw new Error("before_send was not configured");
+
+    expect(
+      beforeSend({
+        event: "$$heatmap",
+        properties: {
+          $viewport_width: 1440,
+          $viewport_height: 900,
+          $heatmap_data: {
+            "https://private.test/chat/thread-secret?token=secret": [
+              { x: 12, y: 34, type: "click", text: "CANARY_PROMPT" },
+              { x: 56, y: 78, type: "mousemove" },
+            ],
+          },
+        },
+      } as never),
+    ).toBeNull();
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledOnce());
+    const request = fetchSpy.mock.calls[0]?.[1];
+    const body = JSON.parse(String(request?.body)) as {
+      batch: Array<{ event: string; properties: Record<string, unknown> }>;
+    };
+    expect(body.batch).toEqual([
+      expect.objectContaining({
+        event: "$$heatmap",
+        properties: expect.objectContaining({
+          distinct_id: "install-id",
+          telemetry_schema_version: 4,
+          sdk_event_source: "posthog-js",
+          $viewport_width: 1440,
+          $viewport_height: 900,
+          $heatmap_data: {
+            "https://app.t3.codes/_chat/": [{ x: 12, y: 34, type: "click" }],
+          },
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(body)).not.toContain("private.test");
+    expect(JSON.stringify(body)).not.toContain("thread-secret");
+    expect(JSON.stringify(body)).not.toContain("CANARY_PROMPT");
+    expect(JSON.stringify(body)).not.toContain("mousemove");
+    controller.stop();
+  });
+
   it("queues future analytics without a production token and never initializes the SDK", async () => {
     const posthog = posthogSpy();
     const controller = new TelemetryController({
@@ -195,6 +261,49 @@ describe("TelemetryController consent lifecycle", () => {
     expect(fetchSpy).toHaveBeenCalled();
     expect(posthog.initialize).not.toHaveBeenCalled();
     controller.stop();
+  });
+
+  it("keeps rating and optional written feedback behind their independent consent gates", async () => {
+    const controller = new TelemetryController({
+      projectToken: "",
+      createOutbox: outboxFactory(),
+      posthogClient: posthogSpy(),
+      clock: { now: () => Date.parse("2026-06-27T10:00:01.000Z") },
+      random: { uuid: () => `feedback-${Math.random()}`, unit: () => 0.5 },
+    });
+    await controller.hydrate(
+      consent({
+        analyticsConsent: "accepted",
+        conversationConsent: "rejected",
+        analyticsEnabledAt: "2026-06-27T10:00:00.000Z",
+      }),
+    );
+    await expect(
+      controller.submitResponseFeedback({
+        threadId: "thread",
+        turnId: "turn",
+        rating: "negative",
+        note: "Needs a source.",
+      }),
+    ).resolves.toEqual({ ratingCaptured: true, noteCaptured: false });
+
+    await controller.updateConsent(
+      consent({
+        analyticsConsent: "accepted",
+        conversationConsent: "accepted",
+        analyticsEnabledAt: "2026-06-27T10:00:00.000Z",
+        conversationEnabledAt: "2026-06-27T10:00:00.000Z",
+      }),
+    );
+    await expect(
+      controller.submitResponseFeedback({
+        threadId: "thread",
+        turnId: "turn",
+        rating: "negative",
+        note: "Needs a source.",
+      }),
+    ).resolves.toEqual({ ratingCaptured: false, noteCaptured: true });
+    expect(await controller.diagnostics()).toMatchObject({ queuedItems: 3 });
   });
 
   it("clears only the disabled category queue", async () => {

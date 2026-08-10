@@ -105,6 +105,14 @@ vi.mock("~/hooks/useSettings", () => ({
   }),
 }));
 
+vi.mock("~/lib/desktopSpeechReactQuery", () => ({
+  useDesktopSpeechState: () => ({ data: { status: "not-enabled" } }),
+  useDesktopSpeechActions: () => ({
+    enable: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+  }),
+}));
+
 import { StudyBuddySettingsPanel } from "./StudyBuddySettings";
 
 describe("study buddy settings", () => {
@@ -119,13 +127,15 @@ describe("study buddy settings", () => {
   it("keeps a typed secret in place after autosave and lets you reveal it", async () => {
     const mounted = await render(<StudyBuddySettingsPanel />);
 
-    await expect.element(page.getByRole("heading", { name: "Study Buddy" })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Study Buddy", exact: true }))
+      .toBeInTheDocument();
     const password = page.getByRole("textbox", { name: "Moodle password" });
     await expect
       .element(password)
       .toHaveAttribute("placeholder", "Password saved — enter to replace");
     await expect
-      .element(page.getByRole("textbox", { name: "Calendar URL" }))
+      .element(page.getByRole("textbox", { name: "Private calendar link" }))
       .toHaveValue("https://calendar.example/my-calendar.ics");
     await password.fill("correct horse battery staple");
 
@@ -156,11 +166,11 @@ describe("study buddy settings", () => {
 
     await expect.element(page.getByRole("button", { name: "Run setup again" })).toBeInTheDocument();
     await expect
-      .element(page.getByLabelText("Agent personality instructions"))
+      .element(page.getByLabelText("Instructions for how Study Buddy should respond"))
       .toHaveValue("Be direct and call me Alex.");
     await expect
       .element(
-        page.getByText("Saved when you leave the field. Applied when a new agent session starts."),
+        page.getByText("Saved when you leave this box. Used the next time you start a chat."),
       )
       .toBeInTheDocument();
 

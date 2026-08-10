@@ -6,6 +6,7 @@ import { Link } from "@tanstack/react-router";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { telemetry, telemetryProductionConfigured } from "../../telemetry/runtime";
 import { systemTelemetryRandom } from "../../telemetry/types";
+import { featureProperties } from "../../telemetry/featureCatalog";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -90,13 +91,19 @@ export function PrivacySettingsPanel() {
           event: "settings.changed",
           properties: { section: "privacy", category },
         });
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("settings.privacy", {
+            setting_category: category,
+          }),
+        });
       }
       refresh();
     } catch {
       toastManager.add({
         type: "error",
-        title: "Privacy choice was not saved",
-        description: "Tracking was not changed. Retry after local storage is available.",
+        title: "We couldn’t save your choice",
+        description: "Nothing changed. Please try again.",
       });
     } finally {
       setSavingCategory(null);
@@ -108,19 +115,22 @@ export function PrivacySettingsPanel() {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Privacy &amp; Data</h1>
         <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
-          Independent consent controls and the local delivery queue. Disabling a category stops
-          future capture and deletes its unsent items.
+          Help us improve Study Buddy by sharing how you use the app. Sharing is optional, off until
+          you turn it on, and you can change your mind at any time.
         </p>
       </div>
 
-      <SettingsSection title="Consent" icon={<ShieldCheckIcon className="size-3.5" />}>
+      <SettingsSection
+        title="Help improve Study Buddy"
+        icon={<ShieldCheckIcon className="size-3.5" />}
+      >
         <SettingsRow
-          title="Usage analytics and click heatmaps"
-          description="Only explicitly tagged controls; no replay, prompts, page text, terminal output, diffs, credentials, input values, or filesystem paths."
+          title="Usage analytics"
+          description="Share which parts of Study Buddy you use and roughly where people click on each screen. We never include exact page addresses, what you type, mouse movement, scrolling, course content, passwords, or file contents."
           status={
             settings.analyticsConsent === "accepted" && settings.analyticsEnabledAt
-              ? `Future activity only · enabled ${new Date(settings.analyticsEnabledAt).toLocaleString()}`
-              : "Off"
+              ? `Sharing new activity since ${new Date(settings.analyticsEnabledAt).toLocaleString()}`
+              : "Not sharing"
           }
           control={
             <Switch
@@ -135,11 +145,11 @@ export function PrivacySettingsPanel() {
         />
         <SettingsRow
           title="Conversation sharing"
-          description="Only completed user/assistant text and limited model, timing, outcome, and pseudonymous IDs."
+          description="Share your messages, Study Buddy’s replies, and any feedback you leave, plus basic details about files it creates or changes. Passwords and file contents are not included."
           status={
             settings.conversationConsent === "accepted" && settings.conversationEnabledAt
-              ? `Future completed turns only · enabled ${new Date(settings.conversationEnabledAt).toLocaleString()}`
-              : "Off"
+              ? `Sharing new conversations since ${new Date(settings.conversationEnabledAt).toLocaleString()}`
+              : "Not sharing"
           }
           control={
             <Switch
@@ -154,11 +164,15 @@ export function PrivacySettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection title="Local outbox" icon={<DatabaseIcon className="size-3.5" />}>
+      <SettingsSection title="Sharing status" icon={<DatabaseIcon className="size-3.5" />}>
         <SettingsRow
-          title="Queue"
-          description={`${status.queuedItems} items · ${formatBytes(status.queuedBytes)} · oldest ${status.oldestItemAt ? new Date(status.oldestItemAt).toLocaleString() : "none"}`}
-          status={`Last sync: ${status.lastSuccessfulSyncAt ? new Date(status.lastSuccessfulSyncAt).toLocaleString() : "never"} · dropped: ${status.droppedCount}`}
+          title="Waiting to be sent"
+          description={
+            status.queuedItems === 0
+              ? "Nothing is waiting to be sent."
+              : `${status.queuedItems} ${status.queuedItems === 1 ? "item is" : "items are"} waiting (${formatBytes(status.queuedBytes)}).`
+          }
+          status={`Last sent: ${status.lastSuccessfulSyncAt ? new Date(status.lastSuccessfulSyncAt).toLocaleString() : "Not yet"}`}
           control={
             <Button
               size="sm"
@@ -166,32 +180,33 @@ export function PrivacySettingsPanel() {
               data-analytics-id="privacy.sync"
               onClick={() => void telemetry.flush().then(refresh)}
             >
-              Sync now
+              Send now
             </Button>
           }
         />
         <SettingsRow
-          title="Production destination"
+          title="Sharing service"
           description={
             telemetryProductionConfigured
-              ? "Configured for the self-hosted PostHog project."
-              : "Project token is not configured; production telemetry remains disabled."
+              ? "Study Buddy’s private analytics service is ready."
+              : "Sharing is currently unavailable, so nothing will be sent."
           }
           control={
             <Badge variant={telemetryProductionConfigured ? "success" : "secondary"}>
-              {telemetryProductionConfigured ? "Configured" : "Disabled"}
+              {telemetryProductionConfigured ? "Available" : "Unavailable"}
             </Badge>
           }
         />
         {status.lastError ? (
-          <SettingsRow title="Last delivery error" description={status.lastError} />
+          <SettingsRow title="Problem sending data" description={status.lastError} />
         ) : null}
       </SettingsSection>
 
-      <SettingsSection title="Your identifier">
+      <SettingsSection title="More information">
         <SettingsRow
-          title="Installation ID"
-          description={settings.installationId || "Not created until a category is accepted."}
+          title="Your Study Buddy ID"
+          description="A random ID helps us keep shared data together without using your name or email address."
+          status={settings.installationId || "Created only if you choose to share."}
           control={
             settings.installationId ? (
               <Button
@@ -200,7 +215,7 @@ export function PrivacySettingsPanel() {
                 data-analytics-id="privacy.copy-installation-id"
                 onClick={() => {
                   void navigator.clipboard.writeText(settings.installationId);
-                  toastManager.add({ type: "success", title: "Installation ID copied" });
+                  toastManager.add({ type: "success", title: "Study Buddy ID copied" });
                 }}
               >
                 <CopyIcon className="size-3.5" />
@@ -210,8 +225,8 @@ export function PrivacySettingsPanel() {
           }
         />
         <SettingsRow
-          title="Full privacy notice"
-          description="Data collected, exclusions, retention, withdrawal, and data-subject requests."
+          title="Privacy notice"
+          description="See exactly what can be shared, how long we keep it, and how to ask for a copy or deletion."
           control={
             <Button
               size="sm"

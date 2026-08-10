@@ -2,7 +2,9 @@ import type {
   ModelSelection,
   OrchestrationLatestTurn,
   OrchestrationThreadActivity,
+  ProviderInteractionMode,
   ProviderDriverKind,
+  RuntimeMode,
   StudyBuddyExecutionProfile,
   ThreadId,
 } from "@t3tools/contracts";
@@ -58,6 +60,8 @@ export interface ThreadAnalyticsInput {
   readonly modelSelection: ModelSelection;
   readonly provider?: ProviderDriverKind;
   readonly executionProfile: StudyBuddyExecutionProfile;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
   readonly turn: OrchestrationLatestTurn | null;
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
 }
@@ -147,8 +151,12 @@ function safeTaskType(value: string): string {
 function modelProperties(input: ThreadAnalyticsInput) {
   const effort = reasoningEffort(input.modelSelection);
   return {
+    $ai_session_id: String(input.threadId),
+    ...(input.turn ? { $ai_trace_id: String(input.turn.turnId) } : {}),
     model: input.modelSelection.model,
     execution_profile: input.executionProfile,
+    ...(input.runtimeMode ? { runtime_mode: input.runtimeMode } : {}),
+    ...(input.interactionMode ? { interaction_mode: input.interactionMode } : {}),
     ...(effort ? { reasoning_effort: effort } : {}),
     ...(input.provider ? { provider: input.provider } : {}),
   };
@@ -212,6 +220,18 @@ export function buildThreadAnalyticsEvents(
   const common = modelProperties(input);
   const events: SemanticTelemetryEvent[] = [];
 
+  events.push({
+    event: "feature.used",
+    idempotencyKey: `feature.used:chat.run:${input.threadId}:${turn.turnId}`,
+    timestamp: turn.startedAt ?? turn.requestedAt,
+    properties: {
+      ...common,
+      feature: "chat.run",
+      feature_area: "Chat",
+      feature_label: "Run an AI request",
+    },
+  });
+
   if (turn.state !== "running") {
     for (const interval of intervals) {
       events.push({
@@ -227,6 +247,34 @@ export function buildThreadAnalyticsEvents(
         },
       });
     }
+    if (intervals.length > 0) {
+      events.push({
+        event: "feature.used",
+        idempotencyKey: `feature.used:orchestration.delegation:${input.threadId}:${turn.turnId}`,
+        timestamp: turn.completedAt ?? turn.requestedAt,
+        properties: {
+          ...common,
+          feature: "orchestration.delegation",
+          feature_area: "Orchestration",
+          feature_label: "Run delegated tasks",
+          task_count: intervals.length,
+        },
+      });
+    }
+  }
+
+  if (turn.state === "interrupted") {
+    events.push({
+      event: "feature.used",
+      idempotencyKey: `feature.used:chat.stop:${input.threadId}:${turn.turnId}`,
+      timestamp: turn.completedAt ?? turn.requestedAt,
+      properties: {
+        ...common,
+        feature: "chat.stop",
+        feature_area: "Chat",
+        feature_label: "Stop a running response",
+      },
+    });
   }
 
   const stateEvent =

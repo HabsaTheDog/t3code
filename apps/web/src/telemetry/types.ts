@@ -40,6 +40,22 @@ export interface SemanticTelemetryEvent {
   readonly timestamp?: string;
 }
 
+export type ResponseFeedbackRating = "positive" | "negative";
+
+export const MAX_RESPONSE_FEEDBACK_LENGTH = 4_000;
+
+export interface ResponseFeedbackInput {
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly rating: ResponseFeedbackRating;
+  readonly note?: string;
+}
+
+export interface ResponseFeedbackCaptureResult {
+  readonly ratingCaptured: boolean;
+  readonly noteCaptured: boolean;
+}
+
 export interface TelemetryClock {
   readonly now: () => number;
 }

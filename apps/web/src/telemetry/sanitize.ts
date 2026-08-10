@@ -22,6 +22,19 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bwebcal:\/\/[^\s<>"']+/gi, "[REDACTED_CALENDAR_URL]"],
   [/\bhttps?:\/\/[^\s<>"']+\.ics(?:[?#][^\s<>"']*)?/gi, "[REDACTED_CALENDAR_URL]"],
 ];
+const SAFE_SETTINGS_SECTIONS = new Set([
+  "archived",
+  "cloud",
+  "connections",
+  "diagnostics",
+  "execution-profiles",
+  "general",
+  "keybindings",
+  "privacy",
+  "providers",
+  "source-control",
+  "study-buddy",
+]);
 
 export function redactSensitiveText(
   value: string,
@@ -57,13 +70,32 @@ function redactCredentialBearingUrls(value: string): string {
   });
 }
 
-export function stripUrl(value: string): string {
+export function safeHeatmapPath(value: string): string {
   try {
     const url = new URL(value, "https://local.invalid");
-    return url.pathname === "/" ? "/" : url.pathname.replace(/[^/]+/g, ":segment");
+    const pathname = url.pathname;
+    if (pathname === "/") return "/home";
+    if (pathname.startsWith("/chat") || pathname.startsWith("/_chat")) return "/chat";
+    if (pathname.startsWith("/pair")) return "/pair";
+    if (pathname.startsWith("/setup")) return "/setup";
+    if (pathname.startsWith("/settings/")) {
+      const section = pathname.split("/")[2]?.toLowerCase();
+      return section && SAFE_SETTINGS_SECTIONS.has(section) ? `/settings/${section}` : "/settings";
+    }
+    if (pathname.startsWith("/settings")) return "/settings";
+    return "/application";
   } catch {
-    return "[REDACTED_URL]";
+    return "/application";
   }
+}
+
+export function canonicalHeatmapUrl(value: string): string {
+  const route = safeHeatmapPath(value);
+  const displayPath =
+    route === "/chat" || route === "/home" || route === "/application" || route === "/setup"
+      ? "/_chat/"
+      : route;
+  return `https://app.t3.codes${displayPath}`;
 }
 
 function sanitizeValue(value: unknown, configuredSecrets: ReadonlyArray<string>): unknown {
@@ -191,7 +223,6 @@ function sanitizeReplayAttributes(
 }
 
 export function makeBeforeSendSanitizer(input: {
-  readonly configuredSecrets?: () => ReadonlyArray<string>;
   readonly enqueue: (
     event: string,
     properties: Readonly<Record<string, unknown>>,
@@ -208,48 +239,93 @@ export function makeBeforeSendSanitizer(input: {
     const properties =
       capture.event === "$autocapture"
         ? sanitizeAutocapturePayload(capture.properties)
-        : sanitizeHeatmapPayload(capture.properties, input.configuredSecrets?.() ?? []);
-    Promise.resolve(input.enqueue(capture.event, properties)).catch(() => undefined);
+        : sanitizeHeatmapPayload(capture.properties);
+    if (properties) {
+      Promise.resolve(input.enqueue(capture.event, properties)).catch(() => undefined);
+    }
     return null;
   };
 }
 
 function sanitizeHeatmapPayload(
   properties: Readonly<Record<string, unknown>>,
-  configuredSecrets: ReadonlyArray<string>,
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(properties)
-      .filter(([key]) => ["$heatmap_data", "$session_id", "$window_id"].includes(key))
-      .map(([key, value]) => [
-        key,
-        key === "$heatmap_data"
-          ? sanitizeHeatmapData(value, configuredSecrets)
-          : sanitizeReplayValue(value, key, configuredSecrets),
-      ]),
-  );
+): Record<string, unknown> | null {
+  const heatmapData = sanitizeHeatmapData(properties.$heatmap_data);
+  const viewportWidth = sanitizeViewportDimension(properties.$viewport_width);
+  const viewportHeight = sanitizeViewportDimension(properties.$viewport_height);
+  // PostHog's dedicated heatmap ingestion pipeline drops otherwise valid points when either
+  // viewport dimension is absent, so reject the batch locally instead of pretending it shipped.
+  if (Object.keys(heatmapData).length === 0 || !viewportWidth || !viewportHeight) return null;
+  return {
+    $heatmap_data: heatmapData,
+    $viewport_width: viewportWidth,
+    $viewport_height: viewportHeight,
+    ...(typeof properties.$session_id === "string"
+      ? { $session_id: properties.$session_id.slice(0, 100) }
+      : {}),
+    ...(typeof properties.$window_id === "string"
+      ? { $window_id: properties.$window_id.slice(0, 100) }
+      : {}),
+  };
 }
 
-function sanitizeHeatmapData(
-  value: unknown,
-  configuredSecrets: ReadonlyArray<string>,
-): Record<string, unknown> {
+function sanitizeViewportDimension(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return Math.min(100_000, Math.round(value));
+}
+
+function sanitizeHeatmapData(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value).map(([url, points]) => [
-      `https://studybuddy.local${stripUrl(url)}`,
-      sanitizeReplayValue(points, "", configuredSecrets),
-    ]),
-  );
+  const sanitized: Record<string, ReadonlyArray<Record<string, unknown>>> = {};
+  for (const [url, points] of Object.entries(value)) {
+    const safePoints = sanitizeHeatmapPoints(points);
+    if (safePoints.length === 0) continue;
+    const safeUrl = canonicalHeatmapUrl(url);
+    sanitized[safeUrl] = [...(sanitized[safeUrl] ?? []), ...safePoints].slice(0, 2_000);
+  }
+  return sanitized;
+}
+
+function sanitizeHeatmapPoints(value: unknown): ReadonlyArray<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 2_000).flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const point = candidate as Readonly<Record<string, unknown>>;
+    if (point.type !== "click" && point.type !== "deadclick" && point.type !== "rageclick") {
+      return [];
+    }
+    if (
+      typeof point.x !== "number" ||
+      !Number.isFinite(point.x) ||
+      point.x < 0 ||
+      typeof point.y !== "number" ||
+      !Number.isFinite(point.y) ||
+      point.y < 0
+    ) {
+      return [];
+    }
+    return [
+      {
+        x: Math.min(100_000, Math.round(point.x)),
+        y: Math.min(1_000_000, Math.round(point.y)),
+        type: point.type,
+        ...(typeof point.target_fixed === "boolean" ? { target_fixed: point.target_fixed } : {}),
+      },
+    ];
+  });
 }
 
 function sanitizeAutocapturePayload(
   properties: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
   const analyticsId = findAnalyticsId(properties);
+  if (!analyticsId) return null;
   return {
     event_type: "click",
-    ...(analyticsId ? { analytics_id: analyticsId } : {}),
+    analytics_id: analyticsId,
+    route: safeHeatmapPath(
+      typeof properties.$current_url === "string" ? properties.$current_url : "/application",
+    ).slice(1),
   };
 }
 
@@ -267,7 +343,11 @@ function findAnalyticsId(value: unknown): string | null {
       /(?:^analytics[_-]id$|data[_-]analytics[_-]id|attr__data-analytics-id)/i.test(key) &&
       typeof nested === "string"
     ) {
-      return nested.slice(0, 100);
+      const normalized = nested
+        .trim()
+        .replace(/[^a-z0-9._:-]+/giu, "_")
+        .slice(0, 100);
+      return normalized || null;
     }
     const found = findAnalyticsId(nested);
     if (found) return found;

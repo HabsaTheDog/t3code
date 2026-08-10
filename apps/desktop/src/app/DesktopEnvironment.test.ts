@@ -65,8 +65,11 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.branding.displayName, "Study Buddy (Dev)");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
-      assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
-      assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.equal(environment.appUserModelId, "com.studybuddy.t3code.dev");
+      assert.equal(environment.linuxDesktopEntryName, "study-buddy-t3code-dev.desktop");
+      assert.equal(environment.linuxWmClass, "study-buddy-t3code-dev");
+      assert.equal(environment.userDataDirName, "study-buddy-t3code-dev");
+      assert.equal(environment.legacyUserDataDirName, "Study Buddy (Dev)");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -92,6 +95,20 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.equal(environment.appUserModelId, "com.studybuddy.t3code");
+      assert.equal(environment.linuxDesktopEntryName, "study-buddy-t3code.desktop");
+      assert.equal(environment.linuxWmClass, "study-buddy-t3code");
+      assert.equal(environment.userDataDirName, "study-buddy-t3code");
+      assert.equal(environment.legacyUserDataDirName, "Study Buddy (Alpha)");
+    }),
+  );
+
+  it.effect("defaults packaged Study Buddy state away from upstream T3 Code", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment();
+
+      assert.equal(environment.baseDir, "/Users/alice/.study-buddy-t3code");
+      assert.equal(environment.stateDir, "/Users/alice/.study-buddy-t3code/userdata");
     }),
   );
 

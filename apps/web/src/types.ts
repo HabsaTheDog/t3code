@@ -44,7 +44,13 @@ export interface ChatImageAttachment {
   previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment;
+export interface ChatVoiceAttachment {
+  type: "voice";
+  id: string;
+  durationMs: number;
+}
+
+export type ChatAttachment = ChatImageAttachment | ChatVoiceAttachment;
 
 export interface ChatMessage {
   id: MessageId;

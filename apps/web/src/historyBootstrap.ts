@@ -20,8 +20,10 @@ function messageRoleLabel(message: ChatMessage): "USER" | "ASSISTANT" {
 
 function attachmentSummary(message: ChatMessage): string | null {
   const imageAttachments = message.attachments?.filter((attachment) => attachment.type === "image");
+  const voiceAttachments = message.attachments?.filter((attachment) => attachment.type === "voice");
   const count = imageAttachments?.length ?? 0;
-  if (count === 0) {
+  const voiceCount = voiceAttachments?.length ?? 0;
+  if (count === 0 && voiceCount === 0) {
     return null;
   }
 
@@ -29,7 +31,12 @@ function attachmentSummary(message: ChatMessage): string | null {
   const namesSummary = names.join(", ");
   const extraCount = count - names.length;
   const extraSummary = extraCount > 0 ? ` (+${extraCount} more)` : "";
-  return `[Attached image${count === 1 ? "" : "s"}: ${namesSummary}${extraSummary}]`;
+  const parts = [];
+  if (count > 0)
+    parts.push(`Attached image${count === 1 ? "" : "s"}: ${namesSummary}${extraSummary}`);
+  if (voiceCount > 0)
+    parts.push(`Attached voice note${voiceCount === 1 ? "" : "s"}; transcript was hidden`);
+  return `[${parts.join("; ")}]`;
 }
 
 function buildMessageBlock(message: ChatMessage): string {

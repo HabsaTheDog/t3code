@@ -1,11 +1,13 @@
 import { TelemetryController } from "./controller";
 import { persistClientSettingsDurably } from "../hooks/useSettings";
+import { telemetryContextProperties } from "./context";
 
 const projectToken = (import.meta.env.VITE_POSTHOG_PROJECT_TOKEN as string | undefined)?.trim();
 const knownConfiguredSecrets = new Set<string>();
 
 export const telemetry = new TelemetryController({
   ...(projectToken ? { projectToken } : {}),
+  contextProperties: telemetryContextProperties,
   configuredSecrets: () => [...knownConfiguredSecrets],
   onInstallationIdCreated: async (installationId) => {
     await persistClientSettingsDurably({ installationId });

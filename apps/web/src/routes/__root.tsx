@@ -67,6 +67,7 @@ import { CONSENT_VERSION, SetupGate } from "../setup/SetupWizard";
 import { telemetry } from "../telemetry/runtime";
 import { ConversationTelemetryBridge } from "../telemetry/ConversationTelemetryBridge";
 import { AnalyticsTelemetryBridge } from "../telemetry/AnalyticsTelemetryBridge";
+import { featureProperties, featuresExposedOnRoute } from "../telemetry/featureCatalog";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -191,11 +192,31 @@ function safeRouteName(pathname: string): string {
   return "application";
 }
 
-let appStartedCaptured = false;
+const APP_STARTED_SESSION_MARKER = "study-buddy:telemetry:app-started:v1";
+const EXPOSED_FEATURE_SESSION_PREFIX = "study-buddy:telemetry:feature-exposed:v1:";
+
+function hasSessionMarker(key: string): boolean {
+  try {
+    return window.sessionStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setSessionMarker(key: string): void {
+  try {
+    window.sessionStorage.setItem(key, "1");
+  } catch {
+    // In-memory route guards below still prevent duplicates when storage is unavailable.
+  }
+}
 
 function TelemetryBootstrap({ pathname }: { pathname: string }) {
   const hydrated = useClientSettingsHydrated();
   const settings = useSettings();
+  const appStartedCaptured = useRef(hasSessionMarker(APP_STARTED_SESSION_MARKER));
+  const lastCapturedPathname = useRef<string | null>(null);
+  const exposedFeatures = useRef(new Set<string>());
 
   useEffect(() => {
     if (!hydrated) return;
@@ -215,13 +236,30 @@ function TelemetryBootstrap({ pathname }: { pathname: string }) {
           (settings.analyticsConsent === "accepted" || settings.conversationConsent === "accepted"),
       });
       if (analyticsConsent !== "accepted") return;
-      if (!appStartedCaptured) {
-        appStartedCaptured = await telemetry.capture({ event: "app.started" });
+      if (!appStartedCaptured.current) {
+        appStartedCaptured.current = await telemetry.capture({ event: "app.started" });
+        if (appStartedCaptured.current) setSessionMarker(APP_STARTED_SESSION_MARKER);
       }
-      await telemetry.capture({
-        event: "route.viewed",
-        properties: { route: safeRouteName(pathname) },
-      });
+      const route = safeRouteName(pathname);
+      if (lastCapturedPathname.current !== pathname) {
+        const captured = await telemetry.capture({
+          event: "route.viewed",
+          properties: { route },
+        });
+        if (captured) lastCapturedPathname.current = pathname;
+      }
+      for (const feature of featuresExposedOnRoute(route)) {
+        const sessionKey = `${EXPOSED_FEATURE_SESSION_PREFIX}${feature}`;
+        if (exposedFeatures.current.has(feature) || hasSessionMarker(sessionKey)) continue;
+        const captured = await telemetry.capture({
+          event: "feature.exposed",
+          properties: featureProperties(feature, { surface: route }),
+        });
+        if (captured) {
+          exposedFeatures.current.add(feature);
+          setSessionMarker(sessionKey);
+        }
+      }
     })();
   }, [
     hydrated,

@@ -17,6 +17,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  formatVoiceInputTranscripts,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
@@ -72,6 +73,25 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("formatVoiceInputTranscripts", () => {
+  it("keeps multiple voice inputs ordered and marks automatic transcription errors", () => {
+    expect(
+      formatVoiceInputTranscripts([
+        { transcript: "first voice transcript" },
+        { transcript: "second voice transcript" },
+      ]),
+    ).toBe(
+      [
+        "[Voice Input 1 — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]",
+        "first voice transcript",
+        "",
+        "[Voice Input 2 — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]",
+        "second voice transcript",
+      ].join("\n"),
+    );
   });
 });
 

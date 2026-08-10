@@ -8,11 +8,13 @@ import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   AlertTriangleIcon,
   BotIcon,
+  CalendarDaysIcon,
   CheckCircle2Icon,
   GraduationCapIcon,
   KeyRoundIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
+  AudioWaveformIcon,
   XCircleIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -37,7 +39,9 @@ import {
 } from "./settingsLayout";
 import { QUIZ_ACCESS_MODE_OPTIONS, type QuizAccessMode } from "./StudyBuddySettings.logic";
 import { registerTelemetrySecret, telemetry } from "../../telemetry/runtime";
+import { featureProperties } from "../../telemetry/featureCatalog";
 import { cn } from "../../lib/utils";
+import { SpeechModelCard } from "../speech/SpeechModelCard";
 
 type SecretField = "moodlePassword" | "cisPassword";
 type SecretPatches = Partial<Record<SecretField, StudyBuddySecretPatch>>;
@@ -65,7 +69,7 @@ const EMPTY_CONFIG: StudyBuddyConfiguration = {
 };
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Study Buddy settings are unavailable.";
+  return error instanceof Error ? error.message : "We couldn’t open your Study Buddy settings.";
 }
 
 function isDirtyConfig(
@@ -167,14 +171,18 @@ export function StudyBuddySettingsPanel() {
           event: "settings.changed",
           properties: { section: "study_buddy" },
         });
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("settings.study_buddy"),
+        });
       } catch (saveError) {
         const message = errorMessage(saveError);
         lastFailedGenerationRef.current = generationAtSave;
         setError(message);
         toastManager.add({
           type: "error",
-          title: "Study Buddy settings failed",
-          description: message,
+          title: "We couldn’t save your changes",
+          description: `${message} Please try again.`,
         });
       } finally {
         setSaving(false);
@@ -217,7 +225,7 @@ export function StudyBuddySettingsPanel() {
       }));
       toastManager.add({
         type: result.status === "success" ? "success" : "error",
-        title: result.status === "success" ? "Connection successful" : "Connection failed",
+        title: result.status === "success" ? "Everything works" : "We couldn’t connect",
         description: result.message,
       });
       void telemetry.capture({
@@ -230,7 +238,7 @@ export function StudyBuddySettingsPanel() {
         ...current,
         [target]: { state: "failure", message },
       }));
-      toastManager.add({ type: "error", title: "Connection failed", description: message });
+      toastManager.add({ type: "error", title: "We couldn’t connect", description: message });
       void telemetry.capture({
         event: "study_connection.tested",
         properties: { target, outcome: "failed" },
@@ -244,8 +252,8 @@ export function StudyBuddySettingsPanel() {
         <div>
           <h1 className="text-lg font-semibold tracking-tight">Study Buddy</h1>
           <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-            Saved secrets are write-only and never sent back to this screen. You can reveal a new
-            value while editing it. Changes save automatically.
+            Connect your study services and choose how Study Buddy should help. Changes save
+            automatically, and saved passwords stay hidden.
           </p>
         </div>
         <Tooltip>
@@ -270,15 +278,15 @@ export function StudyBuddySettingsPanel() {
       {error ? (
         <Alert variant="error">
           <AlertTriangleIcon />
-          <AlertTitle>Study Buddy settings unavailable</AlertTitle>
+          <AlertTitle>We couldn’t open these settings</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
       <SettingsSection title="Assistant" icon={<BotIcon className="size-3.5" />}>
         <SettingsRow
-          title="Setup assistant"
-          description="Run the guided privacy, provider, and Study Buddy setup again without erasing existing configuration."
+          title="Guided setup"
+          description="Go through the step-by-step setup again. Your current choices and saved details will stay in place."
           control={
             <Button size="sm" variant="outline" onClick={requestSetupRerun}>
               Run setup again
@@ -286,8 +294,8 @@ export function StudyBuddySettingsPanel() {
           }
         />
         <SettingsRow
-          title="Personality"
-          description="Add persistent instructions for how agents should communicate and behave. Plain text and Markdown are supported."
+          title="How Study Buddy responds"
+          description="Tell Study Buddy how you’d like it to explain things and work with you. This is used in new chats."
           resetAction={
             settings.personalityPrompt !== DEFAULT_UNIFIED_SETTINGS.personalityPrompt ? (
               <SettingResetButton
@@ -305,26 +313,64 @@ export function StudyBuddySettingsPanel() {
             <DraftTextarea
               value={settings.personalityPrompt}
               onCommit={(personalityPrompt) => updateSettings({ personalityPrompt })}
-              placeholder="Example: Be direct and strict about technical quality. Call me Alex."
-              aria-label="Agent personality instructions"
-              className="min-h-36 resize-y font-mono text-xs leading-relaxed"
+              placeholder="Example: Keep explanations short, use simple examples, and call me Alex."
+              aria-label="Instructions for how Study Buddy should respond"
+              className="min-h-36 resize-y text-xs leading-relaxed"
               spellCheck
             />
             <p className="mt-2 text-[11px] text-muted-foreground/70">
-              Saved when you leave the field. Applied when a new agent session starts.
+              Saved when you leave this box. Used the next time you start a chat.
             </p>
           </div>
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Accounts" icon={<KeyRoundIcon className="size-3.5" />}>
-        <SettingsRow title="Moodle username" description="Your Technikum Moodle account name.">
+      <SettingsSection title="Voice input" icon={<AudioWaveformIcon className="size-3.5" />}>
+        <SpeechModelCard compact />
+      </SettingsSection>
+
+      <SettingsSection title="Moodle" icon={<GraduationCapIcon className="size-3.5" />}>
+        <SettingsRow
+          title="Moodle website"
+          description="The Moodle page you normally use to see your courses."
+          control={
+            <ConnectionCheckButton
+              target="moodle"
+              status={testStatus.moodle}
+              disabled={loading}
+              onTest={testConnection}
+            />
+          }
+        >
+          <div className="pt-3">
+            <Input
+              nativeInput
+              value={draft.moodleDashboardUrl}
+              disabled={loading}
+              placeholder="https://moodle.technikum-wien.at"
+              onChange={(event) =>
+                setDraft((current) => {
+                  markDirty();
+                  return {
+                    ...current,
+                    moodleDashboardUrl: event.currentTarget.value,
+                  };
+                })
+              }
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          title="Moodle username"
+          description="The username you use to sign in to Moodle."
+        >
           <div className="pt-3">
             <Input
               nativeInput
               value={draft.moodleUsername}
               disabled={loading}
               autoComplete="username"
+              placeholder="Your student username"
               onChange={(event) =>
                 setDraft((current) => {
                   markDirty();
@@ -338,7 +384,7 @@ export function StudyBuddySettingsPanel() {
           title="Moodle password"
           description={
             config.moodlePasswordConfigured
-              ? "Saved securely. Enter a new password only to replace it."
+              ? "Your password is saved. Enter a new one only if you want to replace it."
               : "Enter your Moodle password."
           }
           status={config.moodlePasswordConfigured ? <ConfiguredStatus /> : undefined}
@@ -369,13 +415,47 @@ export function StudyBuddySettingsPanel() {
             }
           />
         </SettingsRow>
-        <SettingsRow title="CIS username" description="Leave empty to use the Moodle username.">
+      </SettingsSection>
+
+      <SettingsSection title="CIS" icon={<KeyRoundIcon className="size-3.5" />}>
+        <SettingsRow
+          title="CIS website"
+          description="The CIS page you normally use for schedules, rooms, exams, and study information."
+          control={
+            <ConnectionCheckButton
+              target="cis"
+              status={testStatus.cis}
+              disabled={loading}
+              onTest={testConnection}
+            />
+          }
+        >
+          <div className="pt-3">
+            <Input
+              nativeInput
+              value={draft.cisUrl}
+              disabled={loading}
+              placeholder="https://cis.technikum-wien.at"
+              onChange={(event) =>
+                setDraft((current) => {
+                  markDirty();
+                  return { ...current, cisUrl: event.currentTarget.value };
+                })
+              }
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          title="CIS username"
+          description="Leave this empty if you use the same username as Moodle."
+        >
           <div className="pt-3">
             <Input
               nativeInput
               value={draft.cisUsername}
               disabled={loading}
               autoComplete="username"
+              placeholder="Same as Moodle"
               onChange={(event) =>
                 setDraft((current) => {
                   markDirty();
@@ -389,7 +469,7 @@ export function StudyBuddySettingsPanel() {
           title="CIS password"
           description={
             config.cisPasswordConfigured
-              ? "Saved securely. Enter a new password only to replace it."
+              ? "Your password is saved. Enter a new one only if you want to replace it."
               : "Enter your CIS password."
           }
           status={config.cisPasswordConfigured ? <ConfiguredStatus /> : undefined}
@@ -420,65 +500,10 @@ export function StudyBuddySettingsPanel() {
         </SettingsRow>
       </SettingsSection>
 
-      <SettingsSection title="Sources" icon={<GraduationCapIcon className="size-3.5" />}>
+      <SettingsSection title="Calendar" icon={<CalendarDaysIcon className="size-3.5" />}>
         <SettingsRow
-          title="Moodle URL"
-          description="Dashboard, course, or activity URL."
-          control={
-            <ConnectionCheckButton
-              target="moodle"
-              status={testStatus.moodle}
-              disabled={loading}
-              onTest={testConnection}
-            />
-          }
-        >
-          <div className="pt-3">
-            <Input
-              nativeInput
-              value={draft.moodleDashboardUrl}
-              disabled={loading}
-              onChange={(event) =>
-                setDraft((current) => {
-                  markDirty();
-                  return {
-                    ...current,
-                    moodleDashboardUrl: event.currentTarget.value,
-                  };
-                })
-              }
-            />
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="CIS URL"
-          description="Schedules, rooms, exams, and administration."
-          control={
-            <ConnectionCheckButton
-              target="cis"
-              status={testStatus.cis}
-              disabled={loading}
-              onTest={testConnection}
-            />
-          }
-        >
-          <div className="pt-3">
-            <Input
-              nativeInput
-              value={draft.cisUrl}
-              disabled={loading}
-              onChange={(event) =>
-                setDraft((current) => {
-                  markDirty();
-                  return { ...current, cisUrl: event.currentTarget.value };
-                })
-              }
-            />
-          </div>
-        </SettingsRow>
-        <SettingsRow
-          title="Calendar URL"
-          description="Private iCalendar feed URL."
+          title="Private calendar link"
+          description="Copy this link from your calendar service. Study Buddy uses it to check upcoming classes, exams, and deadlines."
           control={
             <ConnectionCheckButton
               target="calendar"
@@ -495,7 +520,7 @@ export function StudyBuddySettingsPanel() {
               value={draft.calendarUrl}
               disabled={loading}
               placeholder="https://…/calendar.ics"
-              aria-label="Calendar URL"
+              aria-label="Private calendar link"
               onChange={(event) =>
                 setDraft((current) => {
                   markDirty();
@@ -509,8 +534,8 @@ export function StudyBuddySettingsPanel() {
 
       <SettingsSection title="Quiz safety" icon={<ShieldCheckIcon className="size-3.5" />}>
         <SettingsRow
-          title="Access mode"
-          description="Final Moodle quiz submission remains blocked in every mode."
+          title="Quiz help"
+          description="Choose how Study Buddy may help with Moodle quizzes. Only you can submit a quiz."
           control={
             <Select
               value={draft.quiz.accessMode}
@@ -525,8 +550,14 @@ export function StudyBuddySettingsPanel() {
                 });
               }}
             >
-              <SelectTrigger className="w-full sm:w-52" aria-label="Quiz access mode">
-                <SelectValue />
+              <SelectTrigger className="w-full sm:w-52" aria-label="Quiz help level">
+                <SelectValue>
+                  {
+                    QUIZ_ACCESS_MODE_OPTIONS.find(
+                      (option) => option.value === draft.quiz.accessMode,
+                    )?.label
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup alignItemWithTrigger={false}>
                 {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
@@ -569,8 +600,8 @@ function ConnectionCheckButton({
     : status?.state === "success"
       ? "Connected"
       : status?.state === "failure"
-        ? "Failed"
-        : "Test connection";
+        ? "Try again"
+        : "Check connection";
   const button = (
     <Button
       size="sm"

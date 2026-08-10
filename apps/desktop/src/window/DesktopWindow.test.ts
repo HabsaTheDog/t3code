@@ -43,6 +43,10 @@ function makeFakeBrowserWindow() {
     openDevTools: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
+    session: {
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn(),
+    },
     setWindowOpenHandler: vi.fn(),
   };
 
@@ -180,6 +184,15 @@ describe("DesktopWindow", () => {
         navigationUrl: "not a url",
       }),
     );
+  });
+
+  it("allows media and sanitized clipboard writes in the main window", () => {
+    assert.isTrue(DesktopWindow.isMainWindowPermissionAllowed("media"));
+    assert.isTrue(
+      DesktopWindow.isMainWindowPermissionAllowed("clipboard-sanitized-write"),
+    );
+    assert.isFalse(DesktopWindow.isMainWindowPermissionAllowed("clipboard-read"));
+    assert.isFalse(DesktopWindow.isMainWindowPermissionAllowed("geolocation"));
   });
 
   it.effect("does not open a development window until the backend is ready", () =>

@@ -25,6 +25,7 @@ const configuredPostHogProjectToken =
   process.env.VITE_POSTHOG_PROJECT_TOKEN?.trim() ||
   "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const browserExecutablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH?.trim();
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -73,7 +74,9 @@ const browserTestProject = {
     testTimeout: 30_000,
     browser: {
       enabled: true,
-      provider: playwright() as never,
+      provider: playwright(
+        browserExecutablePath ? { launchOptions: { executablePath: browserExecutablePath } } : {},
+      ) as never,
       instances: [{ browser: "chromium" }],
       headless: true,
       api: {

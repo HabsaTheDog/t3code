@@ -17,8 +17,8 @@ import type * as Electron from "electron";
 export const CLOUD_AUTH_CALLBACK_HOST = "auth";
 export const CLOUD_AUTH_CALLBACK_PATHNAME = "/callback";
 export const CLOUD_AUTH_CALLBACK_STATE_PARAM = "t3_state";
-export const CLOUD_AUTH_CALLBACK_SCHEME = "t3code";
-export const DEVELOPMENT_CLOUD_AUTH_CALLBACK_SCHEME = "t3code-dev";
+export const CLOUD_AUTH_CALLBACK_SCHEME = "study-buddy-t3code";
+export const DEVELOPMENT_CLOUD_AUTH_CALLBACK_SCHEME = "study-buddy-t3code-dev";
 
 const CLOUD_AUTH_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 

@@ -25,6 +25,8 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
+const STUDY_BUDDY_APP_ID = "com.studybuddy.t3code";
+const STUDY_BUDDY_EXECUTABLE_NAME = "study-buddy-t3code";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -675,11 +677,11 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
+    ? "Study Buddy T3 Code (Nightly)"
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
-const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
   version: string,
@@ -688,12 +690,19 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   mockUpdateServerPort: number | undefined,
 ) {
   const buildConfig: Record<string, unknown> = {
-    appId: "com.t3tools.t3code",
+    appId: STUDY_BUDDY_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Study-Buddy-T3-Code-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    extraResources: [
+      {
+        from: "apps/desktop/native/speech-sidecar/target/release",
+        to: "speech-sidecar",
+        filter: ["study-buddy-speech", "study-buddy-speech.exe"],
+      },
+    ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = resolveGitHubPublishConfig(updateChannel);
@@ -713,10 +722,14 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "Study Buddy uses the microphone only to transcribe voice messages locally.",
+      },
       protocols: [
         {
-          name: "T3 Code",
-          schemes: ["t3code"],
+          name: "Study Buddy T3 Code",
+          schemes: [STUDY_BUDDY_EXECUTABLE_NAME],
         },
       ],
     };
@@ -725,12 +738,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
-      executableName: "t3code",
+      executableName: STUDY_BUDDY_EXECUTABLE_NAME,
       icon: "icons",
       category: "Development",
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          StartupWMClass: STUDY_BUDDY_EXECUTABLE_NAME,
         },
       },
     };
@@ -854,6 +867,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       })`vp run build:desktop`,
       { label: "vp run build:desktop", verbose: options.verbose },
     );
+    yield* Effect.log("[desktop-artifact] Building local speech sidecar...");
+    yield* runCommand(
+      ChildProcess.make({
+        cwd: path.join(repoRoot, "apps/desktop/native/speech-sidecar"),
+        shell: process.platform === "win32",
+      })`cargo build --release`,
+      { label: "cargo build --release (speech sidecar)", verbose: options.verbose },
+    );
   }
 
   for (const [label, dir] of Object.entries(distDirs)) {
@@ -879,6 +900,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  const speechSidecarFile =
+    process.platform === "win32" ? "study-buddy-speech.exe" : "study-buddy-speech";
+  const speechSidecarSource = path.join(
+    repoRoot,
+    "apps/desktop/native/speech-sidecar/target/release",
+    speechSidecarFile,
+  );
+  if (!(yield* fs.exists(speechSidecarSource))) {
+    return yield* new BuildScriptError({
+      message: `Missing speech sidecar at ${speechSidecarSource}. Run 'cargo build --release' in apps/desktop/native/speech-sidecar first.`,
+    });
+  }
+  const stagedSpeechSidecarDir = path.join(
+    stageAppDir,
+    "apps/desktop/native/speech-sidecar/target/release",
+  );
+  yield* fs.makeDirectory(stagedSpeechSidecarDir, { recursive: true });
+  yield* fs.copyFile(speechSidecarSource, path.join(stagedSpeechSidecarDir, speechSidecarFile));
 
   yield* assertPlatformBuildResources(
     options.platform,
@@ -900,14 +939,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   };
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    name: STUDY_BUDDY_EXECUTABLE_NAME,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
-    author: "T3 Tools",
+    description: "Study Buddy desktop build",
+    author: "Study Buddy",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,

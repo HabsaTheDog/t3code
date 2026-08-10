@@ -274,6 +274,28 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    getSpeechModelState: async () => ({
+      status: "not-enabled",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    enableSpeechModel: async () => ({
+      status: "downloading",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    removeSpeechModel: async () => ({
+      status: "not-enabled",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    transcribeSpeech: async () => ({ text: "test transcript" }),
     ...overrides,
   };
 }

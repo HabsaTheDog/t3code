@@ -99,6 +99,74 @@ describe("conversation telemetry server redaction", () => {
       completedAt: now,
       latencyMs: 0,
       state: "success",
+      runLogs: [],
+      files: [],
+    });
+  });
+
+  it("includes redacted run logs and safe checkpoint file metadata", () => {
+    const source = thread();
+    expect(
+      redactConversationTurn({
+        thread: {
+          ...source,
+          activities: [
+            {
+              id: "activity-1" as never,
+              tone: "error",
+              kind: "runtime.error",
+              summary: "Failed with arbitrary-secret",
+              payload: { raw: "not exported" },
+              turnId,
+              createdAt: now,
+            },
+          ],
+          checkpoints: [
+            {
+              turnId,
+              checkpointTurnCount: 1,
+              checkpointRef: CheckpointRef.make("checkpoint-1"),
+              status: "ready",
+              files: [
+                {
+                  path: "reports/study-guide.pdf",
+                  kind: "added",
+                  additions: 12,
+                  deletions: 0,
+                },
+              ],
+              assistantMessageId: MessageId.make("assistant-final"),
+              completedAt: now,
+            },
+          ],
+        },
+        turnId,
+        studyConfiguration: {
+          envPath: "",
+          exists: true,
+          raw: "",
+          values: { MOODLE_PASSWORD: "arbitrary-secret" },
+        },
+        serverSettings: DEFAULT_SERVER_SETTINGS,
+        events: [],
+      }),
+    ).toMatchObject({
+      runLogs: [
+        {
+          kind: "runtime.error",
+          tone: "error",
+          summary: "Failed with [REDACTED_CONFIGURED_SECRET]",
+        },
+      ],
+      files: [
+        {
+          name: "study-guide.pdf",
+          relativePath: "reports/study-guide.pdf",
+          kind: "added",
+          additions: 12,
+          deletions: 0,
+        },
+      ],
     });
   });
 

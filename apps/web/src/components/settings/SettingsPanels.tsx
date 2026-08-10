@@ -527,7 +527,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose how T3 Code looks across the app."
+          description="Choose a light or dark look, or match your device."
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -560,7 +560,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           title="Time format"
-          description="System default follows your browser or OS clock preference."
+          description="Use your device’s time format, or choose 12-hour or 24-hour time."
           resetAction={
             settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
               <SettingResetButton
@@ -601,8 +601,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
+          title="Wrap long code changes"
+          description="Keep long lines visible by moving the rest onto the next line."
           resetAction={
             settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
               <SettingResetButton
@@ -625,8 +625,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Hide whitespace changes"
-          description="Set whether the diff panel ignores whitespace-only edits by default."
+          title="Ignore spacing-only changes"
+          description="Hide changes that only add or remove spaces or blank lines."
           resetAction={
             settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
               <SettingResetButton
@@ -651,8 +651,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
+          title="Show answers as they’re written"
+          description="See Study Buddy’s answer appear while it is being created."
           resetAction={
             settings.enableAssistantStreaming !==
             DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
@@ -678,8 +678,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Auto-open task panel"
-          description="Open the right-side plan and task panel automatically when steps appear."
+          title="Open the task panel automatically"
+          description="Show the plan on the right when Study Buddy creates a list of steps."
           resetAction={
             settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
               <SettingResetButton
@@ -704,8 +704,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="New threads"
-          description="Pick the default workspace mode for newly created draft threads."
+          title="New chat workspace"
+          description="Use the current project or make a separate copy for each new chat."
           resetAction={
             settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (
               <SettingResetButton
@@ -729,15 +729,17 @@ export function GeneralSettingsPanel() {
             >
               <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
                 <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                  {settings.defaultThreadEnvMode === "worktree"
+                    ? "Separate copy"
+                    : "Current project"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="local">
-                  Local
+                  Current project
                 </SelectItem>
                 <SelectItem hideIndicator value="worktree">
-                  New worktree
+                  Separate copy
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -745,8 +747,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Add project starts in"
-          description='Leave empty to use "~/" when the Add Project browser opens.'
+          title="Default projects folder"
+          description="Choose the folder shown first when you add a project. Leave it empty to use your home folder."
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
@@ -773,8 +775,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Archive confirmation"
-          description="Require a second click on the inline archive action before a thread is archived."
+          title="Confirm before archiving"
+          description="Ask for a second click before moving a chat to the archive."
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
               <SettingResetButton
@@ -799,8 +801,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Delete confirmation"
-          description="Ask before deleting a thread and its chat history."
+          title="Confirm before deleting"
+          description="Ask before permanently deleting a chat and its history."
           resetAction={
             settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
               <SettingResetButton
@@ -825,8 +827,8 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          title="AI for Git writing"
+          description="Choose the AI used to write commit messages, pull request titles, and similar Git text."
           resetAction={
             isGitWritingModelDirty ? (
               <SettingResetButton
@@ -905,7 +907,7 @@ export function GeneralSettingsPanel() {
         ) : (
           <SettingsRow
             title={<AboutVersionTitle />}
-            description="Current version of the application."
+            description="The version of Study Buddy installed on this device."
           />
         )}
         <SettingsRow

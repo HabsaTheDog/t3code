@@ -40,6 +40,12 @@ import {
   setUpdateChannel,
 } from "./methods/updates.ts";
 import {
+  enableSpeechModel,
+  getSpeechModelState,
+  removeSpeechModel,
+  transcribeSpeech,
+} from "./methods/speech.ts";
+import {
   confirm,
   destroyViewerSurface,
   getAppBranding,
@@ -96,4 +102,8 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
+  yield* ipc.handle(getSpeechModelState);
+  yield* ipc.handle(enableSpeechModel);
+  yield* ipc.handle(removeSpeechModel);
+  yield* ipc.handle(transcribeSpeech);
 }).pipe(Effect.withSpan("desktop.ipc.installHandlers"));

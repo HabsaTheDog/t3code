@@ -4,6 +4,7 @@
 // @effect-diagnostics globalConsole:off - This small launcher runs before the Effect runtime and preserves child stdio.
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -78,6 +79,13 @@ function resolvePreferredCodexBinary(): string | null {
     return override;
   }
 
+  // The standalone installer maintains this stable launcher across CLI and
+  // Node upgrades. Prefer it over version-bound npm/NVM installation paths.
+  const fromStableUserBin = findCommandInPath("codex", [path.join(os.homedir(), ".local", "bin")]);
+  if (fromStableUserBin && !isProjectLocalCodexPath(fromStableUserBin)) {
+    return fromStableUserBin;
+  }
+
   const nodeBinDir = path.dirname(process.execPath);
   const fromNodeBin = findCommandInPath("codex", [nodeBinDir]);
   if (fromNodeBin && !isProjectLocalCodexPath(fromNodeBin)) {
@@ -111,7 +119,8 @@ function shouldUsePreferredCodexBinary(value: unknown): boolean {
   if (!hasPathSeparator(trimmed)) {
     return false;
   }
-  return isProjectLocalCodexPath(path.resolve(trimmed));
+  const resolved = path.resolve(trimmed);
+  return !isExecutable(resolved) || isProjectLocalCodexPath(resolved);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

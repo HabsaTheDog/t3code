@@ -48,14 +48,14 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Study Buddy", to: "/settings/study-buddy", icon: GraduationCapIcon },
-  { label: "Execution profiles", to: "/settings/execution-profiles", icon: GaugeIcon },
-  { label: "Privacy & Data", to: "/settings/privacy", icon: ShieldCheckIcon },
-  { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
-  { label: "Providers", to: "/settings/providers", icon: BotIcon },
-  { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
+  { label: "Profile editor", to: "/settings/execution-profiles", icon: GaugeIcon },
+  { label: "Privacy & data", to: "/settings/privacy", icon: ShieldCheckIcon },
+  { label: "Keyboard shortcuts", to: "/settings/keybindings", icon: KeyboardIcon },
+  { label: "AI connections", to: "/settings/providers", icon: BotIcon },
+  { label: "Git & GitHub", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "T3 Cloud", to: "/settings/cloud", icon: CloudIcon, badgeLabel: "Private Beta" },
-  { label: "Connections", to: "/settings/connections", icon: Link2Icon },
-  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
+  { label: "App connections", to: "/settings/connections", icon: Link2Icon },
+  { label: "Archived chats", to: "/settings/archived", icon: ArchiveIcon },
 ];
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {

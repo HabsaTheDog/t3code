@@ -14,6 +14,7 @@ import {
   CircleHelpIcon,
   CircleIcon,
   BotIcon,
+  AudioWaveformIcon,
   GraduationCapIcon,
   LinkIcon,
   LockKeyholeIcon,
@@ -48,6 +49,7 @@ import { subscribeSetupRerun } from "./setupCoordinator";
 import { systemTelemetryRandom } from "../telemetry/types";
 import { registerTelemetrySecret, telemetry } from "../telemetry/runtime";
 import { ProviderSetupStep, type ProviderSetupStepHandle } from "./ProviderSetupStep";
+import { SpeechModelCard } from "../components/speech/SpeechModelCard";
 
 export const ONBOARDING_VERSION = 1;
 export const CONSENT_VERSION = 1;
@@ -57,6 +59,7 @@ type SetupStepId =
   | "privacy"
   | "environment"
   | "provider"
+  | "voice"
   | "moodle"
   | "cis"
   | "calendar"
@@ -76,6 +79,7 @@ const ALL_STEPS: readonly SetupStep[] = [
   { id: "privacy", label: "Privacy", icon: ShieldCheckIcon },
   { id: "environment", label: "Environment", icon: WifiIcon },
   { id: "provider", label: "Codex", icon: BotIcon },
+  { id: "voice", label: "Voice input", icon: AudioWaveformIcon },
   { id: "moodle", label: "Moodle", icon: GraduationCapIcon },
   { id: "cis", label: "CIS", icon: LockKeyholeIcon },
   { id: "calendar", label: "Calendar", icon: LinkIcon },
@@ -95,6 +99,7 @@ function normalizeSetupStepId(stepId: string | null): SetupStepId | null {
     case "privacy":
     case "environment":
     case "provider":
+    case "voice":
     case "moodle":
     case "cis":
     case "calendar":
@@ -209,7 +214,7 @@ function SetupWizard({
       setStepIndex(bounded);
       return true;
     } catch {
-      setStepSaveError("Setup progress could not be saved locally. Retry before continuing.");
+      setStepSaveError("We couldn’t save your progress. Please try again.");
       return false;
     } finally {
       setSavingStep(false);
@@ -266,9 +271,7 @@ function SetupWizard({
         });
       }
     } catch {
-      setPrivacySaveError(
-        "Your privacy choices could not be saved locally. No new consent was applied.",
-      );
+      setPrivacySaveError("We couldn’t save your choices. Nothing changed, so please try again.");
       void telemetry.capture({
         event: "setup.step_failed",
         properties: { step: "privacy", reason: "local_persistence" },
@@ -305,7 +308,7 @@ function SetupWizard({
             properties: { step: step.id },
           });
         } catch {
-          setStepSaveError("Setup completion could not be saved locally. Retry before closing.");
+          setStepSaveError("We couldn’t finish setup. Please try again.");
         } finally {
           setSavingStep(false);
         }
@@ -349,7 +352,7 @@ function SetupWizard({
             <div>
               <p className="text-sm font-semibold">{APP_DISPLAY_NAME}</p>
               <p className="text-xs text-muted-foreground">
-                {forced ? "Setup rerun" : "First run"}
+                {forced ? "Setup" : "Let’s get started"}
               </p>
             </div>
           </div>
@@ -381,7 +384,8 @@ function SetupWizard({
             })}
           </ol>
           <p className="mt-auto text-xs leading-5 text-muted-foreground">
-            Codex is required. Study connections can be skipped and configured later.
+            You only need Codex to get started. Moodle, CIS, Calendar, and voice input can all be
+            added later.
           </p>
         </aside>
 
@@ -433,6 +437,7 @@ function SetupWizard({
               {step.id === "provider" ? (
                 <ProviderStep providerSetupStepRef={providerSetupStepRef} />
               ) : null}
+              {step.id === "voice" ? <VoiceInputStep /> : null}
               {step.id === "moodle" ? (
                 <StudyConfigurationStep
                   key="moodle"
@@ -518,7 +523,7 @@ function SetupWizard({
                       }
                     />
                     <TooltipPopup side="top">
-                      Pick at least one category, or use Allow all / Reject all.
+                      Choose what you’d like to share, or select No thanks.
                     </TooltipPopup>
                   </Tooltip>
                 )}
@@ -589,14 +594,14 @@ function PrivacyStep({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl space-y-2">
           <Badge variant="secondary" className="w-fit">
-            Optional, independent, and off by default
+            Optional — change this anytime
           </Badge>
           <p className="text-[1.75rem] font-semibold tracking-[-0.04em] sm:text-[2rem]">
-            Pick the categories you want.
+            Help us improve Study Buddy
           </p>
           <p className="text-sm leading-6 text-muted-foreground">
-            Click a card to allow it, use the quick actions for both or neither, and continue once
-            you’ve made a choice.
+            You can share a little about how you use Study Buddy to help us make it better. Sharing
+            is off until you choose it, and you can change your mind at any time.
           </p>
         </div>
       </div>
@@ -611,7 +616,7 @@ function PrivacyStep({
             onAllowAll();
           }}
         >
-          Allow all
+          Share both
         </Button>
         <Button
           variant="outline"
@@ -623,20 +628,20 @@ function PrivacyStep({
             onRejectAll();
           }}
         >
-          Reject all
+          No thanks
         </Button>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <ConsentCard
           title="Usage analytics"
-          description="Events and click heatmaps for tagged controls."
+          description="Share which parts of Study Buddy you use and roughly where people click on each screen. We never include exact page addresses, what you type, mouse movement, scrolling, passwords, or file contents."
           decision={analytics}
           onDecision={onAnalytics}
         />
         <ConsentCard
           title="Conversation sharing"
-          description="Completed user and assistant text, provider/model, timing, and outcome."
+          description="Share your messages, Study Buddy’s replies, and any feedback you leave, plus basic details about files it creates or changes. Passwords and file contents are not included."
           decision={conversation}
           onDecision={onConversation}
         />
@@ -700,12 +705,10 @@ function ConsentCard({
           </p>
         </div>
         <Badge variant={decision === "accepted" ? "success" : "secondary"}>
-          {decision === "accepted" ? "Selected" : "Off"}
+          {decision === "accepted" ? "Sharing" : "Not sharing"}
         </Badge>
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">
-        Click anywhere on this card to toggle it.
-      </p>
+      <p className="text-xs leading-5 text-muted-foreground">Select this card to change it.</p>
     </Card>
   );
 }
@@ -715,8 +718,8 @@ function EnvironmentStep({ onOpenEnvironment }: { onOpenEnvironment: () => Promi
   return (
     <div className="space-y-6">
       <StepIntro
-        title="Connect a Study Buddy backend"
-        description="This hosted web client needs an environment before it can run providers or access your local Study Buddy configuration. Pair a reachable backend now, or skip and connect later."
+        title="Connect Study Buddy"
+        description="Connect this website to the Study Buddy app on your computer. You can also do this later from Settings."
         icon={LinkIcon}
       />
       <Button
@@ -731,11 +734,11 @@ function EnvironmentStep({ onOpenEnvironment }: { onOpenEnvironment: () => Promi
         }}
       >
         <LinkIcon className="size-4" />
-        Add environment
+        Connect app
       </Button>
       {saveError ? (
         <p className="text-sm text-destructive" role="alert">
-          Setup progress could not be saved locally. Retry before leaving this step.
+          We couldn’t save your progress. Please try again.
         </p>
       ) : null}
     </div>
@@ -750,11 +753,24 @@ function ProviderStep({
   return (
     <div className="space-y-6">
       <StepIntro
-        title="Set up Codex"
-        description="Study Buddy uses Codex exclusively. Connect one supported installation before adding your university accounts."
+        title="Connect Codex"
+        description="Codex powers Study Buddy’s answers. Install it and sign in below. You only need to do this once."
         icon={BotIcon}
       />
       <ProviderSetupStep ref={providerSetupStepRef} />
+    </div>
+  );
+}
+
+function VoiceInputStep() {
+  return (
+    <div className="space-y-6">
+      <StepIntro
+        title="Use your voice"
+        description="Want to speak instead of type? Download the optional voice feature now, or add it later in Settings → Study Buddy."
+        icon={AudioWaveformIcon}
+      />
+      <SpeechModelCard />
     </div>
   );
 }
@@ -933,7 +949,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
           target,
           status: "failure",
           code: "not-configured",
-          message: "Complete the fields to run the connection check.",
+          message: "Fill in the details above, then try again.",
           checkedAt: new Date().toISOString(),
         });
         return;
@@ -947,7 +963,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
             target,
             status: "failure",
             code: "unreachable",
-            message: "Connection check unavailable.",
+            message: "We couldn’t check the connection. Please try again.",
             checkedAt: new Date().toISOString(),
           });
           return;
@@ -960,7 +976,9 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
         });
       } catch (testError) {
         const message =
-          testError instanceof Error ? testError.message : "Connection check unavailable.";
+          testError instanceof Error
+            ? testError.message
+            : "We couldn’t check the connection. Please try again.";
         const result: StudyBuddyConnectionTestResult = {
           target,
           status: "failure",
@@ -983,67 +1001,83 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
     return (
       <div className="space-y-6">
         <StepIntro
-          title={target === "moodle" ? "Moodle" : target === "cis" ? "CIS" : "Calendar"}
+          title={
+            target === "moodle"
+              ? "Connect Moodle"
+              : target === "cis"
+                ? "Connect CIS"
+                : "Connect your calendar"
+          }
           description={
             unavailable
-              ? "Connect a backend first, then configure these fields in Settings → Study Buddy."
+              ? "Connect Study Buddy to this device first. You can finish this later in Settings → Study Buddy."
               : target === "calendar"
-                ? "Enter the calendar URL, then run a check when you want to validate it."
-                : "Enter the link, login, and password, then run a check when you want to validate it."
+                ? "Paste your private calendar link so Study Buddy can check upcoming classes, exams, and deadlines."
+                : target === "moodle"
+                  ? "Use your usual Moodle sign-in so Study Buddy can find your courses and learning material."
+                  : "Use your usual CIS sign-in so Study Buddy can check schedules, rooms, exams, and study information."
           }
           icon={
             target === "moodle" ? GraduationCapIcon : target === "cis" ? LockKeyholeIcon : LinkIcon
           }
         />
+        <ConnectionPrivacyNote target={target} />
         <Card className="divide-y divide-border/60">
           {(target === "moodle"
             ? [
                 {
-                  label: "Moodle link",
+                  label: "Moodle website",
                   value: moodleUrl,
                   setValue: setMoodleUrl,
                   secret: false,
+                  placeholder: "https://moodle.technikum-wien.at",
                 },
                 {
-                  label: "Moodle login",
+                  label: "Moodle username",
                   value: moodleUsername,
                   setValue: setMoodleUsername,
                   secret: false,
+                  placeholder: "Your student username",
                 },
                 {
                   label: "Moodle password",
                   value: moodlePassword,
                   setValue: setMoodlePassword,
                   secret: true,
+                  placeholder: "Your Moodle password",
                 },
               ]
             : target === "cis"
               ? [
                   {
-                    label: "CIS link",
+                    label: "CIS website",
                     value: cisUrl,
                     setValue: setCisUrl,
                     secret: false,
+                    placeholder: "https://cis.technikum-wien.at",
                   },
                   {
-                    label: "CIS login",
+                    label: "CIS username",
                     value: cisUsername,
                     setValue: setCisUsername,
                     secret: false,
+                    placeholder: "Leave empty if it matches Moodle",
                   },
                   {
                     label: "CIS password",
                     value: cisPassword,
                     setValue: setCisPassword,
                     secret: true,
+                    placeholder: "Your CIS password",
                   },
                 ]
               : [
                   {
-                    label: "Calendar URL",
+                    label: "Private calendar link",
                     value: calendarUrl,
                     setValue: setCalendarUrl,
                     secret: true,
+                    placeholder: "https://…/calendar.ics",
                   },
                 ]
           ).map((field) => (
@@ -1057,7 +1091,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
                   inputClassName="mt-0"
                   disabled={unavailable || !config}
                   autoComplete="new-password"
-                  placeholder="Enter secret"
+                  placeholder={field.placeholder}
                   onValueChange={field.setValue}
                 />
               ) : (
@@ -1065,6 +1099,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
                   nativeInput
                   className="mt-2"
                   value={field.value}
+                  placeholder={field.placeholder}
                   disabled={unavailable || !config}
                   autoComplete="off"
                   onChange={(event) => field.setValue(event.currentTarget.value)}
@@ -1082,7 +1117,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
             onClick={() => void checkConnection()}
           >
             {checkingConnection ? <Spinner className="size-4" /> : null}
-            {checkingConnection ? "Checking" : "Check"}
+            {checkingConnection ? "Checking…" : "Check connection"}
           </Button>
           <div className="flex items-center gap-2">
             {connectionStatusKind === "success" ? (
@@ -1106,7 +1141,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
                     : "text-muted-foreground",
               )}
             >
-              {connectionStatus ?? "Run a check to see a confirmation or error here."}
+              {connectionStatus ?? "Check the connection to make sure everything works."}
             </p>
           </div>
         </div>
@@ -1114,7 +1149,7 @@ const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStep
           <>
             {saveError ? (
               <p className="text-xs text-destructive" role="alert">
-                Configuration was not saved. Check the backend and retry.
+                We couldn’t save these details. Please try again.
               </p>
             ) : null}
           </>
@@ -1168,8 +1203,8 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
   return (
     <div className="space-y-6">
       <StepIntro
-        title="Quiz safety is non-negotiable"
-        description="Study Buddy can inspect or assist according to your configured policy, but it never submits a final Moodle quiz attempt."
+        title="Choose how Study Buddy helps with quizzes"
+        description="You stay in control. Study Buddy will never click the final submit button for you."
         icon={ShieldCheckIcon}
       />
       <div className="space-y-4">
@@ -1178,9 +1213,10 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
             <ShieldCheckIcon className="size-4 text-primary" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold">Quiz access mode</h3>
+            <h3 className="text-sm font-semibold">Quiz help</h3>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Pick the exact safety envelope you want. The selection is saved when you continue.
+              Choose the level of help you’re comfortable with. You can change this later in
+              Settings.
             </p>
           </div>
         </div>
@@ -1238,16 +1274,38 @@ const QuizSafetyStep = forwardRef<StepSaveHandle>(function QuizSafetyStep(_, ref
         </RadioGroup>
         {saveError ? (
           <p className="text-xs text-destructive" role="alert">
-            Quiz safety settings were not saved.
+            We couldn’t save your quiz choice. Please try again.
           </p>
         ) : null}
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">
-        This selection is saved automatically when you continue.
-      </p>
     </div>
   );
 });
+
+function ConnectionPrivacyNote({ target }: { target: StudyBuddyConnectionTarget }) {
+  const serviceName = target === "moodle" ? "Moodle" : target === "cis" ? "CIS" : "calendar";
+  return (
+    <Card className="border-emerald-500/20 bg-emerald-500/6 p-4">
+      <div className="flex items-start gap-3">
+        <div className="grid size-9 shrink-0 place-items-center rounded-xl border border-emerald-500/25 bg-background/80 text-emerald-500">
+          <ShieldCheckIcon className="size-4" aria-hidden="true" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold">
+            {target === "calendar"
+              ? "Your private link stays private"
+              : "Your sign-in stays private"}
+          </p>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+            {target === "calendar"
+              ? "Study Buddy keeps this link separate from Codex and only uses it to read your calendar for you. It is never included in shared usage data."
+              : `Study Buddy keeps your ${serviceName} password separate from Codex and only uses it to sign in for you. It is never included in shared usage data.`}
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 function StepIntro({
   title,

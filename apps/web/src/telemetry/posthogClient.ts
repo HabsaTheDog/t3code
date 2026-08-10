@@ -1,10 +1,13 @@
 import type { PostHog, PostHogConfig } from "posthog-js";
 
+import { PrivacySafeHeatmapCollector } from "./heatmapCollector";
+
 export interface PostHogTelemetryClient {
   readonly initialize: (input: {
     readonly host: string;
     readonly projectToken: string;
     readonly installationId: string;
+    readonly beforeSend: NonNullable<PostHogConfig["before_send"]>;
     readonly isActive?: () => boolean;
   }) => Promise<void>;
   readonly capture: (event: string, properties?: Readonly<Record<string, unknown>>) => void;
@@ -13,20 +16,34 @@ export interface PostHogTelemetryClient {
 
 export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
   #instance: PostHog | null = null;
+  #heatmapCollector: PrivacySafeHeatmapCollector | null = null;
 
   async initialize(input: {
     readonly host: string;
     readonly projectToken: string;
     readonly installationId: string;
+    readonly beforeSend: NonNullable<PostHogConfig["before_send"]>;
     readonly isActive?: () => boolean;
   }): Promise<void> {
     if (input.isActive?.() === false) return;
+    // Start the privacy-safe DOM collector before importing PostHog. Product usage data must not
+    // disappear when the optional SDK fails to initialize or is reused across a dev/HMR reload.
+    this.#startClickCollection(input.beforeSend, input.installationId);
     if (this.#instance) {
+      this.#instance.set_config({
+        before_send: input.beforeSend,
+        capture_heatmaps: false,
+        autocapture: false,
+      });
       this.#instance.opt_in_capturing({ captureEventName: false });
       return;
     }
     const { default: posthog } = await import("posthog-js");
-    if (input.isActive?.() === false) return;
+    if (input.isActive?.() === false) {
+      this.#heatmapCollector?.stop();
+      this.#heatmapCollector = null;
+      return;
+    }
     const config: Partial<PostHogConfig> = {
       api_host: input.host,
       ui_host: input.host,
@@ -40,11 +57,12 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
       capture_pageleave: false,
       capture_exceptions: false,
       capture_performance: false,
-      enable_heatmaps: true,
+      // Native posthog-js heatmaps always observe mouse movement. The click-only collector below
+      // emits the same $$heatmap event format without ever creating movement or scrollmap data.
+      capture_heatmaps: false,
       rageclick: false,
       enable_recording_console_log: false,
-      // A recording must not start until remote recording controls have been
-      // fetched successfully at least once. #armSessionRecording lifts this.
+      // Session replay is intentionally outside the analytics consent contract.
       disable_session_recording: true,
       disable_surveys: true,
       advanced_disable_feature_flags: false,
@@ -54,10 +72,11 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
       disable_capture_url_hashes: true,
       mask_all_text: true,
       mask_all_element_attributes: false,
-      autocapture: {
-        dom_event_allowlist: ["click"],
-        css_selector_allowlist: ["button[data-analytics-id]", "a[data-analytics-id]"],
-      },
+      mask_personal_data_properties: true,
+      before_send: input.beforeSend,
+      // Tagged clicks and click-only heatmaps are collected locally below. Disabling native
+      // autocapture avoids SDK lifecycle gaps and guarantees that no DOM text is inspected.
+      autocapture: false,
       bootstrap: {
         distinctID: input.installationId,
         isIdentifiedID: false,
@@ -78,7 +97,36 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
   }
 
   shutdown(): void {
+    this.#heatmapCollector?.stop();
+    this.#heatmapCollector = null;
     this.#instance?.stopSessionRecording();
     this.#instance?.opt_out_capturing();
+    this.#instance?.set_config({ capture_heatmaps: false, autocapture: false });
+  }
+
+  #startClickCollection(
+    beforeSend: NonNullable<PostHogConfig["before_send"]>,
+    sessionId: string,
+  ): void {
+    this.#heatmapCollector?.stop();
+    this.#heatmapCollector = new PrivacySafeHeatmapCollector({
+      emit: (properties) => runBeforeSend(beforeSend, { event: "$$heatmap", properties }),
+      emitControlClick: (properties) =>
+        runBeforeSend(beforeSend, { event: "$autocapture", properties }),
+      sessionId,
+    });
+    this.#heatmapCollector.start();
+  }
+}
+
+function runBeforeSend(
+  beforeSend: NonNullable<PostHogConfig["before_send"]>,
+  capture: { readonly event: string; readonly properties: Readonly<Record<string, unknown>> },
+): void {
+  const sanitizers = Array.isArray(beforeSend) ? beforeSend : [beforeSend];
+  let current: unknown = capture;
+  for (const sanitizer of sanitizers) {
+    if (!current) return;
+    current = sanitizer(current as never);
   }
 }

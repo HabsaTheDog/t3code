@@ -19,6 +19,8 @@ import {
 } from "./providerIconUtils";
 import { setModelPickerOpen } from "../../modelPickerOpenState";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { telemetry } from "../../telemetry/runtime";
+import { featureProperties } from "../../telemetry/featureCatalog";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -88,6 +90,25 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
+    const provider = props.instanceEntries.find(
+      (entry) => entry.instanceId === instanceId,
+    )?.driverKind;
+    void telemetry.capture({
+      event: "model.selected",
+      properties: {
+        model,
+        ...(provider ? { provider } : {}),
+        surface: "composer",
+      },
+    });
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("chat.model", {
+        model,
+        ...(provider ? { provider } : {}),
+        surface: "composer",
+      }),
+    });
     props.onInstanceModelChange(instanceId, model);
     setIsMenuOpen(false);
   };
@@ -109,6 +130,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             size="sm"
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
+            data-analytics-id="chat.model-picker"
             className={cn(
               "min-w-0 justify-start overflow-hidden whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:mx-0",
               props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",

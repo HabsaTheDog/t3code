@@ -103,6 +103,10 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
+export function isMainWindowPermissionAllowed(permission: string): boolean {
+  return permission === "media" || permission === "clipboard-sanitized-write";
+}
+
 function getWindowTitleBarOptions(shouldUseDarkColors: boolean): WindowTitleBarOptions {
   if (process.platform === "darwin") {
     return {
@@ -194,6 +198,13 @@ const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+
+    window.webContents.session.setPermissionCheckHandler(
+      (_webContents, permission) => isMainWindowPermissionAllowed(permission),
+    );
+    window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) =>
+      callback(isMainWindowPermissionAllowed(permission)),
+    );
 
     window.webContents.on("context-menu", (event, params) => {
       event.preventDefault();

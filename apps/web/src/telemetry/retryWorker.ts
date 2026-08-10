@@ -31,9 +31,9 @@ export class PostHogBatchUploader implements TelemetryUploader {
     const fetchImpl = this.options.fetch ?? globalThis.fetch;
     const host = this.options.host.replace(/\/+$/u, "");
     const ordinaryItems = items.filter(
-      (item) => item.category !== "conversation" && item.kind !== "replay",
+      (item) => item.event !== "$ai_generation" && item.kind !== "replay",
     );
-    const conversationItems = items.filter((item) => item.category === "conversation");
+    const conversationItems = items.filter((item) => item.event === "$ai_generation");
     try {
       const requests: Promise<Response>[] = [];
       if (ordinaryItems.length > 0) {
@@ -138,6 +138,8 @@ export class TelemetryRetryWorker {
     | undefined;
   #interval: ReturnType<typeof setInterval> | null = null;
   #flushPromise: Promise<void> | null = null;
+  #flushAgain = false;
+  #keepaliveOnNextFlush = false;
 
   constructor(
     private readonly outbox: TelemetryOutbox,
@@ -167,13 +169,27 @@ export class TelemetryRetryWorker {
   }
 
   flush(options?: { readonly keepalive?: boolean }): Promise<void> {
-    if (this.#flushPromise) return this.#flushPromise;
-    this.#flushPromise = this.#performFlush(options)
+    if (this.#flushPromise) {
+      this.#flushAgain = true;
+      this.#keepaliveOnNextFlush ||= options?.keepalive === true;
+      return this.#flushPromise;
+    }
+    this.#flushPromise = this.#performFlushLoop(options)
       .catch(() => undefined)
       .finally(() => {
         this.#flushPromise = null;
       });
     return this.#flushPromise;
+  }
+
+  async #performFlushLoop(options?: { readonly keepalive?: boolean }): Promise<void> {
+    let nextOptions = options;
+    do {
+      this.#flushAgain = false;
+      this.#keepaliveOnNextFlush = false;
+      await this.#performFlush(nextOptions);
+      nextOptions = this.#keepaliveOnNextFlush ? { keepalive: true } : undefined;
+    } while (this.#flushAgain);
   }
 
   async #performFlush(options?: { readonly keepalive?: boolean }): Promise<void> {

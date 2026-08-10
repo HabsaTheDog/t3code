@@ -140,8 +140,10 @@ interface PromptFromMessageInput {
 }
 
 function buildPromptFromMessage(input: PromptFromMessageInput): string {
-  const attachmentLines = (input.attachments ?? []).map(
-    (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
+  const attachmentLines = (input.attachments ?? []).map((attachment) =>
+    attachment.type === "image"
+      ? `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`
+      : `- Voice note (${attachment.durationMs} ms; transcript hidden)`,
   );
 
   const promptSections = [

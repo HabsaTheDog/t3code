@@ -158,6 +158,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
             text: "hello",
             attachments: [],
           },
+          providerInput: "hidden voice transcript",
           modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
             { id: "reasoningEffort", value: "high" },
             { id: "fastMode", value: true },
@@ -173,6 +174,10 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       const events = Array.isArray(result) ? result : [result];
       expect(events).toHaveLength(2);
       expect(events[0]?.type).toBe("thread.message-sent");
+      if (events[0]?.type === "thread.message-sent") {
+        expect(events[0].payload.text).toBe("hello");
+        expect(events[0].payload).not.toHaveProperty("providerInput");
+      }
       const turnStartEvent = events[1];
       expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
       expect(turnStartEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
@@ -182,6 +187,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       expect(turnStartEvent.payload).toMatchObject({
         threadId: ThreadId.make("thread-1"),
         messageId: asMessageId("message-user-1"),
+        providerInput: "hidden voice transcript",
         modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
           { id: "reasoningEffort", value: "high" },
           { id: "fastMode", value: true },

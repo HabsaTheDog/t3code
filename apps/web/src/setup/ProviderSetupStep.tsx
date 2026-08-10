@@ -50,7 +50,6 @@ import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import { ensureLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useServerProviders } from "../rpc/serverState";
-import { useStore } from "../store";
 import { registerTelemetrySecret, telemetry } from "../telemetry/runtime";
 
 const PROVIDER_ORDER: readonly ProviderSetupProvider[] = ["codex"];
@@ -111,15 +110,15 @@ function getJobStatusCopy(
   }
   if (job.status === "failed") {
     return {
-      title: "Action failed",
-      detail: job.error ?? "The setup action could not be completed.",
+      title: "We couldn’t finish that step",
+      detail: job.error ?? "Please try again.",
       tone: "error",
     };
   }
   if (job.status === "cancelled") {
     return {
-      title: "Action cancelled",
-      detail: "No changes were applied after cancellation.",
+      title: "Setup stopped",
+      detail: "You can try again whenever you’re ready.",
       tone: "idle",
     };
   }
@@ -132,28 +131,28 @@ function getJobStatusCopy(
   }
   if (job.action.id.endsWith(".api-key")) {
     return {
-      title: "Saving API key",
-      detail: `Study Buddy is configuring ${providerLabel} without exposing the secret in the UI.`,
+      title: "Connecting your account",
+      detail: `Study Buddy is securely connecting ${providerLabel}.`,
       tone: "running",
     };
   }
   if (job.action.id.endsWith(".access-token")) {
     return {
-      title: "Saving access token",
-      detail: `Study Buddy is configuring ${providerLabel} without exposing the token in the UI.`,
+      title: "Connecting your account",
+      detail: `Study Buddy is securely connecting ${providerLabel}.`,
       tone: "running",
     };
   }
   if (job.action.id.endsWith(".device-code")) {
     return {
-      title: "Waiting for device sign-in",
-      detail: `Complete the device flow outside Study Buddy, then return here.`,
+      title: "Waiting for you to sign in",
+      detail: `Finish signing in on your device, then come back here.`,
       tone: "running",
     };
   }
   return {
     title: "Waiting for sign-in",
-    detail: `Complete the ${providerLabel} sign-in flow in the browser or external prompt.`,
+    detail: `Finish signing in to ${providerLabel} in the window that opened, then come back here.`,
     tone: "running",
   };
 }
@@ -181,14 +180,14 @@ function ProviderStatusIndicator(props: {
           <button
             type="button"
             className="shrink-0 rounded-full text-sky-400 transition-colors hover:text-sky-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
-            aria-label="Authentication required"
+            aria-label="Sign-in required"
           >
             <InfoIcon className="size-5" />
           </button>
         }
       />
       <TooltipPopup side="top" className="max-w-64 whitespace-normal leading-relaxed">
-        This provider is installed, but you still need to sign in before it is ready.
+        Codex is installed. Sign in to finish connecting it to Study Buddy.
       </TooltipPopup>
     </Tooltip>
   );
@@ -251,7 +250,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       }),
     );
     const { updateSettings } = useUpdateSettings();
-    const environmentStates = useStore((state) => state.environmentStateById);
     const [capabilities, setCapabilities] = useState<ReadonlyArray<ProviderSetupCapability> | null>(
       null,
     );
@@ -279,7 +277,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         // background instead of holding the entire Codex step behind discovery.
         void api.refreshProviders().catch(() => undefined);
       } catch {
-        setLoadError("Provider setup is unavailable until a backend is connected.");
+        setLoadError("Connect Study Buddy first, then try setting up Codex again.");
         setCapabilities([]);
       }
     };
@@ -342,18 +340,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         updateSettings,
       ],
     );
-    const defaultInstanceIds = useMemo(
-      () =>
-        new Set(
-          Object.values(environmentStates).flatMap((environment) =>
-            Object.values(environment.projectById).flatMap((project) =>
-              project.defaultModelSelection ? [project.defaultModelSelection.instanceId] : [],
-            ),
-          ),
-        ),
-      [environmentStates],
-    );
-
     const updateFromEvent = (event: ProviderSetupJobEvent) => {
       setJobs((current) => {
         const previous = current[event.provider];
@@ -444,7 +430,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
             action,
             status: "failed",
             progress: [],
-            error: "The setup action could not be started. Check the backend and retry.",
+            error: "We couldn’t start that step. Check your connection and try again.",
           },
         }));
         void telemetry.capture({
@@ -513,7 +499,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       } catch {
         setJobs((current) => ({
           ...current,
-          [provider]: { ...job, error: "The running job could not be cancelled." },
+          [provider]: { ...job, error: "We couldn’t stop setup. Please try again." },
         }));
       }
     };
@@ -523,7 +509,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         <Card className="grid min-h-48 place-items-center border-dashed">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Spinner className="size-4" />
-            Checking provider capabilities…
+            Checking Codex…
           </div>
         </Card>
       );
@@ -531,27 +517,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
 
     return (
       <div className="space-y-4">
-        <Card className="overflow-hidden rounded-[1.75rem] border-emerald-500/20 bg-emerald-500/6">
-          <div className="grid gap-4 p-5 sm:grid-cols-[auto_1fr] sm:items-center">
-            <div className="grid size-12 place-items-center rounded-2xl border border-emerald-500/25 bg-background/80 text-emerald-500">
-              <ShieldAlertIcon className="size-5" />
-            </div>
-            <div>
-              <p className="font-semibold">Credential boundary</p>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Study Buddy runs this Codex installation from a private app-owned home. Credential
-                files are denied, login pages stay locked, and spawned commands receive no Moodle or
-                CIS secrets.
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <Badge variant="secondary">Codex {MINIMUM_STUDY_BUDDY_CODEX_VERSION}+</Badge>
-                <Badge variant="secondary">Private runtime</Badge>
-                <Badge variant="secondary">Secrets denied</Badge>
-              </div>
-            </div>
-          </div>
-        </Card>
-
         {loadError ? (
           <div
             className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-sm"
@@ -577,7 +542,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
           {PROVIDER_ORDER.map((providerName) => {
             const capability = capabilityByProvider.get(providerName);
             const status = summarizeProvider(providers, providerName);
-            const isDefault = providerIsDefault(providers, providerName, defaultInstanceIds);
             const job = jobs[providerName];
             const running = job?.status === "starting" || job?.status === "running";
             const actions = visibleProviderActions(capability, status.installed);
@@ -605,10 +569,9 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold">{providerLabel}</h3>
-                          {status.selected ? <Badge variant="secondary">Enabled</Badge> : null}
-                          {isDefault ? <Badge variant="secondary">Default</Badge> : null}
+                          {status.authenticated ? <Badge variant="success">Ready</Badge> : null}
                           {!status.installed ? (
-                            <Badge variant="outline">Install required</Badge>
+                            <Badge variant="outline">Needs installation</Badge>
                           ) : null}
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
@@ -616,10 +579,14 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                             ? `Installed${status.version ? ` · ${status.version}` : ""}`
                             : "Not installed"}
                           {" · "}
-                          {status.authenticated ? "Authenticated" : "Not authenticated"}
+                          {status.authenticated ? "Signed in" : "Sign-in needed"}
                         </p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.18em] text-muted-foreground/80">
-                          {status.installed ? "Connection actions" : "Install first"}
+                        <p className="mt-2 text-xs text-muted-foreground/80">
+                          {status.authenticated
+                            ? "Codex is ready to use."
+                            : status.installed
+                              ? "Choose an option below to sign in."
+                              : "Install Codex first, then sign in."}
                         </p>
                       </div>
                     </div>
@@ -634,11 +601,11 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                     <div className="mt-5 rounded-2xl border border-border/70 bg-muted/45 p-3 text-xs leading-5 text-muted-foreground">
                       <p className="flex items-center gap-1.5 font-medium text-foreground">
                         <ShieldAlertIcon className="size-3.5" />
-                        Manual setup required
+                        A manual step is needed
                       </p>
                       <p className="mt-1">
                         {actions.find((action) => action.unsupportedReason)?.unsupportedReason ??
-                          "This provider is not supported on the current platform."}
+                          "This option is not available on this device."}
                       </p>
                     </div>
                   ) : null}
@@ -671,7 +638,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                                 <span>{action.label}</span>
                                 {!status.installed && action.kind === "authenticate" ? (
                                   <span className="text-xs text-current/70">
-                                    Available after install
+                                    Available after installation
                                   </span>
                                 ) : null}
                               </span>
@@ -728,9 +695,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                         </p>
                         <p className="text-sm text-muted-foreground">{statusCopy.detail}</p>
                       </div>
-                      <span className="shrink-0 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        {job.status}
-                      </span>
                     </div>
                   </div>
                 ) : null}
@@ -752,8 +716,8 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
               </DialogTitle>
               <DialogDescription>
                 {apiKeyDialog?.action.id === "claude.auth.api-key"
-                  ? "Paste the key once. Study Buddy stores it on the Claude provider instance as ANTHROPIC_API_KEY and never renders it back into the interface."
-                  : "Paste the secret once. Study Buddy sends it directly to the provider setup flow and never renders it back into the interface."}
+                  ? "Paste your key here. Study Buddy saves it securely and will not show it again."
+                  : "Paste your sign-in code here. Study Buddy uses it to connect your account and will not show it again."}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -767,7 +731,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                   type="password"
                   value={apiKeyDialog ? (secretValues[apiKeyDialog.provider] ?? "") : ""}
                   autoComplete="off"
-                  placeholder="Write-only; never shown again"
+                  placeholder="Paste it here"
                   className="ph-no-capture"
                   data-ph-no-capture
                   onChange={(event) =>

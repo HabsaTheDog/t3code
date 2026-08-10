@@ -1921,6 +1921,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       projectExpandedById: {},
       projectOrder: [],
       threadLastVisitedAtById: {},
+      favoriteThreadKeys: {},
     });
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
@@ -4052,12 +4053,44 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      const renameButton = await waitForButtonByText("Rename thread");
+      await waitForButtonByText("Rename thread");
       expect(findButtonByText("Mark unread")).not.toBeNull();
+      const addToFavoritesButton = findButtonByText("Add to favorites");
+      expect(addToFavoritesButton).not.toBeNull();
       expect(findButtonByText("Copy Path")).not.toBeNull();
       expect(findButtonByText("Copy Thread ID")).not.toBeNull();
       expect(findButtonByText("Delete")).not.toBeNull();
 
+      addToFavoritesButton!.click();
+      await expect
+        .element(page.getByTestId(`thread-favorite-${QUICK_CHAT_THREAD_ID}`))
+        .toBeVisible();
+
+      quickChatRowElement.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 120,
+          clientY: 180,
+        }),
+      );
+      const removeFromFavoritesButton = await waitForButtonByText("Remove from favorites");
+      removeFromFavoritesButton.click();
+      await vi.waitFor(() => {
+        expect(
+          document.querySelector(`[data-testid="thread-favorite-${QUICK_CHAT_THREAD_ID}"]`),
+        ).toBeNull();
+      });
+
+      quickChatRowElement.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 120,
+          clientY: 180,
+        }),
+      );
+      const renameButton = await waitForButtonByText("Rename thread");
       renameButton.click();
       const renameInput = await waitForElement(
         () =>
