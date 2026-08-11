@@ -38,6 +38,7 @@ import { Skeleton } from "../ui/skeleton";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { cn } from "~/lib/utils";
 import { isElectron } from "../../env";
+import { htmlFilePreviewSandbox } from "./filePreviewSandbox";
 
 interface WorkspaceViewerProps {
   readonly threadRef: ScopedThreadRef;
@@ -230,7 +231,11 @@ function FilePreview({ source }: { readonly source: Extract<ViewerTabSource, { k
       title={ticket.fileName}
       src={previewUrl}
       className="h-full w-full border-0 bg-white"
-      sandbox={ticket.fileKind === "html" ? "allow-scripts" : undefined}
+      sandbox={
+        ticket.fileKind === "html"
+          ? htmlFilePreviewSandbox(previewUrl, window.location.href)
+          : undefined
+      }
     />
   );
 }
