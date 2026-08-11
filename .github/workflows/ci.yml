@@ -9,14 +9,16 @@ on:
 jobs:
   check:
     name: Check
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -29,7 +31,10 @@ jobs:
         run: vp check
 
       - name: Typecheck
-        run: vpr typecheck
+        run: vp run -r --concurrency-limit 2 typecheck
+
+      - name: Audit Study Buddy release dependencies
+        run: node scripts/study-buddy-audit.ts
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -41,14 +46,16 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -58,30 +65,24 @@ jobs:
         run: vp run --filter @t3tools/desktop ensure:electron
 
       - name: Test
-        run: vp run test
+        run: vp run -r --concurrency-limit 2 test
 
   test_browser:
     name: Test Browser
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
           run-install: true
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
 
       - name: Install browser test runtime
         run: vp run --filter @t3tools/web test:browser:install
@@ -108,6 +109,7 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
+    if: github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-12vcpu-macos-26
     timeout-minutes: 10
     steps:
@@ -129,6 +131,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
+    if: github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

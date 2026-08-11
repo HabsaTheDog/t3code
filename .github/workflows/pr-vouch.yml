@@ -1,16 +1,10 @@
 name: PR Vouch
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
-  issue_comment:
-    types: [created]
+  # The upstream trust/vouch system is not the Study Buddy contribution path.
   push:
     branches:
-      - main
-    paths:
-      - .github/VOUCHED.td
-      - .github/workflows/pr-vouch.yml
+      - __upstream_pr_automation_disabled__
 
 permissions:
   contents: read

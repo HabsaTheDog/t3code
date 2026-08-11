@@ -1,26 +1,12 @@
 name: Release
 
 on:
+  # Upstream publishes T3 Code and nightly artifacts from this workflow. The
+  # Study Buddy fork deliberately keeps it inert until a dedicated, reviewed
+  # Study Buddy release workflow replaces it.
   push:
-    tags:
-      - "v*.*.*"
-      - "!v*-nightly.*"
-  schedule:
-    - cron: "0 */3 * * *"
-  workflow_dispatch:
-    inputs:
-      channel:
-        description: "Release channel"
-        required: false
-        default: stable
-        type: choice
-        options:
-          - stable
-          - nightly
-      version:
-        description: "Release version (for example 1.2.3 or v1.2.3)"
-        required: false
-        type: string
+    branches:
+      - __upstream_release_disabled__
 
 permissions:
   contents: read

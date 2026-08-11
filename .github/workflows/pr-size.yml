@@ -1,8 +1,10 @@
 name: PR Size
 
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  # Contribution intake is managed in the parent Study Buddy repository.
+  push:
+    branches:
+      - __upstream_pr_automation_disabled__
 
 permissions:
   contents: read

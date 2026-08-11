@@ -1,13 +1,10 @@
 name: Issue Labels
 
 on:
+  # Contribution intake is managed in the parent Study Buddy repository.
   push:
     branches:
-      - main
-    paths:
-      - .github/ISSUE_TEMPLATE/**
-      - .github/workflows/issue-labels.yml
-  workflow_dispatch:
+      - __upstream_issue_sync_disabled__
 
 permissions:
   issues: write

@@ -1,9 +1,10 @@
 name: Deploy T3 Cloud relay
 
 on:
+  # Study Buddy does not own or deploy the upstream T3 Cloud relay.
   push:
     branches:
-      - main
+      - __upstream_relay_deploy_disabled__
 
 permissions:
   contents: read
