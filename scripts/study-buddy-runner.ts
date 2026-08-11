@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { sanitizeStudyBuddyHostEnvironment } from "./lib/study-buddy-environment.ts";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const T3_ROOT = path.resolve(SCRIPT_DIR, "..");
 const STUDY_BUDDY_ROOT = path.resolve(T3_ROOT, "..");
@@ -177,8 +179,14 @@ function seedCodexProviderBinary(): void {
 }
 
 function studyBuddyEnv(): NodeJS.ProcessEnv {
+  // The direct Moodle CLI needs portal configuration from the caller. The UI,
+  // server, desktop shell, and their provider children read credentials from
+  // Study Buddy's owner-only configuration file instead and must never inherit
+  // portal values through the host environment.
+  const baseEnvironment =
+    command === "moodle" ? { ...process.env } : sanitizeStudyBuddyHostEnvironment(process.env);
   return {
-    ...process.env,
+    ...baseEnvironment,
     T3CODE_PORT_OFFSET: process.env.T3CODE_PORT_OFFSET || DEFAULT_PORT_OFFSET,
     T3CODE_HOME: t3Home,
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD:

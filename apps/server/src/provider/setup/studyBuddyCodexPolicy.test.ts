@@ -36,7 +36,13 @@ describe("Study Buddy Codex policy", () => {
 
   it("binds the exact Codex process to the generated home and profile", () => {
     const paths = resolveStudyBuddyCodexPolicyPaths(config);
-    expect(studyBuddyCodexEnvironment(paths, { PATH: "/bin" })).toEqual({
+    expect(
+      studyBuddyCodexEnvironment(paths, {
+        PATH: "/bin",
+        MOODLE_PASSWORD: "must-not-reach-codex",
+        CIS_CALENDAR_URL: "https://calendar.example.test/private",
+      }),
+    ).toEqual({
       PATH: "/bin",
       CODEX_HOME: paths.codexHome,
       STUDY_BUDDY_CODEX_HOME: paths.codexHome,

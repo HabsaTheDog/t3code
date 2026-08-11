@@ -29,8 +29,6 @@ export function loadRepoEnv({
   const config = resolvePublicConfig(baseEnv, localEnv, rootEnv);
 
   return {
-    ...rootEnv,
-    ...localEnv,
     ...baseEnv,
     ...(config.clerkPublishableKey
       ? {

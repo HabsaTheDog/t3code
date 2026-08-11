@@ -9,6 +9,8 @@ import * as Scope from "effect/Scope";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { sanitizeProviderEnvironment } from "../ProviderInstanceEnvironment.ts";
 import * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -201,7 +203,9 @@ const makeAcpSessionRuntime = (
       .spawn(
         ChildProcess.make(options.spawn.command, [...options.spawn.args], {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(options.spawn.env ? { env: { ...process.env, ...options.spawn.env } } : {}),
+          ...(options.spawn.env
+            ? { env: sanitizeProviderEnvironment({ ...process.env, ...options.spawn.env }) }
+            : {}),
           shell: process.platform === "win32",
         }),
       )
