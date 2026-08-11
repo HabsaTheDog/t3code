@@ -188,9 +188,7 @@ describe("DesktopWindow", () => {
 
   it("allows media and sanitized clipboard writes in the main window", () => {
     assert.isTrue(DesktopWindow.isMainWindowPermissionAllowed("media"));
-    assert.isTrue(
-      DesktopWindow.isMainWindowPermissionAllowed("clipboard-sanitized-write"),
-    );
+    assert.isTrue(DesktopWindow.isMainWindowPermissionAllowed("clipboard-sanitized-write"));
     assert.isFalse(DesktopWindow.isMainWindowPermissionAllowed("clipboard-read"));
     assert.isFalse(DesktopWindow.isMainWindowPermissionAllowed("geolocation"));
   });

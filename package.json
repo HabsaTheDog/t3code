@@ -16,6 +16,7 @@
     "study-buddy:dev": "node scripts/study-buddy-runner.ts dev",
     "study-buddy:dev:no-browser": "node scripts/study-buddy-runner.ts dev:no-browser",
     "study-buddy:app": "node scripts/study-buddy-runner.ts app",
+    "study-buddy:audit": "node scripts/study-buddy-audit.ts",
     "moodle:agent": "node scripts/study-buddy-runner.ts moodle",
     "start": "vp run --filter t3 start",
     "start:desktop": "vp run --filter @t3tools/desktop start",
@@ -52,6 +53,7 @@
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
     "@typescript/native-preview": "catalog:",
+    "@voidzero-dev/vite-plus-test": "0.1.24",
     "vite-plus": "catalog:"
   },
   "engines": {

@@ -11,7 +11,7 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "resolveJsonModule": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node", "@voidzero-dev/vite-plus-test/globals"]
   },
   "include": ["src/custom-skills/moodle/**/*.ts"]
 }

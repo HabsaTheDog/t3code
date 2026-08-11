@@ -1,6 +1,7 @@
 packages:
-  - "apps/*"
-  - "infra/*"
+  - "apps/desktop"
+  - "apps/server"
+  - "apps/web"
   - "oxlint-plugin-t3code"
   - "packages/*"
   - "scripts"
@@ -56,6 +57,8 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>@vitest/runner": "-"
   "@effect/vitest>vitest": "-"
+  "@effect/platform-node>undici": "8.9.0"
+  fast-uri: "3.1.5"
   "@types/node": "catalog:"
   effect: "catalog:"
   vite: "catalog:"
@@ -80,7 +83,5 @@ packageExtensions:
       vite: "catalog:"
 patchedDependencies:
   "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
-  "@expo/metro-config@56.0.13": patches/@expo%2Fmetro-config@56.0.13.patch
   "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch
-  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

@@ -199,8 +199,8 @@ const make = Effect.gen(function* () {
       },
     });
 
-    window.webContents.session.setPermissionCheckHandler(
-      (_webContents, permission) => isMainWindowPermissionAllowed(permission),
+    window.webContents.session.setPermissionCheckHandler((_webContents, permission) =>
+      isMainWindowPermissionAllowed(permission),
     );
     window.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) =>
       callback(isMainWindowPermissionAllowed(permission)),
