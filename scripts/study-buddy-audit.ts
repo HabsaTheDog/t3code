@@ -18,6 +18,31 @@ interface AuditReport {
 }
 
 const corepack = process.platform === "win32" ? "corepack.cmd" : "corepack";
+const git = process.platform === "win32" ? "git.exe" : "git";
+const trackedFiles = spawnSync(git, ["ls-files", "--stage"], {
+  encoding: "utf8",
+  maxBuffer: 32 * 1024 * 1024,
+});
+
+if (trackedFiles.status !== 0) {
+  process.stderr.write(trackedFiles.stderr || "git ls-files could not inspect the release tree.\n");
+  process.exit(trackedFiles.status ?? 1);
+}
+
+const embeddedGitlinks = trackedFiles.stdout
+  .split(/\r?\n/)
+  .flatMap((entry) => {
+    const match = /^160000 [0-9a-f]+ \d+\t(.+)$/.exec(entry);
+    return match?.[1] ? [match[1]] : [];
+  });
+
+if (embeddedGitlinks.length > 0) {
+  console.error("Study Buddy release tree contains undeclared embedded Git links:");
+  for (const gitlink of embeddedGitlinks) console.error(`- ${gitlink}`);
+  console.error("Vendor reference source as ordinary files or declare an intentional submodule explicitly.");
+  process.exit(1);
+}
+
 const result = spawnSync(corepack, ["pnpm", "audit", "--prod", "--json"], {
   encoding: "utf8",
   maxBuffer: 32 * 1024 * 1024,
