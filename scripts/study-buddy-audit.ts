@@ -43,7 +43,7 @@ if (embeddedGitlinks.length > 0) {
   process.exit(1);
 }
 
-const result = spawnSync(corepack, ["pnpm", "audit", "--prod", "--json"], {
+const result = spawnSync(corepack, ["pnpm", "audit", "--json"], {
   encoding: "utf8",
   maxBuffer: 32 * 1024 * 1024,
 });
@@ -89,4 +89,4 @@ if (blockers.length > 0) {
   process.exit(1);
 }
 
-console.log("Study Buddy shipped-workspace audit passed; no high/critical findings.");
+console.log("Study Buddy workspace audit passed; no high/critical findings.");
