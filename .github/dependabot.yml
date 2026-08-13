@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Vienna"
+    # Security updates remain enabled. Routine version-update PRs are handled
+    # deliberately while the Study Buddy fork tracks its upstream application.
+    open-pull-requests-limit: 0
+    exclude-paths:
+      # These are upstream reference snapshots and applications that are not
+      # installed, built, or shipped by the Study Buddy workspace.
+      - ".repos/**"
+      - "apps/marketing/**"
+      - "apps/mobile/**"
+      - "infra/**"
+    groups:
+      study-buddy-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Vienna"
+    open-pull-requests-limit: 0
+    groups:
+      workflow-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
