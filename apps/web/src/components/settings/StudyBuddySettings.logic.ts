@@ -11,21 +11,21 @@ export const QUIZ_ACCESS_TOOLTIP_DELAY_MS = 250;
 export const QUIZ_ACCESS_MODE_OPTIONS: readonly QuizAccessModeOption[] = [
   {
     value: "review-only",
-    label: "Review previous attempts",
+    label: "Review completed quizzes",
     description:
-      "May open completed quiz attempts and read their visible questions. Never starts a new attempt or fills answers.",
+      "Study Buddy may read questions from quizzes you already finished to help you study. It will never start a quiz or fill in answers.",
   },
   {
     value: "ask-before-attempt",
-    label: "Ask before attempt",
+    label: "Ask before opening a quiz",
     description:
-      "Inspects quiz metadata, then shows a cooperative local confirmation before starting or continuing the attempt. This is a UX guardrail, not a security boundary against software with full machine access.",
+      "Study Buddy shows you what it found and asks before it opens or continues a quiz.",
   },
   {
     value: "quiz-assist",
-    label: "Quiz assist",
+    label: "Help during quizzes",
     description:
-      "May start, suggest, fill, change, and save pages. Final submit stays manual-only.",
+      "Study Buddy may open a quiz, suggest or fill in answers, and save each page. Only you can submit the quiz.",
   },
 ];
 

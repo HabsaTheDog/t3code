@@ -81,6 +81,9 @@ export class DesktopEnvironment extends Context.Service<
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
 const APP_BASE_NAME = "Study Buddy";
+const STUDY_BUDDY_APP_ID = "com.studybuddy.t3code";
+const STUDY_BUDDY_LINUX_ID = "study-buddy-t3code";
+const STUDY_BUDDY_STATE_DIR_NAME = ".study-buddy-t3code";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -151,7 +154,9 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-  const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
+  const baseDir = Option.getOrElse(config.t3Home, () =>
+    path.join(homeDirectory, STUDY_BUDDY_STATE_DIR_NAME),
+  );
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const branding = resolveDesktopAppBranding({
@@ -160,8 +165,8 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
   });
   const displayName = branding.displayName;
   const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
-  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const userDataDirName = isDevelopment ? `${STUDY_BUDDY_LINUX_ID}-dev` : STUDY_BUDDY_LINUX_ID;
+  const legacyUserDataDirName = isDevelopment ? "Study Buddy (Dev)" : "Study Buddy (Alpha)";
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({
@@ -200,10 +205,12 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? `${STUDY_BUDDY_APP_ID}.dev` : STUDY_BUDDY_APP_ID,
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: isDevelopment
+      ? `${STUDY_BUDDY_LINUX_ID}-dev.desktop`
+      : `${STUDY_BUDDY_LINUX_ID}.desktop`,
+    linuxWmClass: isDevelopment ? `${STUDY_BUDDY_LINUX_ID}-dev` : STUDY_BUDDY_LINUX_ID,
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: resolveDefaultDesktopSettings(input.appVersion),

@@ -733,6 +733,7 @@ const make = Effect.gen(function* () {
       });
       return;
     }
+    const providerMessageText = event.payload.providerInput ?? message.text;
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
@@ -744,8 +745,10 @@ const make = Effect.gen(function* () {
           projects: project ? [project] : [],
         }) ?? process.cwd();
       const generationInput = {
-        messageText: message.text,
-        ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        messageText: message.text || "Voice note",
+        ...(message.attachments !== undefined
+          ? { attachments: message.attachments.filter((attachment) => attachment.type === "image") }
+          : {}),
         ...(event.payload.titleSeed !== undefined ? { titleSeed: event.payload.titleSeed } : {}),
       };
 
@@ -803,8 +806,10 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
-      ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+      messageText: providerMessageText,
+      ...(message.attachments !== undefined
+        ? { attachments: message.attachments.filter((attachment) => attachment.type === "image") }
+        : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
         : {}),

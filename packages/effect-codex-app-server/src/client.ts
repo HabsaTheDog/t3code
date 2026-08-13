@@ -279,7 +279,7 @@ export const layerCommand = (
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
         ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(options.env ? { env: options.env } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
         shell: process.platform === "win32",
       });

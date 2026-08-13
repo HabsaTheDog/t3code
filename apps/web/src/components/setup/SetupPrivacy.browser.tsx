@@ -212,6 +212,18 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
+vi.mock("~/lib/desktopSpeechReactQuery", () => ({
+  useDesktopSpeechState: () => ({ data: { status: "not-enabled" } }),
+  useDesktopSpeechActions: () => ({
+    enable: vi.fn(async () => undefined),
+    remove: vi.fn(async () => undefined),
+  }),
+}));
+
+vi.mock("../speech/SpeechModelCard", () => ({
+  SpeechModelCard: () => <div>Voice model setup</div>,
+}));
+
 import { PrivacyNotice } from "../privacy/PrivacyNotice";
 import { PrivacySettingsPanel } from "../settings/PrivacySettings";
 import { SetupGate } from "../../setup/SetupWizard";
@@ -271,8 +283,8 @@ describe.sequential("first-run privacy and setup", () => {
     await expect
       .element(page.getByRole("link", { name: "Read full privacy notice" }))
       .toBeInTheDocument();
-    await expect.element(page.getByRole("button", { name: "Allow all" })).toBeInTheDocument();
-    await expect.element(page.getByRole("button", { name: "Reject all" })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Share both" })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "No thanks" })).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Skip" })).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Continue" })).toBeDisabled();
     expect(updateSettingsMock).not.toHaveBeenCalled();
@@ -298,7 +310,7 @@ describe.sequential("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -315,7 +327,7 @@ describe.sequential("first-run privacy and setup", () => {
   it.sequential("selects both categories with one button", async () => {
     const screen = await renderSetup();
 
-    await page.getByRole("button", { name: "Allow all" }).click();
+    await page.getByRole("button", { name: "Share both" }).click();
 
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual(
@@ -327,7 +339,7 @@ describe.sequential("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -345,16 +357,16 @@ describe.sequential("first-run privacy and setup", () => {
     await expect
       .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
       .toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle link")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle login")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Moodle website")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Moodle username")).toBeInTheDocument();
     await expect
       .element(page.getByLabelText("Moodle password", { exact: true }))
       .toBeInTheDocument();
 
-    await page.getByLabelText("Moodle link").fill("https://moodle.example/");
-    await page.getByLabelText("Moodle login").fill("student123");
+    await page.getByLabelText("Moodle website").fill("https://moodle.example/");
+    await page.getByLabelText("Moodle username").fill("student123");
     await page.getByLabelText("Moodle password", { exact: true }).fill("secret");
-    await page.getByRole("button", { name: "Check" }).click();
+    await page.getByRole("button", { name: "Check connection" }).click();
 
     await vi.waitFor(() => {
       expect(updateStudyBuddyConfigurationMock).toHaveBeenCalledWith(
@@ -431,7 +443,7 @@ describe.sequential("first-run privacy and setup", () => {
       .not.toBeInTheDocument();
     await expect.element(page.getByLabelText("Connection check passed")).not.toBeInTheDocument();
     await expect
-      .element(page.getByText("Run a check to see a confirmation or error here."))
+      .element(page.getByText("Check the connection to make sure everything works."))
       .toBeInTheDocument();
     await expect
       .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
@@ -452,14 +464,12 @@ describe.sequential("first-run privacy and setup", () => {
     setDurableFailure(true);
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
     await expect
-      .element(
-        page.getByText("Setup progress could not be saved locally. Retry before continuing."),
-      )
+      .element(page.getByText("We couldn’t save your progress. Please try again."))
       .toBeInTheDocument();
     await screen.unmount();
   });
@@ -468,7 +478,7 @@ describe.sequential("first-run privacy and setup", () => {
     const first = await renderSetup();
 
     await page.getByRole("button", { name: "Skip" }).click();
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual(
         expect.objectContaining({
@@ -487,7 +497,7 @@ describe.sequential("first-run privacy and setup", () => {
     await first.unmount();
 
     const second = await renderSetup();
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
     await second.unmount();
   });
 
@@ -501,14 +511,18 @@ describe.sequential("first-run privacy and setup", () => {
     });
     const resumed = await renderSetup();
 
-    await expect.element(page.getByText("Set up Codex")).toBeInTheDocument();
+    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual({
         onboardingStatus: "in-progress",
-        onboardingCurrentStep: "moodle",
+        onboardingCurrentStep: "voice",
       });
     });
+    await expect
+      .element(page.getByRole("heading", { name: "Voice input", level: 1 }))
+      .toBeInTheDocument();
+    await page.getByRole("button", { name: "Skip" }).click();
     await expect
       .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
       .toBeInTheDocument();
@@ -550,9 +564,14 @@ describe.sequential("first-run privacy and setup", () => {
     await expect
       .element(page.getByRole("heading", { name: "Quiz safety", level: 1 }))
       .toBeInTheDocument();
-    await expect.element(page.getByText("Step 6 of 6")).toBeInTheDocument();
+    await expect.element(page.getByText("Step 7 of 7")).toBeInTheDocument();
     await expect
-      .element(page.getByRole("heading", { name: "Quiz safety is non-negotiable", level: 2 }))
+      .element(
+        page.getByRole("heading", {
+          name: "Choose how Study Buddy helps with quizzes",
+          level: 2,
+        }),
+      )
       .toBeInTheDocument();
 
     await vi.waitFor(() => {
@@ -663,19 +682,19 @@ describe.sequential("privacy settings and public notice", () => {
       .element(page.getByRole("link", { name: "dev.habsa@gmail.com" }))
       .toBeInTheDocument();
     await expect
-      .element(page.getByRole("heading", { name: "Usage analytics and click heatmaps" }))
+      .element(page.getByRole("heading", { name: "Usage analytics" }))
       .toBeInTheDocument();
     await expect
       .element(page.getByRole("heading", { name: "Conversation sharing" }))
       .toBeInTheDocument();
     await expect
-      .element(page.getByRole("heading", { name: "Withdrawal and data-subject requests" }))
+      .element(page.getByRole("heading", { name: "Change your mind or ask about your data" }))
       .toBeInTheDocument();
     await expect
-      .element(page.getByText(/self-hosted PostHog deployment at studybuddyanalytics\.habsa\.at/))
+      .element(page.getByText(/private analytics service at studybuddyanalytics\.habsa\.at/))
       .toBeInTheDocument();
-    await expect.element(page.getByText(/retained for one year/)).toBeInTheDocument();
-    await expect.element(page.getByText(/expire after 30 days/)).toBeInTheDocument();
+    await expect.element(page.getByText(/keep shared .* data for one year/)).toBeInTheDocument();
+    await expect.element(page.getByText(/removed after 30 days/)).toBeInTheDocument();
 
     await screen.unmount();
   });

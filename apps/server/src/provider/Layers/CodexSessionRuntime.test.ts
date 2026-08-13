@@ -282,7 +282,7 @@ describe("buildTurnStartParams", () => {
 
     const instructions = params.collaborationMode?.settings.developer_instructions ?? "";
     assert.match(instructions, /Active Study Buddy execution profile: `quality` \(`quality`\)/);
-    assert.match(instructions, /doc "<prompt>" --execution-profile "quality"/);
+    assert.match(instructions, /doc "<exact user prompt>" --execution-profile "quality"/);
     assert.match(
       instructions,
       /interactive-study-guide "<exact user prompt>" --execution-profile "quality"[\s\S]*canonical end-to-end route/,
@@ -299,6 +299,11 @@ describe("buildTurnStartParams", () => {
       instructions,
       /inspect a bounded shortlist of plausible course pages, compare their descriptions, sections, and resources/i,
     );
+    assert.match(
+      instructions,
+      /Never invoke the wrapper with an unassigned shell expansion such as `"\$SB_PROMPT"`/,
+    );
+    assert.match(instructions, /zero-length prompt must fail before any run directory/i);
   });
 
   it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {
@@ -365,7 +370,7 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /doc "<prompt>" --execution-profile "balanced" --codex-model "gpt-5\.6-terra"/,
+      /doc "<exact user prompt>" --execution-profile "balanced" --codex-model "gpt-5\.6-terra"/,
     );
   });
 });

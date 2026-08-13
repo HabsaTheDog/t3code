@@ -2,12 +2,12 @@ import { DatabaseIcon, MailIcon, ShieldCheckIcon, Undo2Icon } from "lucide-react
 
 const collected = [
   {
-    title: "Usage analytics and click heatmaps",
-    body: "Semantic event names; app version and client type; safe route identifiers; setup/provider/feature outcomes; pseudonymous installation identifier; and click targets carrying an explicit data-analytics-id. Session replay is disabled. Prompt and transcript text, page text, pointer movement, scrolling, input values, terminal content, diffs, source files, filenames, filesystem paths, authentication views, arbitrary attributes, console output, network bodies, names, email addresses, Clerk IDs, IP addresses, and provider identities are excluded.",
+    title: "Usage analytics",
+    body: "If you turn this on, we receive the Study Buddy version you use, which screens and features work or fail, the rough area of the screen you clicked, and which marked buttons you use. Session replay is disabled. We do not collect exact page addresses, what you type, page or course content, mouse movement, scrolling, voice transcripts, passwords, file contents or paths, names, email addresses, or sign-in details.",
   },
   {
     title: "Conversation sharing",
-    body: "User message text; final assistant text; provider and model; start/completion timestamps and latency; success, interruption, or error state; pseudonymous installation, thread, and turn identifiers. System/developer instructions, tool names/arguments/results, terminal content, diffs, source files, attachments, plan internals, filesystem paths, hidden reasoning, and known credentials are excluded.",
+    body: "If you turn this on, we receive the messages you send, Study Buddy’s final replies, feedback you leave, the AI model used, timing and outcome, summaries with sensitive details removed, and basic details about files Study Buddy creates or changes. We do not receive passwords, private instructions, behind-the-scenes tool activity, terminal output, file contents, attachments, full file paths, or hidden reasoning.",
   },
 ];
 
@@ -22,12 +22,12 @@ export function PrivacyNotice({ compact = false }: { compact?: boolean }) {
           Privacy notice
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-          Consent before collection.
+          You choose what to share.
         </h1>
         <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Both telemetry categories are optional, independent, and off until you affirmatively
-          accept them. Enabling later covers only future activity; Study Buddy never backfills
-          pre-consent data.
+          Both sharing options are optional and start turned off. If you turn one on, Study Buddy
+          only shares new activity from that point forward. It never goes back and shares earlier
+          activity.
         </p>
       </header>
 
@@ -43,7 +43,7 @@ export function PrivacyNotice({ compact = false }: { compact?: boolean }) {
 
       <section className="grid gap-6 rounded-2xl border bg-card p-6 sm:grid-cols-2">
         <div>
-          <h2 className="text-sm font-semibold">Controller and contact</h2>
+          <h2 className="text-sm font-semibold">Who looks after your data</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             Controller: Alvaro Schroll
             <br />
@@ -57,11 +57,11 @@ export function PrivacyNotice({ compact = false }: { compact?: boolean }) {
           </p>
         </div>
         <div>
-          <h2 className="text-sm font-semibold">Destination and retention</h2>
+          <h2 className="text-sm font-semibold">Where it goes and how long we keep it</h2>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Data is sent only to the self-hosted PostHog deployment at studybuddyanalytics.habsa.at.
-            Uploaded analytics events, heatmaps, and AI traces are retained for one year. Unsent
-            local buffers expire after 30 days and are capped at 250 MB.
+            Shared data goes only to Study Buddy’s private analytics service at
+            studybuddyanalytics.habsa.at. We keep shared usage and conversation data for one year.
+            Data waiting on your device is removed after 30 days and can use no more than 250 MB.
           </p>
         </div>
       </section>
@@ -70,14 +70,14 @@ export function PrivacyNotice({ compact = false }: { compact?: boolean }) {
         <div className="flex items-start gap-3">
           <Undo2Icon className="mt-0.5 size-5 shrink-0 text-primary" />
           <div>
-            <h2 className="text-sm font-semibold">Withdrawal and data-subject requests</h2>
+            <h2 className="text-sm font-semibold">Change your mind or ask about your data</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Withdraw either category at any time in Settings → Privacy &amp; Data. Capture stops
-              immediately and that category’s unsent local queue is deleted. Previously uploaded
-              data remains until the one-year retention limit. To request access, correction,
-              restriction, deletion, portability, or to object, email dev.habsa@gmail.com. Include
-              the installation identifier shown in Privacy &amp; Data settings when available; do
-              not send passwords or API keys.
+              Turn either option off at any time in Settings → Privacy &amp; Data. Study Buddy stops
+              collecting it immediately and removes anything of that type still waiting on your
+              device. Data already sent is kept for up to one year. To ask for a copy, correction,
+              restriction, transfer, or deletion of your data—or to object to its use—email
+              dev.habsa@gmail.com. Include your Study Buddy ID from Privacy &amp; Data settings if
+              you have one. Never email passwords or sign-in codes.
             </p>
           </div>
         </div>

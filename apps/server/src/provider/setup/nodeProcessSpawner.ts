@@ -7,6 +7,7 @@ import type {
   ProviderSetupProcessSpawner,
   ProviderSetupSpawnInput,
 } from "./types.ts";
+import { sanitizeProviderEnvironment } from "../ProviderInstanceEnvironment.ts";
 
 function writeStdin(stdin: NodeJS.WritableStream, input: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -24,7 +25,7 @@ export const nodeProviderSetupProcessSpawner: ProviderSetupProcessSpawner = {
     }
     const child = spawn(input.command, [...input.args], {
       cwd: input.cwd,
-      env: input.env ? { ...process.env, ...input.env } : process.env,
+      env: sanitizeProviderEnvironment({ ...process.env, ...input.env }),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -74,7 +75,7 @@ export const nodeProviderSetupProcessSpawner: ProviderSetupProcessSpawner = {
 function spawnProviderSetupPty(input: ProviderSetupSpawnInput): ProviderSetupChildProcess {
   const terminal = spawnPty(input.command, [...input.args], {
     ...(input.cwd ? { cwd: input.cwd } : {}),
-    env: input.env ? { ...process.env, ...input.env } : process.env,
+    env: sanitizeProviderEnvironment({ ...process.env, ...input.env }),
     name: "xterm-256color",
     cols: 100,
     rows: 30,

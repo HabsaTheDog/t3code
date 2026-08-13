@@ -63,6 +63,8 @@ export function attachmentRelativePath(attachment: ChatAttachment): string {
       });
       return `${attachment.id}${extension}`;
     }
+    case "voice":
+      return "";
   }
 }
 
@@ -70,6 +72,7 @@ export function resolveAttachmentPath(input: {
   readonly attachmentsDir: string;
   readonly attachment: ChatAttachment;
 }): string | null {
+  if (input.attachment.type !== "image") return null;
   return resolveAttachmentRelativePath({
     attachmentsDir: input.attachmentsDir,
     relativePath: attachmentRelativePath(input.attachment),

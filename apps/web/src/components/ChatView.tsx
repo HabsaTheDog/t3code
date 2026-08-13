@@ -179,6 +179,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  formatVoiceInputTranscripts,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -2988,7 +2989,10 @@ export default function ChatView(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      voiceNotes: composerVoiceNotes,
+      voiceTranscriptionPending,
     } = sendCtx;
+    if (voiceTranscriptionPending) return;
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -2997,7 +3001,7 @@ export default function ChatView(props: ChatViewProps) {
       hasSendableContent,
     } = deriveComposerSendState({
       prompt: promptForSend,
-      imageCount: composerImages.length,
+      imageCount: composerImages.length + composerVoiceNotes.length,
       terminalContexts: composerTerminalContexts,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
@@ -3015,7 +3019,9 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+      composerImages.length === 0 &&
+      composerVoiceNotes.length === 0 &&
+      sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -3062,6 +3068,7 @@ export default function ChatView(props: ChatViewProps) {
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
+    const composerVoiceNotesSnapshot = [...composerVoiceNotes];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
       promptForSend,
@@ -3069,12 +3076,26 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
-    const outgoingMessageText = formatOutgoingPrompt({
+    const visibleMessageText = messageTextForSend
+      ? formatOutgoingPrompt({
+          provider: ctxSelectedProvider,
+          model: ctxSelectedModel,
+          models: ctxSelectedProviderModels,
+          effort: ctxSelectedPromptEffort,
+          text: messageTextForSend,
+        })
+      : composerImagesSnapshot.length > 0
+        ? IMAGE_ONLY_BOOTSTRAP_PROMPT
+        : "";
+    const providerInputText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text:
+        [messageTextForSend, formatVoiceInputTranscripts(composerVoiceNotesSnapshot)]
+          .filter(Boolean)
+          .join("\n\n") || IMAGE_ONLY_BOOTSTRAP_PROMPT,
     });
     const turnAttachmentsPromise = Promise.all(
       composerImagesSnapshot.map(async (image) => ({
@@ -3085,14 +3106,21 @@ export default function ChatView(props: ChatViewProps) {
         dataUrl: await readFileAsDataUrl(image.file),
       })),
     );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+    const optimisticAttachments = [
+      ...composerImagesSnapshot.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      })),
+      ...composerVoiceNotesSnapshot.map((voiceNote) => ({
+        type: "voice" as const,
+        id: voiceNote.id,
+        durationMs: voiceNote.durationMs,
+      })),
+    ];
     // Scroll to the current end *before* adding the optimistic message.
     // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
     // automatically pins to the new item when the data changes.
@@ -3106,7 +3134,7 @@ export default function ChatView(props: ChatViewProps) {
       {
         id: messageIdForSend,
         role: "user",
-        text: outgoingMessageText,
+        text: visibleMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         createdAt: messageCreatedAt,
         streaming: false,
@@ -3129,6 +3157,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.clearVoiceNotes();
     composerRef.current?.resetCursorState();
 
     let turnStartSucceeded = false;
@@ -3146,6 +3175,8 @@ export default function ChatView(props: ChatViewProps) {
           titleSeed = `Image: ${firstComposerImageName}`;
         } else if (composerTerminalContextsSnapshot.length > 0) {
           titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
+        } else if (composerVoiceNotesSnapshot.length > 0) {
+          titleSeed = "Voice input";
         } else {
           titleSeed = "New thread";
         }
@@ -3177,7 +3208,14 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
 
-      const turnAttachments = await turnAttachmentsPromise;
+      const turnAttachments = [
+        ...(await turnAttachmentsPromise),
+        ...composerVoiceNotesSnapshot.map((voiceNote) => ({
+          type: "voice" as const,
+          id: voiceNote.id,
+          durationMs: voiceNote.durationMs,
+        })),
+      ];
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
@@ -3215,9 +3253,10 @@ export default function ChatView(props: ChatViewProps) {
         message: {
           messageId: messageIdForSend,
           role: "user",
-          text: outgoingMessageText,
+          text: visibleMessageText,
           attachments: turnAttachments,
         },
+        providerInput: providerInputText,
         modelSelection: ctxSelectedModelSelection,
         titleSeed: title,
         runtimeMode,
@@ -3231,6 +3270,7 @@ export default function ChatView(props: ChatViewProps) {
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        composerRef.current?.getSendContext().voiceNotes.length === 0 &&
         composerTerminalContextsRef.current.length === 0
       ) {
         setOptimisticUserMessages((existing) => {
@@ -3248,6 +3288,7 @@ export default function ChatView(props: ChatViewProps) {
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+        composerRef.current?.restoreVoiceNotes(composerVoiceNotesSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -3944,6 +3985,7 @@ export default function ChatView(props: ChatViewProps) {
                   }
                   turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                   activeThreadEnvironmentId={activeThread.environmentId}
+                  activeThreadId={activeThread.id}
                   viewerThreadRef={routeThreadRef}
                   onOpenViewerTab={handleOpenViewerTab}
                   routeThreadKey={routeThreadKey}

@@ -62,6 +62,8 @@ export function AnalyticsTelemetryBridge() {
           modelSelection: thread.modelSelection,
           ...(session?.provider ? { provider: session.provider } : {}),
           executionProfile,
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
           turn,
           activities,
         })) {

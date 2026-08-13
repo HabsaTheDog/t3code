@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "Study Buddy (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -25,11 +25,11 @@ const repoRoot = resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-export const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+export const APP_DISPLAY_NAME = isDevelopment ? "Study Buddy (Dev)" : "Study Buddy (Alpha)";
 export const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
+  ? `com.studybuddy.t3code.dev.${devBundleIdSuffix || "local"}`
+  : "com.studybuddy.t3code";
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["study-buddy-t3code-dev"] : ["study-buddy-t3code"];
 const LAUNCHER_VERSION = 10;
 const defaultIconPath = join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
@@ -116,7 +116,7 @@ function writeDevelopmentLauncherScript(targetBinaryPath, electronBinaryPath) {
       ...envEntries.map(([name, value]) => `export ${name}=${shellSingleQuote(value)}`),
       'for arg in "$@"; do',
       '  case "$arg" in',
-      "    t3code-dev://auth/callback*)",
+      "    study-buddy-t3code-dev://auth/callback*)",
       '      if [ -n "$T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" ]; then',
       '        /usr/bin/curl -fsS --max-time 2 -X POST --data-binary "$arg" "$T3CODE_DESKTOP_PROTOCOL_CALLBACK_URL" >/dev/null 2>&1 && exit 0',
       "      fi",

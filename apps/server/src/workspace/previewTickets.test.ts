@@ -6,7 +6,11 @@ import path from "node:path";
 import { MessageId, ProjectId, ThreadId, type OrchestrationReadModel } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createFilesystemPreviewTicket, readFilesystemPreviewTicket } from "./previewTickets.ts";
+import {
+  createFilesystemPreviewTicket,
+  previewResponseHeaders,
+  readFilesystemPreviewTicket,
+} from "./previewTickets.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -197,5 +201,25 @@ describe("filesystem preview tickets", () => {
         snapshot(fixture.root),
       ),
     ).rejects.toThrow("10 MiB");
+  });
+
+  it("keeps executable HTML previews offline and unable to submit forms", async () => {
+    const fixture = await createFixture();
+    const htmlPath = path.join(fixture.root, "guide.html");
+    await writeFile(htmlPath, "<script>document.body.textContent = 'interactive'</script>");
+    const result = await createFilesystemPreviewTicket(
+      {
+        scope: { kind: "project", projectId: ProjectId.make("project-1") },
+        filePath: htmlPath,
+      },
+      snapshot(fixture.root),
+    );
+    const token = result.path.slice(result.path.lastIndexOf("/") + 1);
+    const ticket = readFilesystemPreviewTicket(token);
+
+    expect(ticket).not.toBeNull();
+    expect(previewResponseHeaders(ticket!)["Content-Security-Policy"]).toBe(
+      "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'",
+    );
   });
 });

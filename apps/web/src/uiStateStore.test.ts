@@ -12,6 +12,7 @@ import {
   reorderProjects,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setThreadFavorite,
   setThreadChangedFilesExpanded,
   syncProjects,
   syncThreads,
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     threadLastVisitedAtById: {},
+    favoriteThreadKeys: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
@@ -77,6 +79,18 @@ describe("uiStateStore pure functions", () => {
     const next = markThreadUnread(initialState, threadId, null);
 
     expect(next).toBe(initialState);
+  });
+
+  it("adds and removes a favorite thread", () => {
+    const threadId = ThreadId.make("thread-favorite");
+    const initialState = makeUiState();
+
+    const favorite = setThreadFavorite(initialState, threadId, true);
+    expect(favorite.favoriteThreadKeys).toEqual({ [threadId]: true });
+    expect(setThreadFavorite(favorite, threadId, true)).toBe(favorite);
+
+    const notFavorite = setThreadFavorite(favorite, threadId, false);
+    expect(notFavorite.favoriteThreadKeys).toEqual({});
   });
 
   it("reorderProjects moves a project to a target index", () => {
@@ -336,13 +350,17 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[nextLogicalKey]).toBe(false);
   });
 
-  it("syncThreads prunes missing thread UI state", () => {
+  it("syncThreads prunes transient missing thread UI state without dropping favorites", () => {
     const thread1 = ThreadId.make("thread-1");
     const thread2 = ThreadId.make("thread-2");
     const initialState = makeUiState({
       threadLastVisitedAtById: {
         [thread1]: "2026-02-25T12:35:00.000Z",
         [thread2]: "2026-02-25T12:36:00.000Z",
+      },
+      favoriteThreadKeys: {
+        [thread1]: true,
+        [thread2]: true,
       },
       threadChangedFilesExpandedById: {
         [thread1]: {
@@ -358,6 +376,10 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById).toEqual({
       [thread1]: "2026-02-25T12:35:00.000Z",
+    });
+    expect(next.favoriteThreadKeys).toEqual({
+      [thread1]: true,
+      [thread2]: true,
     });
     expect(next.threadChangedFilesExpandedById).toEqual({
       [thread1]: {
@@ -403,6 +425,9 @@ describe("uiStateStore pure functions", () => {
       threadLastVisitedAtById: {
         [thread1]: "2026-02-25T12:35:00.000Z",
       },
+      favoriteThreadKeys: {
+        [thread1]: true,
+      },
       threadChangedFilesExpandedById: {
         [thread1]: {
           "turn-1": false,
@@ -413,6 +438,7 @@ describe("uiStateStore pure functions", () => {
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
+    expect(next.favoriteThreadKeys).toEqual({});
     expect(next.threadChangedFilesExpandedById).toEqual({});
   });
 
@@ -577,6 +603,17 @@ describe("uiStateStore persistence round-trip", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+  });
+
+  it("persists favorite thread keys", () => {
+    const state = setThreadFavorite(makeUiState(), "env-local:thread-favorite", true);
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.favoriteThreadKeys).toEqual(["env-local:thread-favorite"]);
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {

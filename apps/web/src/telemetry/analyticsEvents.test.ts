@@ -65,7 +65,7 @@ describe("buildThreadAnalyticsEvents", () => {
       ],
     });
 
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(5);
     expect(events.at(-1)).toMatchObject({
       event: "turn.completed",
       properties: {
@@ -146,6 +146,8 @@ describe("buildThreadAnalyticsEvents", () => {
     const serialized = JSON.stringify(events);
     expect(serialized).not.toContain("private course name");
     expect(serialized).not.toContain("user course secret");
-    expect(events[0]?.properties).toMatchObject({ task_type: "unknown" });
+    expect(
+      events.find(({ event }) => event === "orchestration.task.completed")?.properties,
+    ).toMatchObject({ task_type: "unknown" });
   });
 });

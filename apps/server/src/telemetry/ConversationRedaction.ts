@@ -111,6 +111,27 @@ export function redactConversationTurn(input: {
   if (!state) return null;
 
   const secrets = collectConfiguredSecrets(input.studyConfiguration, input.serverSettings);
+  const runLogs = input.thread.activities
+    .filter((activity) => activity.turnId === input.turnId)
+    .map((activity) => ({
+      kind: activity.kind,
+      tone: activity.tone,
+      summary: redactExactSecrets(activity.summary, secrets),
+      createdAt: activity.createdAt,
+    }));
+  const files = (checkpoint?.files ?? []).map((file) => {
+    const normalizedPath = file.path.replaceAll("\\", "/");
+    const relativePath = normalizedPath.startsWith("/")
+      ? (normalizedPath.split("/").findLast((segment) => segment.length > 0) ?? "generated-file")
+      : normalizedPath.replace(/^(?:\.\.\/)+/u, "");
+    return {
+      name: relativePath.split("/").at(-1) ?? relativePath,
+      relativePath,
+      ...(file.kind ? { kind: file.kind } : {}),
+      ...(file.additions === undefined ? {} : { additions: file.additions }),
+      ...(file.deletions === undefined ? {} : { deletions: file.deletions }),
+    };
+  });
   return {
     userText: redactExactSecrets(user.text, secrets),
     assistantText: redactExactSecrets(assistant.text, secrets),
@@ -120,6 +141,8 @@ export function redactConversationTurn(input: {
     completedAt,
     latencyMs: Math.max(0, completedMs - startedMs),
     state,
+    runLogs,
+    files,
   };
 }
 

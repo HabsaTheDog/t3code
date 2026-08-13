@@ -3,6 +3,7 @@ import {
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  AudioWaveformIcon,
   BotIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -50,6 +52,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { AssistantResponseFeedback } from "./AssistantResponseFeedback";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -105,6 +108,7 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   activeThreadEnvironmentId: EnvironmentId;
+  activeThreadId: ThreadId;
   viewerThreadRef?: ScopedThreadRef;
   onOpenViewerTab?: (source: ViewerTabSource) => void;
   onRevertUserMessage: (messageId: MessageId) => void;
@@ -143,6 +147,7 @@ interface MessagesTimelineProps {
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
+  activeThreadId: ThreadId;
   viewerThreadRef?: ScopedThreadRef;
   onOpenViewerTab?: (source: ViewerTabSource) => void;
   markdownCwd: string | undefined;
@@ -172,6 +177,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
+  activeThreadId,
   viewerThreadRef,
   onOpenViewerTab,
   markdownCwd,
@@ -313,6 +319,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      activeThreadId,
       ...(viewerThreadRef ? { viewerThreadRef } : {}),
       ...(onOpenViewerTab ? { onOpenViewerTab } : {}),
       onRevertUserMessage,
@@ -328,6 +335,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       activeThreadEnvironmentId,
+      activeThreadId,
       viewerThreadRef,
       onOpenViewerTab,
       onRevertUserMessage,
@@ -614,8 +622,6 @@ function TimelineMinimap({
 // TimelineRowContent — the actual row component
 // ---------------------------------------------------------------------------
 
-type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
-type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
@@ -665,7 +671,12 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const userImages = row.message.attachments ?? [];
+  const userImages = (row.message.attachments ?? []).filter(
+    (attachment) => attachment.type === "image",
+  );
+  const voiceNotes = (row.message.attachments ?? []).filter(
+    (attachment) => attachment.type === "voice",
+  );
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
@@ -675,7 +686,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
         {userImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-            {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+            {userImages.map((image) => (
               <div
                 key={image.id}
                 className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
@@ -706,6 +717,28 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {voiceNotes.length > 0 ? (
+          <div className={cn("flex flex-col gap-2", displayedUserMessage.visibleText && "mb-2")}>
+            {voiceNotes.map((voiceNote) => {
+              const seconds = Math.max(0, Math.round(voiceNote.durationMs / 1000));
+              const duration = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+              return (
+                <div
+                  key={voiceNote.id}
+                  className="flex min-w-44 items-center gap-2.5 rounded-xl border border-border/70 bg-background/55 px-3 py-2.5"
+                >
+                  <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <AudioWaveformIcon className="size-4" />
+                  </span>
+                  <p className="whitespace-nowrap text-xs font-medium">
+                    Voice Input{" "}
+                    <span className="text-muted-foreground tabular-nums">{duration}</span>
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
         <CollapsibleUserMessageBody
           text={displayedUserMessage.visibleText}
           terminalContexts={terminalContexts}
@@ -767,7 +800,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         resolvedTheme={ctx.resolvedTheme}
         onOpenTurnDiff={ctx.onOpenTurnDiff}
       />
-      <div className="mt-1.5 flex items-center gap-2">
+      <div className="mt-1.5 flex flex-wrap items-start gap-2">
         <p className="text-[10px] text-muted-foreground/30">
           {row.message.streaming ? (
             <LiveMessageMeta
@@ -784,6 +817,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           )}
         </p>
         <AssistantCopyButton row={row} />
+        {row.showAssistantCopyButton && row.message.turnId && !row.assistantCopyStreaming ? (
+          <AssistantResponseFeedback threadId={ctx.activeThreadId} turnId={row.message.turnId} />
+        ) : null}
       </div>
     </div>
   );

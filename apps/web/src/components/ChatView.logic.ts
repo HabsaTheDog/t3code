@@ -205,6 +205,17 @@ export function deriveComposerSendState(options: {
   };
 }
 
+export function formatVoiceInputTranscripts(
+  voiceNotes: ReadonlyArray<{ readonly transcript: string }>,
+): string {
+  return voiceNotes
+    .map(
+      (voiceNote, index) =>
+        `[Voice Input ${index + 1} — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]\n${voiceNote.transcript}`,
+    )
+    .join("\n\n");
+}
+
 export function buildExpiredTerminalContextToastCopy(
   expiredTerminalContextCount: number,
   variant: "omitted" | "empty",

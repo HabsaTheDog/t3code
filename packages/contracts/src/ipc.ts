@@ -435,6 +435,20 @@ export const DesktopCloudAuthFetchResultSchema = Schema.Struct({
 });
 export type DesktopCloudAuthFetchResult = typeof DesktopCloudAuthFetchResultSchema.Type;
 
+export const DesktopSpeechModelStateSchema = Schema.Struct({
+  status: Schema.Literals(["not-enabled", "downloading", "verifying", "ready", "error"]),
+  model: Schema.Literal("parakeet-tdt-0.6b-v3-int8"),
+  downloadedBytes: Schema.Number,
+  totalBytes: Schema.NullOr(Schema.Number),
+  error: Schema.NullOr(Schema.String),
+});
+export type DesktopSpeechModelState = typeof DesktopSpeechModelStateSchema.Type;
+
+export const DesktopSpeechTranscriptionResultSchema = Schema.Struct({
+  text: Schema.String,
+});
+export type DesktopSpeechTranscriptionResult = typeof DesktopSpeechTranscriptionResultSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -496,6 +510,10 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  getSpeechModelState: () => Promise<DesktopSpeechModelState>;
+  enableSpeechModel: () => Promise<DesktopSpeechModelState>;
+  removeSpeechModel: () => Promise<DesktopSpeechModelState>;
+  transcribeSpeech: (wavBase64: string) => Promise<DesktopSpeechTranscriptionResult>;
 }
 
 /**

@@ -2,11 +2,13 @@ import { ConversationExporter } from "./conversation";
 import { TelemetryOutbox, type TelemetryOutboxOptions } from "./outbox";
 import { BrowserPostHogTelemetryClient, type PostHogTelemetryClient } from "./posthogClient";
 import { PostHogBatchUploader, TelemetryRetryWorker } from "./retryWorker";
-import { sanitizeRecord } from "./sanitize";
+import { makeBeforeSendSanitizer, sanitizeRecord } from "./sanitize";
 import {
   systemTelemetryClock,
   systemTelemetryRandom,
   type ConversationTurnExport,
+  type ResponseFeedbackCaptureResult,
+  type ResponseFeedbackInput,
   type SemanticTelemetryEvent,
   type TelemetryClock,
   type TelemetryConsentSnapshot,
@@ -31,12 +33,18 @@ const SEMANTIC_EVENTS = new Set([
   "provider.auth_failed",
   "study_connection.tested",
   "thread.created",
+  "thread.favorite.changed",
   "turn.started",
   "turn.completed",
   "turn.interrupted",
   "turn.failed",
   "orchestration.task.completed",
+  "response.feedback.rated",
+  "feature.exposed",
   "feature.used",
+  "feature.failed",
+  "model.selected",
+  "execution_profile.selected",
   "settings.changed",
 ]);
 
@@ -53,6 +61,7 @@ export interface TelemetryControllerOptions {
   readonly posthogHost?: string;
   readonly projectToken?: string;
   readonly configuredSecrets?: () => ReadonlyArray<string>;
+  readonly contextProperties?: () => Readonly<Record<string, unknown>>;
   readonly onInstallationIdCreated?: (installationId: string) => void | Promise<void>;
   readonly outboxOptions?: TelemetryOutboxOptions;
   readonly createOutbox?: () => TelemetryOutbox;
@@ -65,6 +74,7 @@ export class TelemetryController {
   readonly #host: string;
   readonly #projectToken: string;
   readonly #configuredSecrets: () => ReadonlyArray<string>;
+  readonly #contextProperties: () => Readonly<Record<string, unknown>>;
   readonly #onInstallationIdCreated: ((installationId: string) => void | Promise<void>) | undefined;
   readonly #createOutbox: () => TelemetryOutbox;
   readonly #posthog: PostHogTelemetryClient;
@@ -85,6 +95,8 @@ export class TelemetryController {
     this.#host = options.posthogHost ?? DEFAULT_POSTHOG_HOST;
     this.#projectToken = options.projectToken?.trim() ?? "";
     this.#configuredSecrets = options.configuredSecrets ?? (() => []);
+    this.#contextProperties =
+      options.contextProperties ?? (() => ({ telemetry_schema_version: 4 }));
     this.#onInstallationIdCreated = options.onInstallationIdCreated;
     this.#createOutbox = options.createOutbox ?? (() => new TelemetryOutbox(options.outboxOptions));
     this.#posthog = options.posthogClient ?? new BrowserPostHogTelemetryClient();
@@ -154,8 +166,9 @@ export class TelemetryController {
         event: event.event,
         idempotencyKey: event.idempotencyKey ?? this.#random.uuid(),
         payload: {
-          distinct_id: installationId,
           ...sanitizeRecord(event.properties ?? {}, this.#configuredSecrets()),
+          ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
+          distinct_id: installationId,
         },
         createdAt: timestamp,
       });
@@ -180,6 +193,51 @@ export class TelemetryController {
       return exported;
     } catch {
       return false;
+    }
+  }
+
+  async submitResponseFeedback(
+    feedback: ResponseFeedbackInput,
+  ): Promise<ResponseFeedbackCaptureResult> {
+    const ratingCaptured = await this.capture({
+      event: "response.feedback.rated",
+      idempotencyKey: `response.feedback.rated:${feedback.threadId}:${feedback.turnId}:${feedback.rating}`,
+      properties: {
+        $ai_session_id: feedback.threadId,
+        $ai_trace_id: feedback.turnId,
+        $ai_generation_id: feedback.turnId,
+        feedback_rating: feedback.rating,
+        has_feedback_note: Boolean(feedback.note?.trim()),
+      },
+    });
+    if (ratingCaptured) {
+      void this.capture({
+        event: "feature.used",
+        idempotencyKey: `feature.used:response.feedback:${feedback.threadId}:${feedback.turnId}`,
+        properties: {
+          feature: "response.feedback",
+          feature_area: "Feedback",
+          feature_label: "Rate an assistant response",
+          feedback_rating: feedback.rating,
+        },
+      });
+    }
+    const note = feedback.note?.trim() ?? "";
+    if (note.length === 0 || this.#settings?.conversationConsent !== "accepted") {
+      return { ratingCaptured, noteCaptured: false };
+    }
+    try {
+      const installationId = await this.#ensureInstallationId();
+      const noteCaptured = await this.#ensureConversationExporter().exportResponseFeedback({
+        ...feedback,
+        note,
+        installationId,
+        idempotencyKey: `response.feedback.commented:${feedback.threadId}:${feedback.turnId}:${this.#random.uuid()}`,
+      });
+      if (noteCaptured) void this.#worker?.flush();
+      return { ratingCaptured, noteCaptured };
+    } catch {
+      return { ratingCaptured, noteCaptured: false };
     }
   }
 
@@ -290,14 +348,40 @@ export class TelemetryController {
     if (analyticsAccepted && this.#projectToken && !this.#analyticsInitialized) {
       if (revision !== this.#consentRevision) return;
       const generation = ++this.#analyticsGeneration;
+      const isActive = () =>
+        revision === this.#consentRevision &&
+        generation === this.#analyticsGeneration &&
+        this.#settings?.analyticsConsent === "accepted";
+      const beforeSend = makeBeforeSendSanitizer({
+        enqueue: async (event, properties) => {
+          if (!isActive()) return;
+          try {
+            const result = await outbox.enqueue({
+              category: "analytics",
+              kind: "analytics",
+              event,
+              idempotencyKey: `posthog-sdk:${event}:${this.#random.uuid()}`,
+              payload: {
+                ...properties,
+                ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
+                distinct_id: installationId,
+                sdk_event_source: "posthog-js",
+              },
+              createdAt: this.#clock.now(),
+            });
+            if (result === "enqueued") void this.#worker?.flush();
+          } catch {
+            this.#lastLifecycleError = "Failed to queue privacy-filtered PostHog telemetry.";
+            await outbox.recordError(this.#lastLifecycleError).catch(() => undefined);
+          }
+        },
+      });
       await this.#posthog.initialize({
         host: this.#host,
         projectToken: this.#projectToken,
         installationId,
-        isActive: () =>
-          revision === this.#consentRevision &&
-          generation === this.#analyticsGeneration &&
-          this.#settings?.analyticsConsent === "accepted",
+        beforeSend,
+        isActive,
       });
       if (
         generation === this.#analyticsGeneration &&
@@ -331,6 +415,7 @@ export class TelemetryController {
         enabledAt: this.#settings?.conversationEnabledAt ?? null,
       }),
       configuredSecrets: this.#configuredSecrets,
+      contextProperties: this.#contextProperties,
     });
     return this.#conversationExporter;
   }

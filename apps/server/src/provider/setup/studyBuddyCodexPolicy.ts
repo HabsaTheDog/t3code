@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { MINIMUM_STUDY_BUDDY_CODEX_VERSION } from "@t3tools/contracts";
 import type { ServerConfigShape } from "../../config.ts";
+import { sanitizeProviderEnvironment } from "../ProviderInstanceEnvironment.ts";
 
 export const STUDY_BUDDY_CODEX_PERMISSION_PROFILE = "study_buddy";
 export const STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE = "study_buddy_analysis";
@@ -120,7 +121,7 @@ export function studyBuddyCodexEnvironment(
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   return {
-    ...source,
+    ...sanitizeProviderEnvironment(source),
     CODEX_HOME: paths.codexHome,
     STUDY_BUDDY_CODEX_HOME: paths.codexHome,
     STUDY_BUDDY_CODEX_PERMISSION_PROFILE: STUDY_BUDDY_CODEX_PERMISSION_PROFILE,

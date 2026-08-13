@@ -7,12 +7,13 @@ import {
 } from "./StudyBuddySettings.logic.ts";
 
 describe("Study Buddy access modes", () => {
-  it("describes Ask before attempt as a cooperative guardrail", () => {
+  it("plainly describes what Ask before opening a quiz does", () => {
     const option = QUIZ_ACCESS_MODE_OPTIONS.find(
       (candidate) => candidate.value === "ask-before-attempt",
     );
-    expect(option?.description).toContain("cooperative local confirmation");
-    expect(option?.description).toContain("not a security boundary");
+    expect(option?.description).toBe(
+      "Study Buddy shows you what it found and asks before it opens or continues a quiz.",
+    );
   });
 
   it("exposes all supported study access levels", () => {

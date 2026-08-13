@@ -384,6 +384,41 @@ describe("TelemetryRetryWorker", () => {
     });
   });
 
+  it("flushes an event queued while an earlier flush is still reading the outbox", async () => {
+    const outbox = new TelemetryOutbox({
+      indexedDB: new IDBFactory(),
+      databaseName: `coalesced-flush-${Math.random()}`,
+      random: { uuid: () => "late-item", unit: () => 0.5 },
+    });
+    const originalListDue = outbox.listDue.bind(outbox);
+    let releaseFirstRead: (() => void) | undefined;
+    vi.spyOn(outbox, "listDue").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseFirstRead = () => resolve([]);
+        }),
+    );
+    const upload = vi.fn(async () => ({ ok: true }));
+    const worker = new TelemetryRetryWorker(outbox, { upload });
+
+    const firstFlush = worker.flush();
+    await vi.waitFor(() => expect(releaseFirstRead).toEqual(expect.any(Function)));
+    await outbox.enqueue({
+      category: "analytics",
+      kind: "analytics",
+      event: "app.started",
+      idempotencyKey: "queued-during-flush",
+      payload: {},
+    });
+    const coalescedFlush = worker.flush();
+    releaseFirstRead?.();
+    await Promise.all([firstFlush, coalescedFlush]);
+
+    expect(outbox.listDue).toHaveBeenCalledTimes(2);
+    expect(upload).toHaveBeenCalledOnce();
+    expect(await originalListDue()).toHaveLength(0);
+  });
+
   it("retains items after a 5xx response and retries later", async () => {
     let now = 1_000;
     const outbox = new TelemetryOutbox({

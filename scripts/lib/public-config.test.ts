@@ -95,6 +95,23 @@ describe("loadRepoEnv", () => {
       VITE_T3CODE_RELAY_URL: "https://relay.example.test",
     });
   });
+
+  it("does not import private variables from repository env files", () => {
+    const repoRoot = makeTemporaryDirectory();
+    writeFileSync(
+      join(repoRoot, ".env"),
+      "MOODLE_PASSWORD=portal-secret\nT3CODE_RELAY_URL=https://relay.example.test\n",
+    );
+    writeFileSync(join(repoRoot, ".env.local"), "CIS_CALENDAR_URL=https://private.example.test\n");
+
+    const env = loadRepoEnv({ baseEnv: { PATH: "/bin" }, repoRoot });
+
+    expect(env).toEqual({
+      PATH: "/bin",
+      T3CODE_RELAY_URL: "https://relay.example.test",
+      VITE_T3CODE_RELAY_URL: "https://relay.example.test",
+    });
+  });
 });
 
 function makeTemporaryDirectory() {

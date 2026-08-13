@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  createBuildConfig,
   createStagePnpmConfig,
   resolveDesktopRuntimeDependencies,
   resolveBuildOptions,
@@ -24,8 +25,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("keeps Study Buddy branding for stable builds and switches to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "Study Buddy T3 Code");
-    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(
+      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
+      "Study Buddy T3 Code (Nightly)",
+    );
   });
+
+  it.effect("uses Study Buddy-only desktop packaging identity", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("linux", "AppImage", "0.0.17", false, false, 3000);
+      const linuxConfig = config.linux as
+        | {
+            readonly executableName?: string;
+            readonly desktop?: { readonly entry?: { readonly StartupWMClass?: string } };
+          }
+        | undefined;
+
+      assert.equal(config.appId, "com.studybuddy.t3code");
+      assert.equal(config.artifactName, "Study-Buddy-T3-Code-${version}-${arch}.${ext}");
+      assert.equal(linuxConfig?.executableName, "study-buddy-t3code");
+      assert.equal(linuxConfig?.desktop?.entry?.StartupWMClass, "study-buddy-t3code");
+    }),
+  );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {

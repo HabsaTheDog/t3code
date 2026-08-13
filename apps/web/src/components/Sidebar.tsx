@@ -8,6 +8,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
+  StarIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -93,6 +94,8 @@ import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
+import { featureProperties } from "../telemetry/featureCatalog";
+import { telemetry } from "../telemetry/runtime";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useQuickChatActions } from "../hooks/useQuickChatActions";
@@ -202,6 +205,20 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
+
+function captureThreadFavoriteChange(favorite: boolean, scope: "project" | "quick_chat"): void {
+  const properties = {
+    favorite,
+    source: "context_menu",
+    thread_scope: scope,
+  } as const;
+  void telemetry.capture({ event: "thread.favorite.changed", properties });
+  void telemetry.capture({
+    event: "feature.used",
+    properties: featureProperties("thread.favorite", properties),
+  });
+}
+
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -350,6 +367,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const isFavorite = useUiStateStore((state) => state.favoriteThreadKeys[threadKey] === true);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
@@ -698,6 +716,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
                 )}
+                {isFavorite && (
+                  <span
+                    role="img"
+                    aria-label="Favorite thread"
+                    title="Favorite"
+                    data-testid={`thread-favorite-${thread.id}`}
+                    className="inline-flex shrink-0 items-center justify-center text-amber-500/75 dark:text-amber-400/75"
+                  >
+                    <StarIcon className="size-2.5 fill-current" />
+                  </span>
+                )}
                 {jumpLabel ? (
                   <span
                     className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
@@ -958,6 +987,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const setThreadFavorite = useUiStateStore((state) => state.setThreadFavorite);
   const toggleProject = useUiStateStore((state) => state.toggleProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -1920,10 +1950,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      const isFavorite = useUiStateStore.getState().favoriteThreadKeys[threadKey] === true;
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          {
+            id: "favorite",
+            label: isFavorite ? "Remove from favorites" : "Add to favorites",
+          },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
@@ -1940,6 +1975,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        return;
+      }
+      if (clicked === "favorite") {
+        const favorite = !isFavorite;
+        setThreadFavorite(threadKey, favorite);
+        captureThreadFavoriteChange(favorite, "project");
         return;
       }
       if (clicked === "copy-path") {
@@ -1982,6 +2023,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      setThreadFavorite,
     ],
   );
 
@@ -2642,6 +2684,7 @@ const QuickChatSection = memo(function QuickChatSection({
   const confirmThreadDelete = useSettings<boolean>((settings) => settings.confirmThreadDelete);
   const confirmThreadArchive = useSettings<boolean>((settings) => settings.confirmThreadArchive);
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const setThreadFavorite = useUiStateStore((state) => state.setThreadFavorite);
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
@@ -2793,18 +2836,23 @@ const QuickChatSection = memo(function QuickChatSection({
       try {
         const api = readLocalApi();
         if (!api) return;
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        const threadKey = scopedThreadKey(threadRef);
+        const isFavorite = useUiStateStore.getState().favoriteThreadKeys[threadKey] === true;
         const clicked = await api.contextMenu.show(
           [
             { id: "rename", label: "Rename thread" },
             { id: "mark-unread", label: "Mark unread" },
+            {
+              id: "favorite",
+              label: isFavorite ? "Remove from favorites" : "Add to favorites",
+            },
             { id: "copy-path", label: "Copy Path" },
             { id: "copy-thread-id", label: "Copy Thread ID" },
             { id: "delete", label: "Delete", destructive: true },
           ],
           position,
         );
-        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-        const threadKey = scopedThreadKey(threadRef);
         if (clicked === "rename") {
           setRenamingThreadKey(threadKey);
           setRenamingTitle(thread.title);
@@ -2813,6 +2861,12 @@ const QuickChatSection = memo(function QuickChatSection({
         }
         if (clicked === "mark-unread") {
           markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+          return;
+        }
+        if (clicked === "favorite") {
+          const favorite = !isFavorite;
+          setThreadFavorite(threadKey, favorite);
+          captureThreadFavoriteChange(favorite, "quick_chat");
           return;
         }
         if (clicked === "copy-path") {
@@ -2865,6 +2919,7 @@ const QuickChatSection = memo(function QuickChatSection({
       copyThreadIdToClipboard,
       deleteThread,
       markThreadUnread,
+      setThreadFavorite,
     ],
   );
 

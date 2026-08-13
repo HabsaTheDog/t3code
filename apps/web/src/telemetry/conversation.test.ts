@@ -1,9 +1,13 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ConversationExporter, buildConversationGenerationPayload } from "./conversation";
+import {
+  ConversationExporter,
+  buildConversationGenerationPayload,
+  extractGeneratedArtifacts,
+} from "./conversation";
 import { TelemetryOutbox } from "./outbox";
-import type { ConversationTurnExport } from "./types";
+import { MAX_RESPONSE_FEEDBACK_LENGTH, type ConversationTurnExport } from "./types";
 
 const turn: ConversationTurnExport = {
   idempotencyKey: "conversation:thread:turn",
@@ -81,5 +85,109 @@ describe("ConversationExporter", () => {
       $ai_provider: "custom [REDACTED_PATH]",
       $ai_model: "[REDACTED_URL]",
     });
+  });
+
+  it("extracts local generated artifacts without treating web links as files", () => {
+    expect(
+      extractGeneratedArtifacts(
+        "Open [study-guide.pdf](/tmp/study-guide.pdf) or [documentation](https://example.com/a.pdf).",
+      ),
+    ).toEqual([{ name: "study-guide.pdf", extension: "pdf" }]);
+  });
+
+  it("exports redacted logs, file evidence, and generated artifacts with trace linkage", async () => {
+    const queue = outbox();
+    const exporter = new ConversationExporter(queue, {
+      consent: () => ({
+        decision: "accepted",
+        enabledAt: "2026-06-27T09:59:00.000Z",
+      }),
+      configuredSecrets: () => ["arbitrary-secret"],
+    });
+    await exporter.exportCompletedTurn({
+      ...turn,
+      assistantText: "Created [study-guide.pdf](/tmp/study-guide.pdf)",
+      runLogs: [
+        {
+          kind: "runtime.error",
+          tone: "error",
+          summary: "Failed with arbitrary-secret",
+          createdAt: turn.completedAt,
+        },
+      ],
+      files: [
+        {
+          name: "study-guide.pdf",
+          relativePath: "reports/study-guide.pdf",
+          kind: "added",
+          additions: 12,
+          deletions: 0,
+        },
+      ],
+    });
+
+    const items = await queue.listDue();
+    expect(items.map(({ event }) => event)).toEqual([
+      "$ai_generation",
+      "run.log.recorded",
+      "run.file.changed",
+      "artifact.generated",
+    ]);
+    expect(items[1]?.payload).toMatchObject({
+      $ai_trace_id: "turn",
+      run_log_summary: "Failed with [REDACTED_CONFIGURED_SECRET]",
+      is_error: true,
+    });
+    expect(items[2]?.payload).toMatchObject({
+      file_name: "study-guide.pdf",
+      relative_file: "reports/study-guide.pdf",
+      file_extension: "pdf",
+    });
+  });
+
+  it("exports a redacted optional feedback note linked to its generation", async () => {
+    const queue = outbox();
+    const exporter = new ConversationExporter(queue, {
+      consent: () => ({ decision: "accepted", enabledAt: turn.startedAt }),
+      configuredSecrets: () => ["arbitrary-secret"],
+    });
+    await expect(
+      exporter.exportResponseFeedback({
+        installationId: "install",
+        idempotencyKey: "feedback-1",
+        threadId: "thread",
+        turnId: "turn",
+        rating: "negative",
+        note: "It exposed arbitrary-secret",
+      }),
+    ).resolves.toBe(true);
+    const [item] = await queue.listDue();
+    expect(item).toMatchObject({
+      event: "response.feedback.commented",
+      payload: {
+        $ai_session_id: "thread",
+        $ai_trace_id: "turn",
+        feedback_rating: "negative",
+        feedback_note: "It exposed [REDACTED_CONFIGURED_SECRET]",
+      },
+    });
+  });
+
+  it("keeps long feedback while enforcing the shared upper bound", async () => {
+    const queue = outbox();
+    const exporter = new ConversationExporter(queue, {
+      consent: () => ({ decision: "accepted", enabledAt: turn.startedAt }),
+    });
+    await exporter.exportResponseFeedback({
+      installationId: "install",
+      idempotencyKey: "feedback-long",
+      threadId: "thread",
+      turnId: "turn",
+      rating: "positive",
+      note: "x".repeat(MAX_RESPONSE_FEEDBACK_LENGTH + 100),
+    });
+    const [item] = await queue.listDue();
+    expect(item?.payload.feedback_note).toHaveLength(MAX_RESPONSE_FEEDBACK_LENGTH);
+    expect(item?.payload.feedback_note_length).toBe(MAX_RESPONSE_FEEDBACK_LENGTH);
   });
 });

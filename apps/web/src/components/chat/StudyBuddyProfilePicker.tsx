@@ -11,6 +11,8 @@ import {
 import { memo } from "react";
 
 import { useSettings } from "../../hooks/useSettings";
+import { telemetry } from "../../telemetry/runtime";
+import { featureProperties } from "../../telemetry/featureCatalog";
 import { StudyBuddyProfileIconView } from "../studyBuddyProfileIcons";
 import {
   Select,
@@ -42,6 +44,23 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
     if (!profileId) return;
     const profile = allProfiles.find((candidate) => candidate.id === profileId);
     if (!profile) return;
+    const telemetryProfile = profile.kind === "custom" ? "custom" : profile.id;
+    void telemetry.capture({
+      event: "execution_profile.selected",
+      properties: {
+        execution_profile: telemetryProfile,
+        profile_kind: profile.kind,
+        surface: "composer",
+      },
+    });
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("chat.profile", {
+        execution_profile: telemetryProfile,
+        profile_kind: profile.kind,
+        surface: "composer",
+      }),
+    });
     const options = studyBuddyCoordinatorOptions(profile);
     props.onCoordinatorChange(
       profile.roles.coordinator.instanceId,
@@ -58,6 +77,7 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       onValueChange={selectProfile}
     >
       <SelectTrigger
+        data-analytics-id="chat.execution-profile-picker"
         variant="ghost"
         size="sm"
         className="w-auto max-w-44 shrink-0 font-medium"

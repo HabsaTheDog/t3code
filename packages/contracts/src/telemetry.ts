@@ -33,6 +33,27 @@ export const ConversationTurnExport = Schema.Struct({
   completedAt: Schema.String,
   latencyMs: NonNegativeInt,
   state: Schema.Literals(["success", "interrupted", "error"]),
+  runLogs: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        kind: TrimmedNonEmptyString,
+        tone: Schema.Literals(["info", "tool", "approval", "error"]),
+        summary: TrimmedNonEmptyString,
+        createdAt: Schema.String,
+      }),
+    ),
+  ),
+  files: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString,
+        relativePath: TrimmedNonEmptyString,
+        kind: Schema.optional(TrimmedNonEmptyString),
+        additions: Schema.optional(NonNegativeInt),
+        deletions: Schema.optional(NonNegativeInt),
+      }),
+    ),
+  ),
 });
 export type ConversationTurnExport = typeof ConversationTurnExport.Type;
 
@@ -51,6 +72,23 @@ export const ConversationTurnRedactionResult = Schema.Struct({
   completedAt: Schema.String,
   latencyMs: NonNegativeInt,
   state: Schema.Literals(["success", "interrupted", "error"]),
+  runLogs: Schema.Array(
+    Schema.Struct({
+      kind: TrimmedNonEmptyString,
+      tone: Schema.Literals(["info", "tool", "approval", "error"]),
+      summary: TrimmedNonEmptyString,
+      createdAt: Schema.String,
+    }),
+  ),
+  files: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      relativePath: TrimmedNonEmptyString,
+      kind: Schema.optional(TrimmedNonEmptyString),
+      additions: Schema.optional(NonNegativeInt),
+      deletions: Schema.optional(NonNegativeInt),
+    }),
+  ),
 });
 export type ConversationTurnRedactionResult = typeof ConversationTurnRedactionResult.Type;
 

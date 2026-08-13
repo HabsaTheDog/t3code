@@ -16,6 +16,7 @@ import { BrowserPostHogTelemetryClient } from "./posthogClient";
 function posthogInstance() {
   const instance = {
     capture: vi.fn(),
+    set_config: vi.fn(),
     opt_in_capturing: vi.fn(),
     opt_out_capturing: vi.fn(),
     startSessionRecording: vi.fn(),
@@ -45,6 +46,7 @@ describe("BrowserPostHogTelemetryClient", () => {
       host: "https://studybuddyanalytics.habsa.at",
       projectToken: "phc_test",
       installationId: "00000000-0000-4000-8000-000000000001",
+      beforeSend: vi.fn(() => null),
     });
 
     expect(config).toMatchObject({
@@ -58,14 +60,13 @@ describe("BrowserPostHogTelemetryClient", () => {
       capture_pageleave: false,
       capture_exceptions: false,
       capture_performance: false,
-      enable_heatmaps: true,
+      capture_heatmaps: false,
       enable_recording_console_log: false,
       disable_session_recording: true,
       mask_all_text: true,
-      autocapture: {
-        dom_event_allowlist: ["click"],
-        css_selector_allowlist: ["button[data-analytics-id]", "a[data-analytics-id]"],
-      },
+      mask_personal_data_properties: true,
+      before_send: expect.any(Function),
+      autocapture: false,
       bootstrap: {
         distinctID: "00000000-0000-4000-8000-000000000001",
         isIdentifiedID: false,
@@ -85,6 +86,7 @@ describe("BrowserPostHogTelemetryClient", () => {
       host: "https://studybuddyanalytics.habsa.at",
       projectToken: "phc_test",
       installationId: "00000000-0000-4000-8000-000000000001",
+      beforeSend: vi.fn(() => null),
     };
 
     const client = new BrowserPostHogTelemetryClient();
@@ -113,15 +115,20 @@ describe("BrowserPostHogTelemetryClient", () => {
       host: "https://studybuddyanalytics.habsa.at",
       projectToken: "phc_test",
       installationId: "00000000-0000-4000-8000-000000000001",
+      beforeSend: vi.fn(() => null),
     };
 
     await client.initialize(base);
     client.shutdown();
     await client.initialize(base);
     expect(posthogMocks.init).toHaveBeenCalledOnce();
-    expect(config?.autocapture).toMatchObject({
-      dom_event_allowlist: ["click"],
-      css_selector_allowlist: ["button[data-analytics-id]", "a[data-analytics-id]"],
-    });
+    expect(config?.autocapture).toBe(false);
+    expect(fake.instance.set_config).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        before_send: base.beforeSend,
+        capture_heatmaps: false,
+        autocapture: false,
+      }),
+    );
   });
 });

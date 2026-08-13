@@ -153,4 +153,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.UPDATE_STATE_CHANNEL, wrappedListener);
     };
   },
+  getSpeechModelState: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_STATE_CHANNEL),
+  enableSpeechModel: () => ipcRenderer.invoke(IpcChannels.SPEECH_ENABLE_CHANNEL),
+  removeSpeechModel: () => ipcRenderer.invoke(IpcChannels.SPEECH_REMOVE_CHANNEL),
+  transcribeSpeech: (wavBase64) =>
+    ipcRenderer.invoke(IpcChannels.SPEECH_TRANSCRIBE_CHANNEL, wavBase64),
 } satisfies DesktopBridge);

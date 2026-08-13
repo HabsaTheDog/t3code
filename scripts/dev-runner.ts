@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import * as NodeOS from "node:os";
+// @effect-diagnostics nodeBuiltinImport:off
+import { accessSync, constants } from "node:fs";
+import * as NodePath from "node:path";
+import { fileURLToPath } from "node:url";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -21,6 +24,8 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 
 Object.assign(process.env, loadRepoEnv());
 
+const SCRIPT_DIR = NodePath.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = NodePath.resolve(SCRIPT_DIR, "..");
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
@@ -29,7 +34,7 @@ const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
 export const DEFAULT_T3_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".t3"),
+  path.join(REPO_ROOT, ".t3-study-buddy", "dev"),
 );
 
 const MODE_ARGS = {
@@ -53,6 +58,21 @@ const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
 
 export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
   return MODE_ARGS[mode];
+}
+
+function isExecutable(filePath: string): boolean {
+  try {
+    accessSync(filePath, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveVitePlusCommand(): string {
+  const executableName = process.platform === "win32" ? "vp.cmd" : "vp";
+  const localCommand = NodePath.join(REPO_ROOT, "node_modules", ".bin", executableName);
+  return isExecutable(localCommand) ? localCommand : "vp";
 }
 
 class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
@@ -445,20 +465,24 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       return;
     }
 
-    const child = yield* ChildProcess.make("vp", [...MODE_ARGS[input.mode], ...input.runArgs], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env,
-      extendEnv: false,
-      // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
-      shell: process.platform === "win32",
-      // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
-      // reach it directly. Effect defaults to detached: true on non-Windows,
-      // which would put the runner in a new group and require manual forwarding.
-      detached: false,
-      forceKillAfter: "1500 millis",
-    });
+    const child = yield* ChildProcess.make(
+      resolveVitePlusCommand(),
+      [...MODE_ARGS[input.mode], ...input.runArgs],
+      {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env,
+        extendEnv: false,
+        // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
+        shell: process.platform === "win32",
+        // Keep Vite+ in the same process group so terminal signals (Ctrl+C)
+        // reach it directly. Effect defaults to detached: true on non-Windows,
+        // which would put the runner in a new group and require manual forwarding.
+        detached: false,
+        forceKillAfter: "1500 millis",
+      },
+    );
 
     const exitCode = yield* child.exitCode;
     if (exitCode !== 0) {

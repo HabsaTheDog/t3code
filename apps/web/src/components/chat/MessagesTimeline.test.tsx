@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
@@ -105,6 +105,7 @@ function buildProps() {
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
+    activeThreadId: ThreadId.make("thread-1"),
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
@@ -161,6 +162,30 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
+  });
+
+  it("renders a voice-note attachment without exposing its transcript", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              attachments: [{ type: "voice", id: "voice-1", durationMs: 12_000 }],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Voice Input");
+    expect(markup).toContain("0:12");
+    expect(markup).not.toContain("transcript hidden");
+    expect(markup).not.toContain("hidden voice transcript");
   });
 
   it("renders inline terminal labels with the composer chip UI", async () => {

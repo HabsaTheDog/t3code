@@ -260,7 +260,7 @@ describe("provider setup", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows installed, authenticated, enabled, and default provider states", async () => {
+  it("shows an installed and signed-in Codex as ready", async () => {
     harness.providers = [
       provider({
         instanceId: "codex-main",
@@ -289,9 +289,8 @@ describe("provider setup", () => {
 
     const screen = await render(<ProviderSetupStep />);
 
-    await expect.element(page.getByText("Installed · 1.2.3 · Authenticated")).toBeInTheDocument();
-    await expect.element(page.getByText("Enabled")).toBeInTheDocument();
-    await expect.element(page.getByText("Default")).toBeInTheDocument();
+    await expect.element(page.getByText("Installed · 1.2.3 · Signed in")).toBeInTheDocument();
+    await expect.element(page.getByText("Ready", { exact: true })).toBeInTheDocument();
     await expect.element(page.getByLabelText("Ready")).toBeInTheDocument();
     await expect
       .element(page.getByRole("button", { name: "Install Codex" }))
@@ -387,8 +386,7 @@ describe("provider setup", () => {
 
     emit("job-1", "codex.install", "codex", { type: "completed" });
     await expect.element(page.getByText("Ready")).toBeInTheDocument();
-    await expect.element(page.getByText("COMPLETED")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Authentication required")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Sign-in required")).toBeInTheDocument();
     await vi.waitFor(() => {
       expect(harness.refreshProviders).toHaveBeenCalledTimes(2);
     });
@@ -409,7 +407,7 @@ describe("provider setup", () => {
     const screen = await render(<ProviderSetupStep />);
 
     await expect.element(page.getByRole("button", { name: "Install Codex" })).toBeInTheDocument();
-    await expect.element(page.getByText("Checking provider capabilities…")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Checking Codex…")).not.toBeInTheDocument();
 
     finishRefresh?.();
     await screen.unmount();
@@ -428,7 +426,7 @@ describe("provider setup", () => {
       message: "Browser authentication failed.",
     });
 
-    await expect.element(page.getByText("Action failed")).toBeInTheDocument();
+    await expect.element(page.getByText("We couldn’t finish that step")).toBeInTheDocument();
     await expect.element(page.getByText("Browser authentication failed.")).toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     await page.getByRole("button", { name: "Retry" }).click();
@@ -445,7 +443,8 @@ describe("provider setup", () => {
   it("keeps non-Codex providers out of the Study Buddy setup", async () => {
     const screen = await render(<ProviderSetupStep />);
 
-    await expect.element(page.getByText("Credential boundary")).toBeInTheDocument();
+    await expect.element(page.getByRole("heading", { name: "Codex" })).toBeInTheDocument();
+    await expect.element(page.getByText("Credential boundary")).not.toBeInTheDocument();
     await expect.element(page.getByText("Claude")).not.toBeInTheDocument();
     await expect.element(page.getByText("Cursor")).not.toBeInTheDocument();
     await expect.element(page.getByText("OpenCode")).not.toBeInTheDocument();
@@ -471,8 +470,10 @@ describe("provider setup", () => {
     });
 
     emit("job-1", "codex.auth.browser", "codex", { type: "cancelled" });
-    await expect.element(page.getByText("Action cancelled")).toBeInTheDocument();
-    await expect.element(page.getByText("cancelled", { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText("Setup stopped")).toBeInTheDocument();
+    await expect
+      .element(page.getByText("You can try again whenever you’re ready."))
+      .toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Retry" })).toBeInTheDocument();
 
     await screen.unmount();

@@ -70,6 +70,12 @@ import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommand
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import {
+  ComposerVoiceInput,
+  formatVoiceDuration,
+  type ComposerVoiceNote,
+  type PendingComposerVoiceNote,
+} from "./ComposerVoiceInput";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { isStudyBuddyQuizPermissionQuestion } from "./studyBuddyQuizPermission";
@@ -83,10 +89,12 @@ import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  AudioWaveformIcon,
   BotIcon,
   CircleAlertIcon,
   ListTodoIcon,
@@ -119,6 +127,8 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { telemetry } from "../../telemetry/runtime";
+import { featureProperties } from "../../telemetry/featureCatalog";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -277,6 +287,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       {props.showInteractionModeToggle ? (
         <>
           <Button
+            data-analytics-id="chat.interaction-mode"
             variant="ghost"
             className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
             size="sm"
@@ -303,6 +314,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         onValueChange={(value) => props.onRuntimeModeChange(value!)}
       >
         <SelectTrigger
+          data-analytics-id="chat.runtime-mode"
           variant="ghost"
           size="sm"
           className="font-medium"
@@ -384,6 +396,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         <>
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
           <Button
+            data-analytics-id="plan.sidebar-toggle"
             variant="ghost"
             className={cn(
               "shrink-0 whitespace-nowrap px-2 sm:px-3",
@@ -411,7 +424,6 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
-  activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -434,7 +446,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -493,7 +504,11 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    voiceNotes: ComposerVoiceNote[];
+    voiceTranscriptionPending: boolean;
   };
+  clearVoiceNotes: () => void;
+  restoreVoiceNotes: (voiceNotes: ComposerVoiceNote[]) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -684,6 +699,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = props;
 
   const quizAccess = useStudyBuddyQuizAccessMode(scheduleComposerFocus);
+  const trackToggleInteractionMode = useCallback(() => {
+    const nextMode = interactionMode === "plan" ? "default" : "plan";
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("chat.interaction_mode", {
+        interaction_mode: nextMode,
+        surface: "composer",
+      }),
+    });
+    toggleInteractionMode();
+  }, [interactionMode, toggleInteractionMode]);
+  const trackRuntimeModeChange = useCallback(
+    (mode: RuntimeMode) => {
+      if (mode !== runtimeMode) {
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("chat.runtime_mode", {
+            runtime_mode: mode,
+            surface: "composer",
+          }),
+        });
+      }
+      handleRuntimeModeChange(mode);
+    },
+    [handleRuntimeModeChange, runtimeMode],
+  );
+  const trackTogglePlanSidebar = useCallback(() => {
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("plan.sidebar", {
+        action: planSidebarOpen ? "closed" : "opened",
+        surface: "composer",
+      }),
+    });
+    togglePlanSidebar();
+  }, [planSidebarOpen, togglePlanSidebar]);
 
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
@@ -692,6 +743,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
+  const [composerVoiceNotes, setComposerVoiceNotes] = useState<ComposerVoiceNote[]>([]);
+  const [pendingComposerVoiceNote, setPendingComposerVoiceNote] =
+    useState<PendingComposerVoiceNote | null>(null);
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -972,10 +1026,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () =>
       deriveComposerSendState({
         prompt,
-        imageCount: composerImages.length,
+        imageCount: composerImages.length + composerVoiceNotes.length,
         terminalContexts: composerTerminalContexts,
       }),
-    [composerImages.length, composerTerminalContexts, prompt],
+    [composerImages.length, composerTerminalContexts, composerVoiceNotes.length, prompt],
   );
 
   // ------------------------------------------------------------------
@@ -1803,7 +1857,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     const nextImages: ComposerImageAttachment[] = [];
-    let nextImageCount = composerImagesRef.current.length;
+    let nextAttachmentCount =
+      composerImagesRef.current.length +
+      composerVoiceNotes.length +
+      (pendingComposerVoiceNote ? 1 : 0);
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
@@ -1814,8 +1871,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
         continue;
       }
-      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+      if (nextAttachmentCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} items per message.`;
         break;
       }
       const previewUrl = URL.createObjectURL(file);
@@ -1828,18 +1885,42 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         previewUrl,
         file,
       });
-      nextImageCount += 1;
+      nextAttachmentCount += 1;
     }
     if (nextImages.length === 1 && nextImages[0]) {
       addComposerImage(nextImages[0]);
     } else if (nextImages.length > 1) {
       addComposerImagesToDraft(nextImages);
     }
+    if (nextImages.length > 0) {
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("chat.image_attachment", {
+          attachment_count: nextImages.length,
+          surface: "composer",
+        }),
+      });
+    }
     setThreadError(activeThreadId, error);
   };
 
   const removeComposerImage = (imageId: string) => {
     removeComposerImageFromDraft(imageId);
+  };
+
+  const addComposerVoiceNote = (voiceNote: ComposerVoiceNote) => {
+    setPendingComposerVoiceNote(null);
+    setComposerVoiceNotes((existing) => [...existing, voiceNote]);
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("chat.voice", { surface: "composer" }),
+    });
+  };
+
+  const removeComposerVoiceNote = (voiceNoteId: string) => {
+    setComposerVoiceNotes((existing) =>
+      existing.filter((voiceNote) => voiceNote.id !== voiceNoteId),
+    );
   };
 
   // ------------------------------------------------------------------
@@ -2007,6 +2088,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           insertion.contextIndex,
         );
         if (!inserted) return;
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("chat.terminal_context", { surface: "composer" }),
+        });
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
         setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
@@ -2024,7 +2109,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        voiceNotes: composerVoiceNotes,
+        voiceTranscriptionPending: pendingComposerVoiceNote !== null,
       }),
+      clearVoiceNotes: () => {
+        setComposerVoiceNotes([]);
+        setPendingComposerVoiceNote(null);
+      },
+      restoreVoiceNotes: (voiceNotes) => setComposerVoiceNotes(voiceNotes),
     }),
     [
       activeThread,
@@ -2038,6 +2130,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
+      composerVoiceNotes,
+      pendingComposerVoiceNote,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
       selectedPromptEffort,
@@ -2280,7 +2374,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {!isComposerCollapsedMobile &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
-              composerImages.length > 0 && (
+              (composerImages.length > 0 ||
+                composerVoiceNotes.length > 0 ||
+                pendingComposerVoiceNote) && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {composerImages.map((image) => (
                     <div
@@ -2342,6 +2438,48 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Button>
                     </div>
                   ))}
+                  {composerVoiceNotes.map((voiceNote) => (
+                    <div
+                      key={voiceNote.id}
+                      className="flex h-14 min-w-40 items-center gap-2.5 rounded-xl border border-border/80 bg-background px-2.5 pr-1.5 transition-[height,min-width] duration-300 motion-reduce:transition-none"
+                    >
+                      <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <AudioWaveformIcon className="size-4" />
+                      </span>
+                      <p className="min-w-0 flex-1 whitespace-nowrap text-xs font-medium">
+                        Voice Input{" "}
+                        <span className="text-muted-foreground tabular-nums">
+                          {formatVoiceDuration(voiceNote.durationMs)}
+                        </span>
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={`Remove voice input ${formatVoiceDuration(voiceNote.durationMs)}`}
+                        onClick={() => removeComposerVoiceNote(voiceNote.id)}
+                      >
+                        <XIcon />
+                      </Button>
+                    </div>
+                  ))}
+                  {pendingComposerVoiceNote &&
+                  !composerVoiceNotes.some(
+                    (voiceNote) => voiceNote.id === pendingComposerVoiceNote.id,
+                  ) ? (
+                    <div
+                      key={pendingComposerVoiceNote.id}
+                      role="status"
+                      className="flex h-11 min-w-36 items-center gap-2.5 rounded-xl border border-border/70 bg-background/70 px-2.5 transition-[height,min-width] duration-300 motion-reduce:transition-none"
+                    >
+                      <span className="flex size-7 items-center justify-center rounded-full bg-primary/8 text-primary">
+                        <Spinner className="size-3.5" />
+                      </span>
+                      <p className="whitespace-nowrap text-[11px] font-medium text-muted-foreground">
+                        Processing Voice Input
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -2454,10 +2592,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
                     runtimeMode={runtimeMode}
                     showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                    onToggleInteractionMode={toggleInteractionMode}
-                    onTogglePlanSidebar={togglePlanSidebar}
+                    onToggleInteractionMode={trackToggleInteractionMode}
+                    onTogglePlanSidebar={trackTogglePlanSidebar}
                     onQuizAccessModeChange={quizAccess.updateMode}
-                    onRuntimeModeChange={handleRuntimeModeChange}
+                    onRuntimeModeChange={trackRuntimeModeChange}
                   />
                 ) : (
                   <>
@@ -2470,16 +2608,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
-                      onToggleInteractionMode={toggleInteractionMode}
-                      onRuntimeModeChange={handleRuntimeModeChange}
+                      onToggleInteractionMode={trackToggleInteractionMode}
+                      onRuntimeModeChange={trackRuntimeModeChange}
                       onQuizAccessModeChange={quizAccess.updateMode}
-                      onTogglePlanSidebar={togglePlanSidebar}
+                      onTogglePlanSidebar={trackTogglePlanSidebar}
                     />
                   </>
                 )}
               </div>
 
-              {/* Right side: send / stop button */}
+              {/* Right side: context / voice / send actions */}
               <div
                 data-chat-composer-actions="right"
                 data-chat-composer-primary-actions-compact={
@@ -2487,9 +2625,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {activeContextWindow ? <ContextWindowMeter usage={activeContextWindow} /> : null}
+                <ComposerVoiceInput
+                  disabled={
+                    isSendBusy ||
+                    isConnecting ||
+                    environmentUnavailable !== null ||
+                    composerImages.length +
+                      composerVoiceNotes.length +
+                      (pendingComposerVoiceNote ? 1 : 0) >=
+                      PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+                  }
+                  onVoiceNote={addComposerVoiceNote}
+                  onTranscriptionChange={setPendingComposerVoiceNote}
+                />
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
-                  activeContextWindow={activeContextWindow}
                   pendingAction={pendingPrimaryAction}
                   isRunning={phase === "running"}
                   showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
@@ -2498,7 +2649,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent}
+                  hasSendableContent={
+                    composerSendState.hasSendableContent && pendingComposerVoiceNote === null
+                  }
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

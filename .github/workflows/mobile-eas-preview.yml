@@ -1,7 +1,10 @@
 name: Mobile EAS Preview
 
 on:
-  pull_request:
+  # Mobile preview deployment is outside the Study Buddy fork's release scope.
+  push:
+    branches:
+      - __upstream_mobile_preview_disabled__
 
 jobs:
   preview:

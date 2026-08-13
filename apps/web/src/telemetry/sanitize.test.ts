@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  canonicalHeatmapUrl,
   makeBeforeSendSanitizer,
   redactSensitiveText,
   sanitizeRecord,
@@ -153,12 +154,16 @@ describe("telemetry sanitization", () => {
     expect(
       beforeSend({
         event: "$autocapture",
-        properties: { url: "https://private.test", analytics_id: "settings-save" },
+        properties: {
+          $current_url: "https://private.test/settings/privacy?token=secret",
+          analytics_id: "settings-save",
+        },
       }),
     ).toBeNull();
     expect(enqueue).toHaveBeenCalledWith("$autocapture", {
       analytics_id: "settings-save",
       event_type: "click",
+      route: "settings/privacy",
     });
   });
 
@@ -169,6 +174,8 @@ describe("telemetry sanitization", () => {
     beforeSend({
       event: "$$heatmap",
       properties: {
+        $viewport_width: 1440,
+        $viewport_height: 900,
         $heatmap_data: {
           "https://example.test/chat/thread-secret?token=secret": [{ x: 10, y: 20, type: "click" }],
         },
@@ -177,8 +184,10 @@ describe("telemetry sanitization", () => {
     await Promise.resolve();
 
     expect(enqueue).toHaveBeenCalledWith("$$heatmap", {
+      $viewport_width: 1440,
+      $viewport_height: 900,
       $heatmap_data: {
-        "https://studybuddy.local/:segment/:segment": [{ x: 10, y: 20, type: "click" }],
+        "https://app.t3.codes/_chat/": [{ x: 10, y: 20, type: "click" }],
       },
     });
     expect(JSON.stringify(enqueue.mock.calls)).not.toContain("thread-secret");
@@ -187,16 +196,15 @@ describe("telemetry sanitization", () => {
 
   it("sanitizes realistic heatmap point metadata at the SDK outbox boundary", async () => {
     const enqueue = vi.fn();
-    const beforeSend = makeBeforeSendSanitizer({
-      configuredSecrets: () => ["configured-secret"],
-      enqueue,
-    });
+    const beforeSend = makeBeforeSendSanitizer({ enqueue });
 
     const directDelivery = beforeSend({
       event: "$$heatmap",
       properties: {
         $session_id: "session-safe",
         $window_id: "window-safe",
+        $viewport_width: 1440.4,
+        $viewport_height: 900.6,
         $current_url: "https://example.test/thread/private?token=secret",
         $heatmap_data: {
           "https://example.test/thread/private?token=secret": [
@@ -209,6 +217,7 @@ describe("telemetry sanitization", () => {
               selector: "configured-secret",
               href: "https://user:password@example.test/private",
             },
+            { x: 40, y: 50, type: "mousemove" },
           ],
         },
       },
@@ -225,7 +234,27 @@ describe("telemetry sanitization", () => {
     expect(serialized).not.toContain("token=secret");
     expect(serialized).not.toContain("user:password");
     expect(serialized).not.toContain("$current_url");
+    expect(serialized).not.toContain("mousemove");
     expect(serialized).toContain("session-safe");
     expect(serialized).toContain("window-safe");
+    expect(serialized).toContain('"$viewport_width":1440');
+    expect(serialized).toContain('"$viewport_height":901');
+  });
+
+  it("drops untagged autocapture and non-allowlisted SDK events", async () => {
+    const enqueue = vi.fn();
+    const beforeSend = makeBeforeSendSanitizer({ enqueue });
+    expect(
+      beforeSend({ event: "$autocapture", properties: { $current_url: "https://private.test" } }),
+    ).toBeNull();
+    expect(beforeSend({ event: "$pageview", properties: { $current_url: "private" } })).toBeNull();
+    await Promise.resolve();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("never promotes an unknown settings path segment into a heatmap URL", () => {
+    expect(canonicalHeatmapUrl("https://private.test/settings/thread-secret?token=x")).toBe(
+      "https://app.t3.codes/settings",
+    );
   });
 });

@@ -1,5 +1,4 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -7,6 +6,7 @@ import * as Path from "effect/Path";
 import {
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
+  DEFAULT_T3_HOME,
   findFirstAvailableOffset,
   getDevRunnerModeArgs,
   resolveModePortOffsets,
@@ -74,9 +74,9 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("createDevRunnerEnv", () => {
-    it.effect("defaults T3CODE_HOME to ~/.t3 when not provided", () =>
+    it.effect("defaults T3CODE_HOME to Study Buddy-local dev state when not provided", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
+        const defaultT3Home = yield* DEFAULT_T3_HOME;
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {},
@@ -91,7 +91,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.T3CODE_HOME, path.resolve(NodeOS.homedir(), ".t3"));
+        assert.equal(env.T3CODE_HOME, defaultT3Home);
       }),
     );
 

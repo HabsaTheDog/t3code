@@ -1,5 +1,11 @@
 # AGENTS.md
 
+## Study Buddy Fork Boundary
+
+- This repository is the Study Buddy-owned fork of T3 Code, not the upstream T3 Code installation.
+- Keep fork changes, build outputs, launchers, URL schemes, app IDs, desktop entries, user-data directories, and backend state separate from upstream T3 Code.
+- Upstream T3 Code lives outside this repo and should not be modified here. Do not copy Study Buddy artifacts into `~/Applications/t3code`, do not use `T3-Code-*` artifact names for Study Buddy builds, and do not default Study Buddy runtime state to `~/.t3` or Electron user data to `~/.config/t3code`.
+
 ## Task Completion Requirements
 
 - `vp check` and `vp run typecheck` must pass before considering tasks completed.

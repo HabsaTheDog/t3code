@@ -120,6 +120,7 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { requestSetupRerun } from "../setup/setupCoordinator";
 import { telemetry } from "../telemetry/runtime";
+import { commandPaletteFeature, featureProperties } from "../telemetry/featureCatalog";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
@@ -1496,10 +1497,13 @@ function OpenCommandPaletteDialog() {
     }
 
     if (item.value.startsWith("action:")) {
-      void telemetry.capture({
-        event: "feature.used",
-        properties: { feature: item.value.slice("action:".length) },
-      });
+      const feature = commandPaletteFeature(item.value.slice("action:".length));
+      if (feature) {
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties(feature, { surface: "command_palette" }),
+        });
+      }
     }
 
     void item.run().catch((error: unknown) => {

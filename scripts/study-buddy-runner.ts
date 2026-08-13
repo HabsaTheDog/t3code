@@ -4,8 +4,11 @@
 // @effect-diagnostics globalConsole:off - This small launcher runs before the Effect runtime and preserves child stdio.
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { sanitizeStudyBuddyHostEnvironment } from "./lib/study-buddy-environment.ts";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const T3_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -78,6 +81,13 @@ function resolvePreferredCodexBinary(): string | null {
     return override;
   }
 
+  // The standalone installer maintains this stable launcher across CLI and
+  // Node upgrades. Prefer it over version-bound npm/NVM installation paths.
+  const fromStableUserBin = findCommandInPath("codex", [path.join(os.homedir(), ".local", "bin")]);
+  if (fromStableUserBin && !isProjectLocalCodexPath(fromStableUserBin)) {
+    return fromStableUserBin;
+  }
+
   const nodeBinDir = path.dirname(process.execPath);
   const fromNodeBin = findCommandInPath("codex", [nodeBinDir]);
   if (fromNodeBin && !isProjectLocalCodexPath(fromNodeBin)) {
@@ -111,7 +121,8 @@ function shouldUsePreferredCodexBinary(value: unknown): boolean {
   if (!hasPathSeparator(trimmed)) {
     return false;
   }
-  return isProjectLocalCodexPath(path.resolve(trimmed));
+  const resolved = path.resolve(trimmed);
+  return !isExecutable(resolved) || isProjectLocalCodexPath(resolved);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -168,8 +179,14 @@ function seedCodexProviderBinary(): void {
 }
 
 function studyBuddyEnv(): NodeJS.ProcessEnv {
+  // The direct Moodle CLI needs portal configuration from the caller. The UI,
+  // server, desktop shell, and their provider children read credentials from
+  // Study Buddy's owner-only configuration file instead and must never inherit
+  // portal values through the host environment.
+  const baseEnvironment =
+    command === "moodle" ? { ...process.env } : sanitizeStudyBuddyHostEnvironment(process.env);
   return {
-    ...process.env,
+    ...baseEnvironment,
     T3CODE_PORT_OFFSET: process.env.T3CODE_PORT_OFFSET || DEFAULT_PORT_OFFSET,
     T3CODE_HOME: t3Home,
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD:

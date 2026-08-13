@@ -491,6 +491,28 @@ const createDesktopBridgeStub = (overrides?: {
       .fn()
       .mockResolvedValue({ accepted: false, completed: false, state: idleUpdateState }),
     onUpdateState: () => () => {},
+    getSpeechModelState: vi.fn().mockResolvedValue({
+      status: "not-enabled",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    enableSpeechModel: vi.fn().mockResolvedValue({
+      status: "downloading",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    removeSpeechModel: vi.fn().mockResolvedValue({
+      status: "not-enabled",
+      model: "parakeet-tdt-0.6b-v3-int8",
+      downloadedBytes: 0,
+      totalBytes: null,
+      error: null,
+    }),
+    transcribeSpeech: vi.fn().mockResolvedValue({ text: "test transcript" }),
   };
 };
 
