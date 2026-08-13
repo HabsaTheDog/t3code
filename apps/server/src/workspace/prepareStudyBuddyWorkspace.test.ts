@@ -19,6 +19,37 @@ const TestLayer = Layer.empty.pipe(
 );
 
 it.layer(TestLayer)("prepareStudyBuddyWorkspace", (it) => {
+  it.effect("keeps concurrent Quick Chat outputs in separate app-owned workspaces", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoots = [
+        path.join(config.quickChatWorkspaceRoot, "thread-parallel-a"),
+        path.join(config.quickChatWorkspaceRoot, "thread-parallel-b"),
+      ] as const;
+
+      const preparedRoots = yield* Effect.all(
+        workspaceRoots.map((workspaceRoot) =>
+          prepareStudyBuddyWorkspace({
+            workspaceRoot,
+            projectKind: "quick-chat",
+            operation: "send",
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      expect(preparedRoots).toEqual(workspaceRoots);
+      expect(preparedRoots[0]).not.toBe(preparedRoots[1]);
+      for (const workspaceRoot of preparedRoots) {
+        expect(
+          (yield* fileSystem.stat(path.join(workspaceRoot, "study-buddy-deliverables"))).type,
+        ).toBe("Directory");
+      }
+    }),
+  );
+
   it.effect("recreates an app-owned Quick Chat root and deliverables before send", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig;
