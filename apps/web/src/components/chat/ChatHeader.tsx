@@ -137,6 +137,7 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            workspaceKind={activeProjectKind}
           />
         )}
         {showExtendedChatActions && activeProjectName && (

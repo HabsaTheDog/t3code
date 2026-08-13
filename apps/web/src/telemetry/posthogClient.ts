@@ -11,6 +11,7 @@ export interface PostHogTelemetryClient {
     readonly isActive?: () => boolean;
   }) => Promise<void>;
   readonly capture: (event: string, properties?: Readonly<Record<string, unknown>>) => void;
+  readonly getSessionId: (activity?: boolean) => string | null;
   readonly shutdown: () => void;
 }
 
@@ -28,7 +29,7 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
     if (input.isActive?.() === false) return;
     // Start the privacy-safe DOM collector before importing PostHog. Product usage data must not
     // disappear when the optional SDK fails to initialize or is reused across a dev/HMR reload.
-    this.#startClickCollection(input.beforeSend, input.installationId);
+    this.#startClickCollection(input.beforeSend);
     if (this.#instance) {
       this.#instance.set_config({
         before_send: input.beforeSend,
@@ -96,6 +97,18 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
     this.#instance?.capture(event, properties);
   }
 
+  getSessionId(activity = false): string | null {
+    try {
+      if (activity) {
+        const activeSession = this.#instance?.sessionManager?.checkAndGetSessionAndWindowId(false);
+        if (activeSession?.sessionId) return activeSession.sessionId;
+      }
+      return this.#instance?.get_session_id() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   shutdown(): void {
     this.#heatmapCollector?.stop();
     this.#heatmapCollector = null;
@@ -104,16 +117,13 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
     this.#instance?.set_config({ capture_heatmaps: false, autocapture: false });
   }
 
-  #startClickCollection(
-    beforeSend: NonNullable<PostHogConfig["before_send"]>,
-    sessionId: string,
-  ): void {
+  #startClickCollection(beforeSend: NonNullable<PostHogConfig["before_send"]>): void {
     this.#heatmapCollector?.stop();
     this.#heatmapCollector = new PrivacySafeHeatmapCollector({
       emit: (properties) => runBeforeSend(beforeSend, { event: "$$heatmap", properties }),
       emitControlClick: (properties) =>
         runBeforeSend(beforeSend, { event: "$autocapture", properties }),
-      sessionId,
+      sessionId: () => this.getSessionId(true),
     });
     this.#heatmapCollector.start();
   }

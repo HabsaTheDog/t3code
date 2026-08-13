@@ -14,17 +14,22 @@ vi.mock("posthog-js", () => ({
 import { BrowserPostHogTelemetryClient } from "./posthogClient";
 
 function posthogInstance() {
+  const checkAndGetSessionAndWindowId = vi.fn(() => ({
+    sessionId: "0198a748-305a-7000-8000-000000000001",
+  }));
   const instance = {
     capture: vi.fn(),
     set_config: vi.fn(),
     opt_in_capturing: vi.fn(),
     opt_out_capturing: vi.fn(),
+    get_session_id: vi.fn(() => "0198a748-305a-7000-8000-000000000001"),
+    sessionManager: { checkAndGetSessionAndWindowId },
     startSessionRecording: vi.fn(),
     stopSessionRecording: vi.fn(),
     reloadFeatureFlags: vi.fn(),
     onFeatureFlags: vi.fn(),
   };
-  return { instance };
+  return { instance, checkAndGetSessionAndWindowId };
 }
 
 describe("BrowserPostHogTelemetryClient", () => {
@@ -74,6 +79,9 @@ describe("BrowserPostHogTelemetryClient", () => {
     });
     expect(fake.instance.startSessionRecording).not.toHaveBeenCalled();
     expect(fake.instance.reloadFeatureFlags).not.toHaveBeenCalled();
+    expect(client.getSessionId()).toBe("0198a748-305a-7000-8000-000000000001");
+    expect(client.getSessionId(true)).toBe("0198a748-305a-7000-8000-000000000001");
+    expect(fake.checkAndGetSessionAndWindowId).toHaveBeenCalledWith(false);
   });
 
   it("keeps recording disabled when analytics is re-enabled", async () => {

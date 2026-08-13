@@ -16,15 +16,22 @@ import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
 import { readEnvironmentApi } from "../environmentApi";
 import { newCommandId, newDraftId, newProjectId, newThreadId } from "../lib/utils";
 import { useServerConfig } from "../rpc/serverState";
-import { selectProjectByRef, useStore } from "../store";
+import {
+  selectProjectByRef,
+  selectProjectsForEnvironment,
+  selectThreadIdsByProjectRef,
+  useStore,
+} from "../store";
 import { buildDraftThreadRouteParams } from "../threadRoutes";
-
-function joinWorkspacePath(basePath: string, ...segments: readonly string[]): string {
-  const trimmedBase = basePath.replace(/[\\/]+$/, "");
-  return [trimmedBase, ...segments.map((segment) => segment.replace(/^[\\/]+|[\\/]+$/g, ""))]
-    .filter((segment) => segment.length > 0)
-    .join("/");
-}
+import {
+  joinWorkspacePath,
+  shouldCleanupUnpromptedQuickChat,
+} from "@t3tools/shared/studyBuddyWorkspace";
+import {
+  acquireQuickChatCreation,
+  isQuickChatSubmitting,
+  releaseQuickChatCreation,
+} from "../quickChatLifecycle";
 
 async function waitForProjectInStore(input: {
   environmentId: EnvironmentId;
@@ -83,19 +90,53 @@ export function useQuickChatActions() {
     if (!api) {
       throw new Error("Quick Chat environment API is unavailable.");
     }
-
-    const projectId = newProjectId();
-    const threadId = newThreadId();
-    const draftId = newDraftId();
-    const createdAt = new Date().toISOString();
-    const workspaceRoot = joinWorkspacePath(serverConfig.quickChatWorkspaceRoot, threadId);
-    const modelSelection = {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: DEFAULT_MODEL,
-    };
-
+    if (!acquireQuickChatCreation(targetEnvironmentId)) {
+      return;
+    }
     setIsCreatingQuickChat(true);
+
     try {
+      const appState = useStore.getState();
+      const draftStore = useComposerDraftStore.getState();
+      const abandonedQuickChatProjects = selectProjectsForEnvironment(appState, targetEnvironmentId)
+        .filter((project) => project.projectKind === "quick-chat")
+        .filter((project) => {
+          const projectRef = scopeProjectRef(targetEnvironmentId, project.id);
+          const draftSession = draftStore.getDraftSessionByProjectRef(projectRef);
+          const draft = draftSession ? draftStore.getComposerDraft(draftSession.draftId) : null;
+          return shouldCleanupUnpromptedQuickChat({
+            threadCount: selectThreadIdsByProjectRef(appState, projectRef).length,
+            hasDraftReservation: draftSession !== null,
+            isSubmitting: isQuickChatSubmitting(targetEnvironmentId, project.id),
+            draft,
+          });
+        });
+
+      for (const project of abandonedQuickChatProjects) {
+        await api.orchestration
+          .dispatchCommand({
+            type: "project.delete",
+            commandId: newCommandId(),
+            projectId: project.id,
+          })
+          .catch((error: unknown) => {
+            console.warn("Quick Chat cleanup was refused; preserving the existing project.", {
+              projectId: project.id,
+              error,
+            });
+          });
+      }
+
+      const projectId = newProjectId();
+      const threadId = newThreadId();
+      const draftId = newDraftId();
+      const createdAt = new Date().toISOString();
+      const workspaceRoot = joinWorkspacePath(serverConfig.quickChatWorkspaceRoot, threadId);
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_MODEL,
+      };
+
       await api.orchestration.dispatchCommand({
         type: "project.create",
         commandId: newCommandId(),
@@ -136,6 +177,7 @@ export function useQuickChatActions() {
         params: buildDraftThreadRouteParams(draftId),
       });
     } finally {
+      releaseQuickChatCreation(targetEnvironmentId);
       setIsCreatingQuickChat(false);
     }
   }, [navigate, serverConfig, targetEnvironmentId]);

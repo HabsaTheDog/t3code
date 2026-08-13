@@ -163,7 +163,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.delete": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
@@ -208,6 +208,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "project.deleted" as const,
         payload: {
           projectId: command.projectId,
+          projectKind: project.projectKind ?? "regular",
+          projectWorkspaceRoot: project.workspaceRoot,
           deletedAt: occurredAt,
         },
       };

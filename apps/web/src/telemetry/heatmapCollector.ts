@@ -28,7 +28,7 @@ export interface PrivacySafeHeatmapCollectorOptions {
   readonly document?: HeatmapDocument;
   readonly window?: HeatmapWindow;
   readonly intervalMs?: number;
-  readonly sessionId?: string;
+  readonly sessionId?: () => string | null;
 }
 
 const MAX_POINTS_PER_ROUTE = 2_000;
@@ -39,7 +39,7 @@ export class PrivacySafeHeatmapCollector {
   readonly #document: HeatmapDocument | undefined;
   readonly #window: HeatmapWindow | undefined;
   readonly #intervalMs: number;
-  readonly #sessionId: string | undefined;
+  readonly #sessionId: (() => string | null) | undefined;
   #buffer: Record<string, Array<Record<string, unknown>>> = {};
   #interval: ReturnType<typeof setInterval> | null = null;
 
@@ -72,11 +72,12 @@ export class PrivacySafeHeatmapCollector {
     const viewportWidth = finiteDimension(this.#window?.innerWidth);
     const viewportHeight = finiteDimension(this.#window?.innerHeight);
     if (!viewportWidth || !viewportHeight) return;
+    const sessionId = this.#sessionId?.();
     this.#emit({
       $heatmap_data: heatmapData,
       $viewport_width: viewportWidth,
       $viewport_height: viewportHeight,
-      ...(this.#sessionId ? { $session_id: this.#sessionId } : {}),
+      ...(sessionId ? { $session_id: sessionId } : {}),
     });
   }
 
@@ -85,10 +86,12 @@ export class PrivacySafeHeatmapCollector {
     const click = event as ClickLikeEvent;
     const analyticsId = analyticsIdFromTarget(click.target);
     if (analyticsId) {
+      const sessionId = this.#sessionId?.();
       this.#emitControlClick?.({
         analytics_id: analyticsId,
         // Never hand a thread id, query string, or project path to the SDK boundary.
         $current_url: canonicalHeatmapUrl(this.#window.location.href),
+        ...(sessionId ? { $session_id: sessionId } : {}),
       });
     }
     if (!finiteCoordinate(click.clientX) || !finiteCoordinate(click.clientY)) return;

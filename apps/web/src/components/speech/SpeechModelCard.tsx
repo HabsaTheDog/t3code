@@ -6,10 +6,14 @@ import {
   MicIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useDesktopSpeechActions, useDesktopSpeechState } from "../../lib/desktopSpeechReactQuery";
 import { cn } from "../../lib/utils";
+import { captureFeatureExposureOnce } from "../../telemetry/featureExposure";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import { classifySpeechModelFailure } from "../../telemetry/speechTelemetry";
 import { Button } from "../ui/button";
 import { Card } from "../ui/card";
 import { Spinner } from "../ui/spinner";
@@ -19,11 +23,19 @@ function formatBytes(value: number): string {
   return `${Math.round(value / 1024 / 1024)} MB`;
 }
 
-export function SpeechModelCard({ compact = false }: { compact?: boolean }) {
+export function SpeechModelCard({
+  compact = false,
+  surface,
+}: {
+  compact?: boolean;
+  surface: "setup" | "settings";
+}) {
   const query = useDesktopSpeechState();
   const actions = useDesktopSpeechActions();
   const [busy, setBusy] = useState(false);
   const state = query.data;
+  const desktopAvailable = typeof window !== "undefined" && Boolean(window.desktopBridge);
+  const previousStatusRef = useRef(state?.status);
   const installing = state?.status === "downloading" || state?.status === "verifying";
   const ready = state?.status === "ready";
   const enabled = state && state.status !== "not-enabled";
@@ -32,7 +44,78 @@ export function SpeechModelCard({ compact = false }: { compact?: boolean }) {
       ? Math.min(100, Math.round((state.downloadedBytes / state.totalBytes) * 100))
       : null;
 
-  if (typeof window === "undefined" || !window.desktopBridge) {
+  useEffect(() => {
+    if (!desktopAvailable) return;
+    void captureFeatureExposureOnce("voice.setup", surface);
+  }, [desktopAvailable, surface]);
+
+  useEffect(() => {
+    if (!desktopAvailable) return;
+    const previousStatus = previousStatusRef.current;
+    const status = state?.status;
+    previousStatusRef.current = status;
+    const wasInstalling = previousStatus === "downloading" || previousStatus === "verifying";
+    if (wasInstalling && status === "ready") {
+      void telemetry.capture({
+        event: "speech.model.install_completed",
+        properties: { surface },
+      });
+    } else if (wasInstalling && status === "error") {
+      void telemetry.capture({
+        event: "speech.model.install_failed",
+        properties: {
+          surface,
+          failure_kind: classifySpeechModelFailure(state?.error),
+          failure_stage: previousStatus,
+        },
+      });
+    }
+  }, [desktopAvailable, state?.error, state?.status, surface]);
+
+  const changeModel = async (action: "enable" | "remove") => {
+    setBusy(true);
+    try {
+      if (action === "enable") {
+        await actions.enable();
+        void telemetry.capture({
+          event: "speech.model.install_started",
+          properties: { surface },
+        });
+      } else {
+        await actions.remove();
+        void telemetry.capture({
+          event: "speech.model.removed",
+          properties: { surface },
+        });
+      }
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("voice.setup", { action, surface }),
+      });
+    } catch (error) {
+      if (action === "enable") {
+        void telemetry.capture({
+          event: "speech.model.install_failed",
+          properties: {
+            surface,
+            failure_kind: classifySpeechModelFailure(
+              error instanceof Error ? error.message : undefined,
+            ),
+            failure_stage: "request",
+          },
+        });
+      } else {
+        void telemetry.capture({
+          event: "speech.model.remove_failed",
+          properties: { surface, failure_kind: "unknown" },
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!desktopAvailable) {
     return (
       <Card className="p-5 text-sm text-muted-foreground">
         Voice input is available in the Study Buddy desktop app.
@@ -80,11 +163,9 @@ export function SpeechModelCard({ compact = false }: { compact?: boolean }) {
             <Button
               size="sm"
               variant="outline"
+              data-analytics-id="speech.model.remove"
               disabled={busy || installing}
-              onClick={() => {
-                setBusy(true);
-                void actions.remove().finally(() => setBusy(false));
-              }}
+              onClick={() => void changeModel("remove")}
             >
               <Trash2Icon className="size-3.5" />
               Remove
@@ -92,11 +173,9 @@ export function SpeechModelCard({ compact = false }: { compact?: boolean }) {
           ) : (
             <Button
               size="sm"
+              data-analytics-id="speech.model.download"
               disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                void actions.enable().finally(() => setBusy(false));
-              }}
+              onClick={() => void changeModel("enable")}
             >
               {busy ? <Spinner className="size-3.5" /> : <DownloadIcon className="size-3.5" />}
               Download voice input
@@ -130,7 +209,12 @@ export function SpeechModelCard({ compact = false }: { compact?: boolean }) {
           <p className="text-xs text-destructive">
             {state.error ?? "We couldn’t add voice input."}
           </p>
-          <Button size="xs" variant="outline" onClick={() => void actions.enable()}>
+          <Button
+            size="xs"
+            variant="outline"
+            data-analytics-id="speech.model.retry"
+            onClick={() => void changeModel("enable")}
+          >
             Retry
           </Button>
         </div>

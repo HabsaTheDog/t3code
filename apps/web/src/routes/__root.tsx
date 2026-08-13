@@ -67,7 +67,9 @@ import { CONSENT_VERSION, SetupGate } from "../setup/SetupWizard";
 import { telemetry } from "../telemetry/runtime";
 import { ConversationTelemetryBridge } from "../telemetry/ConversationTelemetryBridge";
 import { AnalyticsTelemetryBridge } from "../telemetry/AnalyticsTelemetryBridge";
-import { featureProperties, featuresExposedOnRoute } from "../telemetry/featureCatalog";
+import { featuresExposedOnRoute } from "../telemetry/featureCatalog";
+import { captureFeatureExposureOnce } from "../telemetry/featureExposure";
+import { privacySafeRoute } from "../telemetry/pageview";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -183,18 +185,7 @@ function ConsentGatedTracingBootstrap() {
   return enabled ? <AuthenticatedTracingBootstrap /> : null;
 }
 
-function safeRouteName(pathname: string): string {
-  if (pathname === "/") return "home";
-  if (pathname.startsWith("/settings/")) return pathname.split("/").slice(0, 3).join("/");
-  if (pathname.startsWith("/settings")) return "/settings";
-  if (pathname.startsWith("/pair")) return "/pair";
-  if (pathname.startsWith("/chat") || pathname.startsWith("/_chat")) return "chat";
-  return "application";
-}
-
 const APP_STARTED_SESSION_MARKER = "study-buddy:telemetry:app-started:v1";
-const EXPOSED_FEATURE_SESSION_PREFIX = "study-buddy:telemetry:feature-exposed:v1:";
-
 function hasSessionMarker(key: string): boolean {
   try {
     return window.sessionStorage.getItem(key) === "1";
@@ -216,7 +207,6 @@ function TelemetryBootstrap({ pathname }: { pathname: string }) {
   const settings = useSettings();
   const appStartedCaptured = useRef(hasSessionMarker(APP_STARTED_SESSION_MARKER));
   const lastCapturedPathname = useRef<string | null>(null);
-  const exposedFeatures = useRef(new Set<string>());
 
   useEffect(() => {
     if (!hydrated) return;
@@ -240,25 +230,13 @@ function TelemetryBootstrap({ pathname }: { pathname: string }) {
         appStartedCaptured.current = await telemetry.capture({ event: "app.started" });
         if (appStartedCaptured.current) setSessionMarker(APP_STARTED_SESSION_MARKER);
       }
-      const route = safeRouteName(pathname);
+      const route = privacySafeRoute(pathname);
       if (lastCapturedPathname.current !== pathname) {
-        const captured = await telemetry.capture({
-          event: "route.viewed",
-          properties: { route },
-        });
+        const captured = await telemetry.capturePageview(pathname);
         if (captured) lastCapturedPathname.current = pathname;
       }
       for (const feature of featuresExposedOnRoute(route)) {
-        const sessionKey = `${EXPOSED_FEATURE_SESSION_PREFIX}${feature}`;
-        if (exposedFeatures.current.has(feature) || hasSessionMarker(sessionKey)) continue;
-        const captured = await telemetry.capture({
-          event: "feature.exposed",
-          properties: featureProperties(feature, { surface: route }),
-        });
-        if (captured) {
-          exposedFeatures.current.add(feature);
-          setSessionMarker(sessionKey);
-        }
+        await captureFeatureExposureOnce(feature, route);
       }
     })();
   }, [

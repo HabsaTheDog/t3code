@@ -1,6 +1,6 @@
 import { APP_VERSION, HOSTED_APP_CHANNEL } from "../branding";
 
-export const TELEMETRY_SCHEMA_VERSION = 4;
+export const TELEMETRY_SCHEMA_VERSION = 6;
 
 export function telemetryContextProperties(): Readonly<Record<string, unknown>> {
   const clientType = typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web";

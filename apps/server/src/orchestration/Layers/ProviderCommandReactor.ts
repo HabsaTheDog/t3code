@@ -45,6 +45,7 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { prepareStudyBuddyWorkspace } from "../../workspace/prepareStudyBuddyWorkspace.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -417,10 +418,27 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
+    const resolvedCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: project ? [project] : [],
     });
+    const effectiveCwd =
+      project && resolvedCwd
+        ? yield* prepareStudyBuddyWorkspace({
+            workspaceRoot: resolvedCwd,
+            projectKind: project.projectKind,
+            operation: "send",
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterRequestError({
+                  provider: preferredProvider,
+                  method: "thread.turn.start",
+                  detail: cause.message,
+                }),
+            ),
+          )
+        : resolvedCwd;
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;

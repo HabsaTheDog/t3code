@@ -175,6 +175,12 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         "thread.deleted",
         "project.deleted",
       ]);
+      const projectDeleted = forcedEvents.find((event) => event.type === "project.deleted");
+      expect(projectDeleted?.payload).toMatchObject({
+        projectId: asProjectId("project-delete"),
+        projectKind: "regular",
+        projectWorkspaceRoot: "/tmp/project-delete",
+      });
 
       let sequentialReadModel = readModel;
       let nextSequence = readModel.snapshotSequence;

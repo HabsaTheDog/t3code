@@ -197,6 +197,10 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
+import { resolveStudyBuddyOpenPath } from "@t3tools/shared/studyBuddyWorkspace";
+import { markQuickChatSubmitting } from "../quickChatLifecycle";
+import { telemetry } from "../telemetry/runtime";
+import { safeSpeechDuration } from "../telemetry/speechTelemetry";
 import {
   useServerAvailableEditors,
   useServerConfig,
@@ -1926,6 +1930,10 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const openInCwd = resolveStudyBuddyOpenPath({
+    cwd: gitCwd,
+    projectKind: activeProject?.projectKind,
+  });
   const gitStatusQuery = useVcsStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
@@ -3128,6 +3136,10 @@ export default function ChatView(props: ChatViewProps) {
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     await legendListRef.current?.scrollToEnd?.({ animated: false });
+    const releaseQuickChatSubmission =
+      activeProject.projectKind === "quick-chat"
+        ? markQuickChatSubmitting(environmentId, activeProject.id)
+        : () => {};
 
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -3161,7 +3173,7 @@ export default function ChatView(props: ChatViewProps) {
     composerRef.current?.resetCursorState();
 
     let turnStartSucceeded = false;
-    await (async () => {
+    const turnStartPromise = (async () => {
       let firstComposerImageName: string | null = null;
       if (composerImagesSnapshot.length > 0) {
         const firstComposerImage = composerImagesSnapshot[0];
@@ -3265,6 +3277,23 @@ export default function ChatView(props: ChatViewProps) {
         createdAt: messageCreatedAt,
       });
       turnStartSucceeded = true;
+      if (composerVoiceNotesSnapshot.length > 0) {
+        void telemetry.capture({
+          event: "speech.voice_message.sent",
+          idempotencyKey: `speech.voice_message.sent:${messageIdForSend}`,
+          properties: {
+            voice_note_count: composerVoiceNotesSnapshot.length,
+            voice_duration_ms: safeSpeechDuration(
+              composerVoiceNotesSnapshot.reduce(
+                (total, voiceNote) => total + voiceNote.durationMs,
+                0,
+              ),
+            ),
+            has_typed_text: trimmed.length > 0,
+            has_images: composerImagesSnapshot.length > 0,
+          },
+        });
+      }
     })().catch(async (err: unknown) => {
       if (
         !turnStartSucceeded &&
@@ -3300,6 +3329,7 @@ export default function ChatView(props: ChatViewProps) {
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
+    await turnStartPromise.finally(releaseQuickChatSubmission);
     sendInFlightRef.current = false;
     if (!turnStartSucceeded) {
       resetLocalDispatch();
@@ -3936,7 +3966,7 @@ export default function ChatView(props: ChatViewProps) {
               activeProjectName={activeProject?.name}
               activeProjectKind={activeProject?.projectKind}
               isGitRepo={isGitRepo}
-              openInCwd={gitCwd}
+              openInCwd={openInCwd}
               activeProjectScripts={activeProject?.scripts}
               preferredScriptId={
                 activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null

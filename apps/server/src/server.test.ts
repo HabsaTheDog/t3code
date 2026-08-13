@@ -4640,6 +4640,40 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("creates the deliverables directory with a new Quick Chat workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-quick-chat-create-" });
+      const workspaceRoot = path.join(parentDir, "quick-chats", "thread-quick-chat");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.create",
+            commandId: CommandId.make("cmd-quick-chat-create"),
+            projectId: ProjectId.make("project-quick-chat-create"),
+            projectKind: "quick-chat",
+            title: "Quick Chat",
+            workspaceRoot,
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+
+      const stat = yield* fs.stat(path.join(workspaceRoot, "study-buddy-deliverables"));
+      assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.writeFile errors", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4719,6 +4753,76 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assertFailure(result, externalLauncherError);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("repairs a canonical Quick Chat target before shell.openInEditor", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const quickChatsRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-quick-chat-open-",
+      });
+      const workspaceRoot = path.join(quickChatsRoot, "thread-open-repair");
+      const deliverablesRoot = path.join(workspaceRoot, "study-buddy-deliverables");
+      let openedInput: { cwd: string; editor: EditorId } | null = null;
+      yield* buildAppUnderTest({
+        config: { quickChatWorkspaceRoot: quickChatsRoot },
+        layers: {
+          externalLauncher: {
+            launchEditor: (input) =>
+              Effect.sync(() => {
+                openedInput = input;
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: deliverablesRoot,
+            editor: "file-manager",
+            workspaceKind: "quick-chat",
+          }),
+        ),
+      );
+
+      assert.equal((yield* fs.stat(deliverablesRoot)).type, "Directory");
+      assert.deepEqual(openedInput, {
+        cwd: deliverablesRoot,
+        editor: "file-manager",
+        workspaceKind: "quick-chat",
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("surfaces a missing regular project without recreating it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-missing-project-",
+      });
+      const missingRoot = `${tempRoot}-must-not-exist`;
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.shellOpenInEditor]({
+            cwd: missingRoot,
+            editor: "file-manager",
+            workspaceKind: "regular",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ExternalLauncherError");
+      assertTrue(result.failure.message.includes(missingRoot));
+      assertTrue(result.failure.message.includes("remove and re-add the project"));
+      assert.equal(yield* fs.exists(missingRoot), false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

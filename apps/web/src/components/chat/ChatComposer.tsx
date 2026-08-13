@@ -129,6 +129,7 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { telemetry } from "../../telemetry/runtime";
 import { featureProperties } from "../../telemetry/featureCatalog";
+import { safeSpeechDuration } from "../../telemetry/speechTelemetry";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -1918,6 +1919,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const removeComposerVoiceNote = (voiceNoteId: string) => {
+    const removed = composerVoiceNotes.find((voiceNote) => voiceNote.id === voiceNoteId);
+    if (removed) {
+      void telemetry.capture({
+        event: "speech.voice_note.removed",
+        properties: { duration_ms: safeSpeechDuration(removed.durationMs) },
+      });
+    }
     setComposerVoiceNotes((existing) =>
       existing.filter((voiceNote) => voiceNote.id !== voiceNoteId),
     );

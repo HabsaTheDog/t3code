@@ -326,7 +326,7 @@ export function StudyBuddySettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="Voice input" icon={<AudioWaveformIcon className="size-3.5" />}>
-        <SpeechModelCard compact />
+        <SpeechModelCard compact surface="settings" />
       </SettingsSection>
 
       <SettingsSection title="Moodle" icon={<GraduationCapIcon className="size-3.5" />}>

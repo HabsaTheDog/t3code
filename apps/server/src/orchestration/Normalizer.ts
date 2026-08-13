@@ -12,6 +12,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
+import { STUDY_BUDDY_DELIVERABLES_DIRECTORY } from "@t3tools/shared/studyBuddyWorkspace";
 
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
@@ -48,12 +49,27 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (command.type === "project.create") {
+      const workspaceRoot = yield* normalizeProjectWorkspaceRootForCreate(
+        command.workspaceRoot,
+        command.createWorkspaceRootIfMissing,
+      );
+      if (command.projectKind === "quick-chat") {
+        yield* fileSystem
+          .makeDirectory(path.join(workspaceRoot, STUDY_BUDDY_DELIVERABLES_DIRECTORY), {
+            recursive: true,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: `Could not create the Quick Chat deliverables directory: ${cause.message}`,
+                }),
+            ),
+          );
+      }
       return {
         ...command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
-          command.workspaceRoot,
-          command.createWorkspaceRootIfMissing,
-        ),
+        workspaceRoot,
         createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
       } satisfies OrchestrationCommand;
     }
