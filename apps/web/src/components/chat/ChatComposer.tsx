@@ -673,6 +673,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadActivities,
     resolvedTheme,
     settings,
+    keybindings,
+    terminalOpen,
     gitCwd,
     promptRef,
     composerRef,
@@ -2585,7 +2587,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <StudyBuddyProfilePicker
                   activeProfile={activeExecutionProfile}
                   compact={isComposerFooterCompact}
+                  keybindings={keybindings}
                   open={isComposerModelPickerOpen}
+                  terminalOpen={terminalOpen}
                   onOpenChange={setIsComposerModelPickerOpen}
                   onCoordinatorChange={onProviderModelSelect}
                 />

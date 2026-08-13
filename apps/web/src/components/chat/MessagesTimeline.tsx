@@ -514,7 +514,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "ph-no-capture group/minimap pointer-events-auto absolute inset-y-0 left-0 z-40 hidden w-20 [@media(pointer:fine)]:block",
+        "ph-no-capture group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-20 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
@@ -524,10 +524,18 @@ function TimelineMinimap({
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
     >
       <div className="relative h-full w-full select-none">
+        {!hasPersistentGutter ? (
+          <div aria-hidden="true" className="pointer-events-auto absolute inset-y-0 left-0 w-2" />
+        ) : null}
         <button
           type="button"
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
-          className="pointer-events-auto absolute top-1/2 left-2 w-12 -translate-y-1/2 cursor-pointer rounded-sm bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          className={cn(
+            "absolute top-1/2 left-2 w-12 -translate-y-1/2 cursor-pointer rounded-sm bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            hasPersistentGutter
+              ? "pointer-events-auto"
+              : "pointer-events-none group-hover/minimap:pointer-events-auto group-focus-within/minimap:pointer-events-auto",
+          )}
           style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
           onBlur={() => setActiveIndex(null)}
           onFocus={() => setActiveIndex((current) => current ?? 0)}

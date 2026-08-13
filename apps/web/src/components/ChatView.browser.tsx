@@ -61,6 +61,7 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
+import { resetQuickChatLifecycleForTests } from "../quickChatLifecycle";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
@@ -1573,8 +1574,8 @@ async function waitForSendButton(): Promise<HTMLButtonElement> {
   );
 }
 
-function findComposerProviderModelPicker(): HTMLButtonElement | null {
-  return document.querySelector<HTMLButtonElement>('[data-chat-provider-model-picker="true"]');
+function findComposerExecutionProfilePicker(): HTMLButtonElement | null {
+  return document.querySelector<HTMLButtonElement>('[data-chat-execution-profile-picker="true"]');
 }
 
 function findButtonByText(text: string): HTMLButtonElement | null {
@@ -1860,6 +1861,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   beforeEach(async () => {
+    resetQuickChatLifecycleForTests();
     await rpcHarness.reset({
       resolveUnary: resolveWsRpc,
       getInitialStreamValues: (request) => {
@@ -1958,6 +1960,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(() => {
+    resetQuickChatLifecycleForTests();
     customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
@@ -6608,12 +6611,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]'),
         "Unable to find composer footer.",
       );
-      const initialModelPicker = await waitForElement(
-        findComposerProviderModelPicker,
-        "Unable to find provider model picker.",
+      const initialProfilePicker = await waitForElement(
+        findComposerExecutionProfilePicker,
+        "Unable to find execution profile picker.",
       );
-      const initialModelPickerOffset =
-        initialModelPicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+      const initialProfilePickerOffset =
+        initialProfilePicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
       const initialImplementButton = await waitForButtonByText("Implement");
       const initialImplementWidth = initialImplementButton.getBoundingClientRect().width;
 
@@ -6640,18 +6643,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           const implementRect = implementButton.getBoundingClientRect();
           const implementActionsRect = implementActionsButton.getBoundingClientRect();
-          const compactModelPicker = findComposerProviderModelPicker();
-          expect(compactModelPicker).toBeTruthy();
+          const compactProfilePicker = findComposerExecutionProfilePicker();
+          expect(compactProfilePicker).toBeTruthy();
 
-          const compactModelPickerOffset =
-            compactModelPicker!.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+          const compactProfilePickerOffset =
+            compactProfilePicker!.getBoundingClientRect().left -
+            footer.getBoundingClientRect().left;
 
           expect(Math.abs(implementRect.right - implementActionsRect.left)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.top - implementActionsRect.top)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.width - initialImplementWidth)).toBeLessThanOrEqual(1);
-          expect(Math.abs(compactModelPickerOffset - initialModelPickerOffset)).toBeLessThanOrEqual(
-            1,
-          );
+          expect(
+            Math.abs(compactProfilePickerOffset - initialProfilePickerOffset),
+          ).toBeLessThanOrEqual(1);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -6773,7 +6777,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("opens the model picker when selecting /model", async () => {
+  it("opens the execution profile picker when selecting /model", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -6790,8 +6794,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await menuItem.click();
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-        expect(findComposerProviderModelPicker()?.textContent).not.toContain("/model");
+        const profileList = document.querySelector(".execution-profile-picker-list");
+        expect(profileList).not.toBeNull();
+        expect(profileList?.textContent).toContain("Balanced");
+        expect(findComposerExecutionProfilePicker()?.textContent).not.toContain("/model");
       });
 
       await new Promise<void>((resolve) => {
@@ -6800,19 +6806,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         });
       });
 
-      await vi.waitFor(() => {
-        const searchInput = document.querySelector<HTMLInputElement>(
-          'input[placeholder="Search models..."]',
-        );
-        expect(searchInput).not.toBeNull();
-        expect(document.activeElement).toBe(searchInput);
-      });
+      expect(document.activeElement?.closest('[data-slot="select-item"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("toggles the model picker and shows jump keys immediately from the shortcut", async () => {
+  it("toggles the execution profile picker and shows jump keys immediately from the shortcut", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-model-picker-shortcut-target" as MessageId,
       targetText: "model picker shortcut thread",
@@ -6939,14 +6939,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
+        expect(document.querySelector(".execution-profile-picker-list")).not.toBeNull();
       });
 
       const jumpLabel = isMacPlatform(navigator.platform) ? "⌃1" : "Ctrl+1";
       await vi.waitFor(() => {
         expect(
           Array.from(
-            document.querySelectorAll<HTMLElement>('.model-picker-list [data-slot="kbd"]'),
+            document.querySelectorAll<HTMLElement>(
+              '.execution-profile-picker-list [data-slot="kbd"]',
+            ),
           ).some((element) => element.textContent?.trim() === jumpLabel),
         ).toBe(true);
       });
@@ -6963,7 +6965,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).toBeNull();
+        expect(findComposerExecutionProfilePicker()?.getAttribute("aria-expanded")).toBe("false");
       });
     } finally {
       releaseModShortcut("Control");

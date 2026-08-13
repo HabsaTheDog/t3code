@@ -370,9 +370,9 @@ describe("CompactComposerControlsMenu", () => {
 
     await vi.waitFor(() => {
       const submenuText = document.body.textContent ?? "";
-      expect(submenuText).toContain("Review previous attempts");
-      expect(submenuText).toContain("Ask before attempt");
-      expect(submenuText).toContain("Quiz assist");
+      for (const option of QUIZ_ACCESS_MODE_OPTIONS) {
+        expect(submenuText).toContain(option.label);
+      }
     });
 
     const askBeforeDescription = QUIZ_ACCESS_MODE_OPTIONS.find(
@@ -381,7 +381,11 @@ describe("CompactComposerControlsMenu", () => {
     expect(askBeforeDescription).toBeTruthy();
     expect(document.body.textContent ?? "").not.toContain(askBeforeDescription);
 
-    await page.getByText("Ask before attempt", { exact: true }).hover();
+    const askBeforeLabel = QUIZ_ACCESS_MODE_OPTIONS.find(
+      (option) => option.value === "ask-before-attempt",
+    )?.label;
+    expect(askBeforeLabel).toBeTruthy();
+    await page.getByText(askBeforeLabel!, { exact: true }).hover();
     await new Promise((resolve) => setTimeout(resolve, QUIZ_ACCESS_TOOLTIP_DELAY_MS - 150));
     expect(document.body.textContent ?? "").not.toContain(askBeforeDescription);
 
