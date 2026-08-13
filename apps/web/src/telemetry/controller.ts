@@ -1,6 +1,7 @@
 import { ConversationExporter } from "./conversation";
 import { TelemetryOutbox, type TelemetryOutboxOptions } from "./outbox";
 import { BrowserPostHogTelemetryClient, type PostHogTelemetryClient } from "./posthogClient";
+import { privacySafePageviewProperties } from "./pageview";
 import { PostHogBatchUploader, TelemetryRetryWorker } from "./retryWorker";
 import { makeBeforeSendSanitizer, sanitizeRecord } from "./sanitize";
 import {
@@ -20,7 +21,6 @@ export const DEFAULT_POSTHOG_HOST = "https://studybuddyanalytics.habsa.at";
 
 const SEMANTIC_EVENTS = new Set([
   "app.started",
-  "route.viewed",
   "setup.step_viewed",
   "setup.step_completed",
   "setup.step_skipped",
@@ -32,6 +32,17 @@ const SEMANTIC_EVENTS = new Set([
   "provider.auth_completed",
   "provider.auth_failed",
   "study_connection.tested",
+  "speech.model.install_started",
+  "speech.model.install_completed",
+  "speech.model.install_failed",
+  "speech.model.removed",
+  "speech.model.remove_failed",
+  "speech.recording.started",
+  "speech.recording.discarded",
+  "speech.transcription.completed",
+  "speech.transcription.failed",
+  "speech.voice_note.removed",
+  "speech.voice_message.sent",
   "thread.created",
   "thread.favorite.changed",
   "turn.started",
@@ -96,7 +107,7 @@ export class TelemetryController {
     this.#projectToken = options.projectToken?.trim() ?? "";
     this.#configuredSecrets = options.configuredSecrets ?? (() => []);
     this.#contextProperties =
-      options.contextProperties ?? (() => ({ telemetry_schema_version: 4 }));
+      options.contextProperties ?? (() => ({ telemetry_schema_version: 6 }));
     this.#onInstallationIdCreated = options.onInstallationIdCreated;
     this.#createOutbox = options.createOutbox ?? (() => new TelemetryOutbox(options.outboxOptions));
     this.#posthog = options.posthogClient ?? new BrowserPostHogTelemetryClient();
@@ -143,12 +154,29 @@ export class TelemetryController {
   }
 
   async capture(event: SemanticTelemetryEvent): Promise<boolean> {
+    return this.#captureAnalyticsEvent(event, false);
+  }
+
+  async capturePageview(pathname: string): Promise<boolean> {
+    return this.#captureAnalyticsEvent(
+      {
+        event: "$pageview",
+        properties: privacySafePageviewProperties(pathname),
+      },
+      true,
+    );
+  }
+
+  async #captureAnalyticsEvent(
+    event: SemanticTelemetryEvent,
+    trustedNativeEvent: boolean,
+  ): Promise<boolean> {
     const settings = this.#settings;
     if (
       !settings?.hydrated ||
       settings.analyticsConsent !== "accepted" ||
       settings.analyticsEnabledAt === null ||
-      !SEMANTIC_EVENTS.has(event.event)
+      (!trustedNativeEvent && !SEMANTIC_EVENTS.has(event.event))
     ) {
       return false;
     }
@@ -160,6 +188,7 @@ export class TelemetryController {
     try {
       const installationId = await this.#ensureInstallationId();
       const outbox = this.#ensureOutbox();
+      const sessionId = this.#posthog.getSessionId(true);
       const result = await outbox.enqueue({
         category: "analytics",
         kind: "analytics",
@@ -167,7 +196,9 @@ export class TelemetryController {
         idempotencyKey: event.idempotencyKey ?? this.#random.uuid(),
         payload: {
           ...sanitizeRecord(event.properties ?? {}, this.#configuredSecrets()),
+          ...(trustedNativeEvent ? event.properties : {}),
           ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
+          ...(sessionId ? { $session_id: sessionId } : {}),
           distinct_id: installationId,
         },
         createdAt: timestamp,

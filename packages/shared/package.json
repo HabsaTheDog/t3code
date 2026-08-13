@@ -75,6 +75,10 @@
       "types": "./src/studyBuddyProfiles.ts",
       "import": "./src/studyBuddyProfiles.ts"
     },
+    "./studyBuddyWorkspace": {
+      "types": "./src/studyBuddyWorkspace.ts",
+      "import": "./src/studyBuddyWorkspace.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"

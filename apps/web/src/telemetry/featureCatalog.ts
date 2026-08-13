@@ -10,6 +10,7 @@ export const FEATURE_CATALOG = [
   { id: "chat.interaction_mode", area: "Chat", label: "Choose an interaction mode" },
   { id: "chat.image_attachment", area: "Chat", label: "Attach an image" },
   { id: "chat.voice", area: "Chat", label: "Use voice input" },
+  { id: "voice.setup", area: "Voice", label: "Install local voice input" },
   { id: "chat.terminal_context", area: "Chat", label: "Attach terminal context" },
   { id: "plan.sidebar", area: "Planning", label: "Open the plan sidebar" },
   { id: "orchestration.delegation", area: "Orchestration", label: "Run delegated tasks" },
@@ -47,7 +48,6 @@ export function featuresExposedOnRoute(route: string): ReadonlyArray<FeatureId> 
       "chat.runtime_mode",
       "chat.interaction_mode",
       "chat.image_attachment",
-      "chat.voice",
       "chat.terminal_context",
       "plan.sidebar",
     ];

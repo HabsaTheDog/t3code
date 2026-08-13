@@ -1326,10 +1326,14 @@ describe("SourceControlSettingsPanel discovery states", () => {
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>,
   ) {
     window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
       server: {
         discoverSourceControl,
       },
-    } as LocalApi;
+    } as unknown as LocalApi;
   }
 
   it("shows skeleton sections while the first source control scan is pending", async () => {

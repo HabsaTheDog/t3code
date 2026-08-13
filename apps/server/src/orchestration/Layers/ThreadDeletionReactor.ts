@@ -1,5 +1,6 @@
 import { CommandId, type OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { STUDY_BUDDY_DELIVERABLES_DIRECTORY } from "@t3tools/shared/studyBuddyWorkspace";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,20 @@ import {
 } from "../Services/ThreadDeletionReactor.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+type ProjectDeletedEvent = Extract<OrchestrationEvent, { type: "project.deleted" }>;
+type WorkspaceCleanupEvent = ThreadDeletedEvent | ProjectDeletedEvent;
+
+export function hasOnlyEmptyQuickChatDeliverables(input: {
+  readonly workspaceEntries: readonly string[];
+  readonly deliverablesEntries: readonly string[];
+}): boolean {
+  return (
+    (input.workspaceEntries.length === 0 ||
+      (input.workspaceEntries.length === 1 &&
+        input.workspaceEntries[0] === STUDY_BUDDY_DELIVERABLES_DIRECTORY)) &&
+    input.deliverablesEntries.length === 0
+  );
+}
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -98,6 +113,38 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const isDisposableUnpromptedQuickChatWorkspace = Effect.fn(
+    "isDisposableUnpromptedQuickChatWorkspace",
+  )(function* (targetWorkspaceRoot: string) {
+    const workspaceExists = yield* fileSystem
+      .exists(targetWorkspaceRoot)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!workspaceExists) {
+      return true;
+    }
+    const workspaceEntries = yield* fileSystem.readDirectory(targetWorkspaceRoot, {
+      recursive: false,
+    });
+    if (workspaceEntries.length === 0) {
+      return true;
+    }
+    if (
+      workspaceEntries.length !== 1 ||
+      workspaceEntries[0] !== STUDY_BUDDY_DELIVERABLES_DIRECTORY
+    ) {
+      return false;
+    }
+    const deliverablesRoot = path.join(targetWorkspaceRoot, STUDY_BUDDY_DELIVERABLES_DIRECTORY);
+    const deliverablesStat = yield* fileSystem.stat(deliverablesRoot);
+    if (deliverablesStat.type !== "Directory") {
+      return false;
+    }
+    const deliverablesEntries = yield* fileSystem.readDirectory(deliverablesRoot, {
+      recursive: false,
+    });
+    return hasOnlyEmptyQuickChatDeliverables({ workspaceEntries, deliverablesEntries });
+  });
+
   const deleteQuickChatProject = Effect.fn("deleteQuickChatProject")(function* (
     event: ThreadDeletedEvent,
   ) {
@@ -131,6 +178,27 @@ const make = Effect.gen(function* () {
     }
     yield* fileSystem.remove(projectWorkspaceRoot, { recursive: true, force: true });
   });
+
+  const removeUnpromptedQuickChatWorkspace = Effect.fn("removeUnpromptedQuickChatWorkspace")(
+    function* (event: ProjectDeletedEvent) {
+      const { projectWorkspaceRoot } = event.payload;
+      if (
+        event.payload.projectKind !== "quick-chat" ||
+        projectWorkspaceRoot === undefined ||
+        !isSafeQuickChatWorkspacePath(projectWorkspaceRoot)
+      ) {
+        return;
+      }
+      if (!(yield* isDisposableUnpromptedQuickChatWorkspace(projectWorkspaceRoot))) {
+        yield* Effect.logInfo("preserving non-empty unprompted quick chat workspace", {
+          projectId: event.payload.projectId,
+          projectWorkspaceRoot,
+        });
+        return;
+      }
+      yield* fileSystem.remove(projectWorkspaceRoot, { recursive: true, force: true });
+    },
+  );
 
   const cleanupQuickChat = Effect.fn("cleanupQuickChat")(function* (event: ThreadDeletedEvent) {
     if (
@@ -176,12 +244,30 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processThreadDeletedSafely);
+  const processWorkspaceCleanupEventSafely = (event: WorkspaceCleanupEvent) => {
+    if (event.type === "thread.deleted") {
+      return processThreadDeletedSafely(event);
+    }
+    return removeUnpromptedQuickChatWorkspace(event).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.failCause(cause);
+        }
+        return Effect.logWarning("project deletion cleanup failed to process event", {
+          eventType: event.type,
+          projectId: event.payload.projectId,
+          cause: Cause.pretty(cause),
+        });
+      }),
+    );
+  };
+
+  const worker = yield* makeDrainableWorker(processWorkspaceCleanupEventSafely);
 
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-        if (event.type !== "thread.deleted") {
+        if (event.type !== "thread.deleted" && event.type !== "project.deleted") {
           return Effect.void;
         }
         return worker.enqueue(event);

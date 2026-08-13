@@ -770,7 +770,7 @@ function VoiceInputStep() {
         description="Want to speak instead of type? Download the optional voice feature now, or add it later in Settings → Study Buddy."
         icon={AudioWaveformIcon}
       />
-      <SpeechModelCard />
+      <SpeechModelCard surface="setup" />
     </div>
   );
 }

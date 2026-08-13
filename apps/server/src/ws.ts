@@ -88,6 +88,7 @@ import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
+import { prepareOpenInWorkspace } from "./workspace/prepareStudyBuddyWorkspace.ts";
 import { createFilesystemPreviewTicket } from "./workspace/previewTickets.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
 import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
@@ -1353,9 +1354,19 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
-          observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
-            "rpc.aggregate": "workspace",
-          }),
+          observeRpcEffect(
+            WS_METHODS.shellOpenInEditor,
+            input.workspaceKind
+              ? prepareOpenInWorkspace({ cwd: input.cwd, projectKind: input.workspaceKind }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ExternalLauncher.ExternalLauncherError({ message: cause.message, cause }),
+                  ),
+                  Effect.flatMap((cwd) => externalLauncher.launchEditor({ ...input, cwd })),
+                )
+              : externalLauncher.launchEditor(input),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           observeRpcEffect(
             WS_METHODS.filesystemBrowse,

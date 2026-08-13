@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { describe, expect, it } from "vite-plus/test";
 
-import { logCleanupCauseUnlessInterrupted } from "./ThreadDeletionReactor.ts";
+import {
+  hasOnlyEmptyQuickChatDeliverables,
+  logCleanupCauseUnlessInterrupted,
+} from "./ThreadDeletionReactor.ts";
 
 describe("logCleanupCauseUnlessInterrupted", () => {
   const threadId = ThreadId.make("thread-deletion-reactor-test");
@@ -34,5 +37,31 @@ describe("logCleanupCauseUnlessInterrupted", () => {
     if (Exit.isFailure(exit)) {
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
+  });
+});
+
+describe("unprompted Quick Chat workspace cleanup", () => {
+  it("allows removal only when the workspace contains no user files", () => {
+    expect(
+      hasOnlyEmptyQuickChatDeliverables({ workspaceEntries: [], deliverablesEntries: [] }),
+    ).toBe(true);
+    expect(
+      hasOnlyEmptyQuickChatDeliverables({
+        workspaceEntries: ["study-buddy-deliverables"],
+        deliverablesEntries: [],
+      }),
+    ).toBe(true);
+    expect(
+      hasOnlyEmptyQuickChatDeliverables({
+        workspaceEntries: ["study-buddy-deliverables"],
+        deliverablesEntries: ["notes.pdf"],
+      }),
+    ).toBe(false);
+    expect(
+      hasOnlyEmptyQuickChatDeliverables({
+        workspaceEntries: ["study-buddy-data", "study-buddy-deliverables"],
+        deliverablesEntries: [],
+      }),
+    ).toBe(false);
   });
 });

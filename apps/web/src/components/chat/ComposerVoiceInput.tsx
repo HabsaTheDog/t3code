@@ -3,6 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useDesktopSpeechActions, useDesktopSpeechState } from "../../lib/desktopSpeechReactQuery";
 import { randomUUID } from "../../lib/utils";
+import { captureFeatureExposureOnce } from "../../telemetry/featureExposure";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import {
+  classifySpeechFailure,
+  classifySpeechModelFailure,
+  safeSpeechDuration,
+} from "../../telemetry/speechTelemetry";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -168,6 +176,7 @@ export function ComposerVoiceInput({
   const startedAtRef = useRef(0);
   const stopTimerRef = useRef<number | null>(null);
   const state = speech.data;
+  const previousSpeechStatusRef = useRef(state?.status);
 
   const stopRecordingAnalysis = useCallback(() => {
     recordingAudioSourceRef.current?.disconnect();
@@ -189,6 +198,34 @@ export function ComposerVoiceInput({
     },
     [stopRecordingAnalysis],
   );
+
+  useEffect(() => {
+    if (state && state.status !== "not-enabled") {
+      void captureFeatureExposureOnce("chat.voice", "composer");
+    }
+  }, [state?.status]);
+
+  useEffect(() => {
+    const previousStatus = previousSpeechStatusRef.current;
+    const status = state?.status;
+    previousSpeechStatusRef.current = status;
+    const wasInstalling = previousStatus === "downloading" || previousStatus === "verifying";
+    if (wasInstalling && status === "ready") {
+      void telemetry.capture({
+        event: "speech.model.install_completed",
+        properties: { surface: "composer" },
+      });
+    } else if (wasInstalling && status === "error") {
+      void telemetry.capture({
+        event: "speech.model.install_failed",
+        properties: {
+          surface: "composer",
+          failure_kind: classifySpeechModelFailure(state?.error),
+          failure_stage: previousStatus,
+        },
+      });
+    }
+  }, [state?.error, state?.status]);
 
   if (!state || state.status === "not-enabled") return null;
 
@@ -232,36 +269,81 @@ export function ComposerVoiceInput({
         if (stopTimerRef.current !== null) window.clearTimeout(stopTimerRef.current);
         stopTimerRef.current = null;
         if (durationMs < 350) {
+          void telemetry.capture({
+            event: "speech.recording.discarded",
+            properties: { reason: "too_short" },
+          });
           setPhase("idle");
           return;
         }
         const id = randomUUID();
         setPhase("transcribing");
         onTranscriptionChange({ id, durationMs });
-        void recordingToWav(new Blob(chunks, { type: recorder.mimeType }))
-          .then((wav) => window.desktopBridge!.transcribeSpeech(toBase64(wav)))
-          .then(({ text }) => onVoiceNote({ id, durationMs, transcript: text }))
-          .catch((error: unknown) => {
+        void (async () => {
+          let wav: ArrayBuffer;
+          try {
+            wav = await recordingToWav(new Blob(chunks, { type: recorder.mimeType }));
+          } catch (error) {
+            void telemetry.capture({
+              event: "speech.transcription.failed",
+              properties: {
+                failure_stage: "audio_processing",
+                failure_kind: classifySpeechFailure(error),
+                duration_ms: safeSpeechDuration(durationMs),
+              },
+            });
             toastManager.add({
               type: "error",
               title: "Voice transcription failed",
               description:
                 error instanceof Error ? error.message : "Could not transcribe this recording.",
             });
-          })
-          .finally(() => {
-            onTranscriptionChange(null);
-            setPhase("idle");
-          });
+            return;
+          }
+          try {
+            const { text } = await window.desktopBridge!.transcribeSpeech(toBase64(wav));
+            onVoiceNote({ id, durationMs, transcript: text });
+            void telemetry.capture({
+              event: "speech.transcription.completed",
+              properties: { duration_ms: safeSpeechDuration(durationMs) },
+            });
+          } catch (error) {
+            void telemetry.capture({
+              event: "speech.transcription.failed",
+              properties: {
+                failure_stage: "transcription",
+                failure_kind: classifySpeechFailure(error),
+                duration_ms: safeSpeechDuration(durationMs),
+              },
+            });
+            toastManager.add({
+              type: "error",
+              title: "Voice transcription failed",
+              description:
+                error instanceof Error ? error.message : "Could not transcribe this recording.",
+            });
+          }
+        })().finally(() => {
+          onTranscriptionChange(null);
+          setPhase("idle");
+        });
       };
       recorder.start();
       setPhase("recording");
+      void telemetry.capture({ event: "speech.recording.started" });
       stopTimerRef.current = window.setTimeout(stop, 3 * 60 * 1000);
     } catch (error) {
       stopRecordingAnalysis();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       recorderRef.current = null;
+      void telemetry.capture({
+        event: "speech.transcription.failed",
+        properties: {
+          failure_stage: "microphone",
+          failure_kind: classifySpeechFailure(error),
+        },
+      });
       toastManager.add({
         type: "error",
         title: "Microphone unavailable",
@@ -317,7 +399,31 @@ export function ComposerVoiceInput({
         phase === "recording"
           ? stop
           : state.status === "error"
-            ? () => void speechActions.enable()
+            ? () => {
+                void telemetry.capture({
+                  event: "speech.model.install_started",
+                  properties: { surface: "composer" },
+                });
+                void telemetry.capture({
+                  event: "feature.used",
+                  properties: featureProperties("voice.setup", {
+                    action: "enable",
+                    surface: "composer",
+                  }),
+                });
+                void speechActions.enable().catch((error: unknown) => {
+                  void telemetry.capture({
+                    event: "speech.model.install_failed",
+                    properties: {
+                      surface: "composer",
+                      failure_kind: classifySpeechModelFailure(
+                        error instanceof Error ? error.message : undefined,
+                      ),
+                      failure_stage: "request",
+                    },
+                  });
+                });
+              }
             : () => void start()
       }
     >

@@ -1036,6 +1036,8 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
+  projectKind: Schema.optional(ProjectKind),
+  projectWorkspaceRoot: Schema.optional(Schema.String),
   deletedAt: IsoDateTime,
 });
 

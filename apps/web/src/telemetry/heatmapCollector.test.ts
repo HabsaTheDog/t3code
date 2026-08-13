@@ -25,7 +25,7 @@ function collectorHarness() {
       getComputedStyle: vi.fn(() => ({ position: "static" })) as never,
     },
     intervalMs: 60_000,
-    sessionId: "heatmap-session-safe",
+    sessionId: () => "0198a748-305a-7000-8000-000000000001",
   });
   return {
     collector,
@@ -50,7 +50,7 @@ describe("PrivacySafeHeatmapCollector", () => {
       },
       $viewport_width: 1440,
       $viewport_height: 900,
-      $session_id: "heatmap-session-safe",
+      $session_id: "0198a748-305a-7000-8000-000000000001",
     });
     expect(JSON.stringify(emit.mock.calls)).not.toContain("private.test");
     expect(JSON.stringify(emit.mock.calls)).not.toContain("thread-secret");
@@ -79,6 +79,7 @@ describe("PrivacySafeHeatmapCollector", () => {
     expect(emitControlClick).toHaveBeenCalledWith({
       analytics_id: "thread.favorite",
       $current_url: "https://app.t3.codes/_chat/",
+      $session_id: "0198a748-305a-7000-8000-000000000001",
     });
     expect(JSON.stringify(emitControlClick.mock.calls)).not.toContain("private thread title");
     expect(JSON.stringify(emitControlClick.mock.calls)).not.toContain("private input");

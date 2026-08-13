@@ -22,7 +22,7 @@ import {
   DEFAULT_TERMINAL_ID,
   ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import * as Option from "effect/Option";
@@ -61,6 +61,7 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
+import { resetQuickChatLifecycleForTests } from "../quickChatLifecycle";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
@@ -115,6 +116,7 @@ const SECOND_PROJECT_ID = "project-2" as ProjectId;
 const QUICK_CHAT_PROJECT_ID = "project-quick-chat" as ProjectId;
 const QUICK_CHAT_THREAD_ID = "thread-quick-chat" as ThreadId;
 const QUICK_CHAT_THREAD_TITLE = "Quick browser chat";
+const QUICK_CHAT_DRAFT_ID = DraftId.make("e75c77a6-bca7-4c12-93e7-74e35d179959");
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
@@ -496,6 +498,14 @@ function createSnapshotWithQuickChat(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithUnpromptedQuickChat(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithQuickChat();
+  return {
+    ...snapshot,
+    threads: snapshot.threads.filter((thread) => thread.id !== QUICK_CHAT_THREAD_ID),
+  };
+}
+
 function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
   return {
     snapshot,
@@ -795,6 +805,25 @@ function setDraftThreadWithoutWorktree(): void {
       [PROJECT_DRAFT_KEY]: THREAD_KEY,
     },
   });
+}
+
+function setQuickChatDraftReservation(prompt = ""): void {
+  const store = useComposerDraftStore.getState();
+  store.setLogicalProjectDraftThreadId(
+    `quick-chat:${LOCAL_ENVIRONMENT_ID}:${QUICK_CHAT_THREAD_ID}`,
+    scopeProjectRef(LOCAL_ENVIRONMENT_ID, QUICK_CHAT_PROJECT_ID),
+    QUICK_CHAT_DRAFT_ID,
+    {
+      threadId: QUICK_CHAT_THREAD_ID,
+      createdAt: NOW_ISO,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    },
+  );
+  if (prompt) store.setPrompt(QUICK_CHAT_DRAFT_ID, prompt);
 }
 
 function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
@@ -1545,8 +1574,8 @@ async function waitForSendButton(): Promise<HTMLButtonElement> {
   );
 }
 
-function findComposerProviderModelPicker(): HTMLButtonElement | null {
-  return document.querySelector<HTMLButtonElement>('[data-chat-provider-model-picker="true"]');
+function findComposerExecutionProfilePicker(): HTMLButtonElement | null {
+  return document.querySelector<HTMLButtonElement>('[data-chat-execution-profile-picker="true"]');
 }
 
 function findButtonByText(text: string): HTMLButtonElement | null {
@@ -1832,6 +1861,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   beforeEach(async () => {
+    resetQuickChatLifecycleForTests();
     await rpcHarness.reset({
       resolveUnary: resolveWsRpc,
       getInitialStreamValues: (request) => {
@@ -1930,6 +1960,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(() => {
+    resetQuickChatLifecycleForTests();
     customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
@@ -2084,6 +2115,42 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows a visible error when Open cannot resolve the workspace", async () => {
+    setDraftThreadWithoutWorktree();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.shellOpenInEditor) {
+          return Promise.reject(new Error("Stored workspace path is missing"));
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      await expect.element(page.getByText("Could not open files", { exact: true })).toBeVisible();
     } finally {
       await mounted.cleanup();
     }
@@ -4113,6 +4180,306 @@ describe("ChatView timeline estimator parity (full app)", () => {
         (pathname) => pathname === "/",
         "Archiving the active Quick Chat should return to the thread picker.",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens Quick Chat deliverables with both editors and the file manager", async () => {
+    localStorage.setItem("t3code:last-editor", JSON.stringify("vscode"));
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQuickChat(),
+      initialPath: serverThreadPath(QUICK_CHAT_THREAD_ID),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode", "file-manager"],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const openButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Open",
+          ) as HTMLButtonElement | null,
+        "Unable to find Open button.",
+      );
+      openButton.click();
+
+      const menuButton = await waitForElement(
+        () => document.querySelector('button[aria-label="Copy options"]'),
+        "Unable to find Open picker button.",
+      );
+      (menuButton as HTMLButtonElement).click();
+      const filesItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll('[data-slot="menu-item"]')).find((item) =>
+            item.textContent?.includes("Files"),
+          ) ?? null,
+        "Unable to find Files menu item.",
+      );
+      (filesItem as HTMLElement).click();
+
+      await vi.waitFor(
+        () => {
+          const openRequests = wsRequests.filter(
+            (request) => request._tag === WS_METHODS.shellOpenInEditor,
+          );
+          expect(openRequests).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                cwd: "/tmp/t3-home/quick-chats/thread-quick-chat/study-buddy-deliverables",
+                editor: "vscode",
+                workspaceKind: "quick-chat",
+              }),
+              expect.objectContaining({
+                cwd: "/tmp/t3-home/quick-chats/thread-quick-chat/study-buddy-deliverables",
+                editor: "file-manager",
+                workspaceKind: "quick-chat",
+              }),
+            ]),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("cleans up an untouched unprompted Quick Chat before creating the next one", async () => {
+    setQuickChatDraftReservation();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithUnpromptedQuickChat(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId("quick-chat-button").click();
+
+      await vi.waitFor(
+        () => {
+          const projectCommands = wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              (request.type === "project.delete" || request.type === "project.create"),
+          );
+          expect(projectCommands[0]).toMatchObject({
+            type: "project.delete",
+            projectId: QUICK_CHAT_PROJECT_ID,
+          });
+          expect(projectCommands[1]).toMatchObject({
+            type: "project.create",
+            projectKind: "quick-chat",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not infer that an archived-only Quick Chat project is disposable", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithUnpromptedQuickChat(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId("quick-chat-button").click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "project.create" &&
+              request.projectKind === "quick-chat",
+          ),
+        ).toBe(true);
+      });
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "project.delete" &&
+            request.projectId === QUICK_CHAT_PROJECT_ID,
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("continues creating a Quick Chat when the server refuses stale-draft cleanup", async () => {
+    setQuickChatDraftReservation();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithUnpromptedQuickChat(),
+      resolveRpc: (body) => {
+        if (
+          body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          body.type === "project.delete"
+        ) {
+          return Promise.reject(new Error("Project has a server-authoritative archived thread"));
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId("quick-chat-button").click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "project.delete" &&
+              request.projectId === QUICK_CHAT_PROJECT_ID,
+          ),
+        ).toBe(true);
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "project.create" &&
+              request.projectKind === "quick-chat",
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates only one Quick Chat for repeated clicks in the same tick", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-single-flight" as MessageId,
+        targetText: "single flight",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const button = await page.getByTestId("quick-chat-button").element();
+      (button as HTMLButtonElement).click();
+      (button as HTMLButtonElement).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "project.create" &&
+              request.projectKind === "quick-chat",
+          ),
+        ).toHaveLength(1);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not clean up a Quick Chat while its first message is being promoted", async () => {
+    setQuickChatDraftReservation("Keep this first message");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithUnpromptedQuickChat(),
+      initialPath: `/draft/${QUICK_CHAT_DRAFT_ID}`,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+      const quickChatButton = await page.getByTestId("quick-chat-button").element();
+      (quickChatButton as HTMLButtonElement).click();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start" &&
+              request.threadId === QUICK_CHAT_THREAD_ID,
+          ),
+        ).toBe(true);
+      });
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "project.delete" &&
+            request.projectId === QUICK_CHAT_PROJECT_ID,
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a prompted text-only Quick Chat when creating the next one", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQuickChat(),
+      initialPath: serverThreadPath(QUICK_CHAT_THREAD_ID),
+    });
+
+    try {
+      await page.getByTestId("quick-chat-button").click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "project.create" &&
+                request.projectKind === "quick-chat",
+            ),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "project.delete" &&
+            request.projectId === QUICK_CHAT_PROJECT_ID,
+        ),
+      ).toBe(false);
     } finally {
       await mounted.cleanup();
     }
@@ -6244,12 +6611,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>('[data-chat-composer-footer="true"]'),
         "Unable to find composer footer.",
       );
-      const initialModelPicker = await waitForElement(
-        findComposerProviderModelPicker,
-        "Unable to find provider model picker.",
+      const initialProfilePicker = await waitForElement(
+        findComposerExecutionProfilePicker,
+        "Unable to find execution profile picker.",
       );
-      const initialModelPickerOffset =
-        initialModelPicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+      const initialProfilePickerOffset =
+        initialProfilePicker.getBoundingClientRect().left - footer.getBoundingClientRect().left;
       const initialImplementButton = await waitForButtonByText("Implement");
       const initialImplementWidth = initialImplementButton.getBoundingClientRect().width;
 
@@ -6276,18 +6643,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           const implementRect = implementButton.getBoundingClientRect();
           const implementActionsRect = implementActionsButton.getBoundingClientRect();
-          const compactModelPicker = findComposerProviderModelPicker();
-          expect(compactModelPicker).toBeTruthy();
+          const compactProfilePicker = findComposerExecutionProfilePicker();
+          expect(compactProfilePicker).toBeTruthy();
 
-          const compactModelPickerOffset =
-            compactModelPicker!.getBoundingClientRect().left - footer.getBoundingClientRect().left;
+          const compactProfilePickerOffset =
+            compactProfilePicker!.getBoundingClientRect().left -
+            footer.getBoundingClientRect().left;
 
           expect(Math.abs(implementRect.right - implementActionsRect.left)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.top - implementActionsRect.top)).toBeLessThanOrEqual(1);
           expect(Math.abs(implementRect.width - initialImplementWidth)).toBeLessThanOrEqual(1);
-          expect(Math.abs(compactModelPickerOffset - initialModelPickerOffset)).toBeLessThanOrEqual(
-            1,
-          );
+          expect(
+            Math.abs(compactProfilePickerOffset - initialProfilePickerOffset),
+          ).toBeLessThanOrEqual(1);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -6409,7 +6777,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("opens the model picker when selecting /model", async () => {
+  it("opens the execution profile picker when selecting /model", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -6426,8 +6794,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await menuItem.click();
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-        expect(findComposerProviderModelPicker()?.textContent).not.toContain("/model");
+        const profileList = document.querySelector(".execution-profile-picker-list");
+        expect(profileList).not.toBeNull();
+        expect(profileList?.textContent).toContain("Balanced");
+        expect(findComposerExecutionProfilePicker()?.textContent).not.toContain("/model");
       });
 
       await new Promise<void>((resolve) => {
@@ -6436,19 +6806,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         });
       });
 
-      await vi.waitFor(() => {
-        const searchInput = document.querySelector<HTMLInputElement>(
-          'input[placeholder="Search models..."]',
-        );
-        expect(searchInput).not.toBeNull();
-        expect(document.activeElement).toBe(searchInput);
-      });
+      expect(document.activeElement?.closest('[data-slot="select-item"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("toggles the model picker and shows jump keys immediately from the shortcut", async () => {
+  it("toggles the execution profile picker and shows jump keys immediately from the shortcut", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-model-picker-shortcut-target" as MessageId,
       targetText: "model picker shortcut thread",
@@ -6575,14 +6939,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
+        expect(document.querySelector(".execution-profile-picker-list")).not.toBeNull();
       });
 
       const jumpLabel = isMacPlatform(navigator.platform) ? "⌃1" : "Ctrl+1";
       await vi.waitFor(() => {
         expect(
           Array.from(
-            document.querySelectorAll<HTMLElement>('.model-picker-list [data-slot="kbd"]'),
+            document.querySelectorAll<HTMLElement>(
+              '.execution-profile-picker-list [data-slot="kbd"]',
+            ),
           ).some((element) => element.textContent?.trim() === jumpLabel),
         ).toBe(true);
       });
@@ -6599,7 +6965,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).toBeNull();
+        expect(findComposerExecutionProfilePicker()?.getAttribute("aria-expanded")).toBe("false");
       });
     } finally {
       releaseModShortcut("Control");

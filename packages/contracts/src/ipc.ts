@@ -32,6 +32,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
+import type { ProjectKind } from "./orchestration.ts";
 import type {
   ProviderSetupCancelInput,
   ProviderSetupCancelResult,
@@ -532,7 +533,7 @@ export interface LocalApi {
     confirm: (message: string) => Promise<boolean>;
   };
   shell: {
-    openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openInEditor: (cwd: string, editor: EditorId, workspaceKind?: ProjectKind) => Promise<void>;
     openExternal: (url: string) => Promise<void>;
   };
   contextMenu: {

@@ -1,11 +1,21 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ResolvedKeybindingsConfig,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import {
+  STUDY_BUDDY_BUILT_IN_PROFILES,
+  studyBuddyCoordinatorOptions,
+} from "@t3tools/shared/studyBuddyProfiles";
 import { page, userEvent } from "vite-plus/test/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { StudyBuddyProfilePicker } from "./StudyBuddyProfilePicker";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   deriveProviderInstanceEntries,
@@ -18,6 +28,10 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { __resetLocalApiForTests } from "../../localApi";
+
+vi.mock("../../providerAvailability", () => ({
+  isProviderDriverAvailable: () => true,
+}));
 
 // Mock the environments/runtime module to provide a mock primary environment connection
 vi.mock("../../environments/runtime", () => {
@@ -340,7 +354,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         expect(text).not.toContain("Codex");
         expect(text).toContain("Claude");
         expect(text).toContain("Claude Opus 4.6");
@@ -350,7 +364,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows favorites first in the provider sidebar", async () => {
+  it("keeps configured providers ahead of favorites in the provider sidebar", async () => {
     const mounted = await mountPicker({
       activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
@@ -362,9 +376,9 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         expect(getSidebarProviderOrder().slice(0, 3)).toEqual([
-          "favorites",
           "codex",
           "claudeAgent",
+          "favorites",
         ]);
       });
     } finally {
@@ -384,7 +398,7 @@ describe("ProviderModelPicker", () => {
 
       // Start with Claude models visible
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         expect(text).not.toContain("GPT-5 Codex");
         expect(text).toContain("Claude Opus 4.6");
       });
@@ -483,7 +497,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         // Should show locked provider label
         expect(text).toContain("Claude");
         expect(getVisibleModelNames()).toEqual([
@@ -683,7 +697,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         expect(text).toContain("Claude Opus 4.6");
         expect(text).not.toContain("GPT-5 Codex");
       });
@@ -693,7 +707,7 @@ describe("ProviderModelPicker", () => {
       await searchInput.fill("claude");
 
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         expect(text).toContain("Claude Opus 4.6");
         expect(text).not.toContain("GPT-5 Codex");
       });
@@ -804,7 +818,7 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        const text = document.body.textContent ?? "";
+        const text = getModelPickerListText();
         expect(text).toContain("Claude Opus 4.6");
         expect(text).not.toContain("GPT-5 Codex");
       });
@@ -1221,6 +1235,65 @@ describe("ProviderModelPicker", () => {
       expect(button.className).toContain("bg-popover");
     } finally {
       await mounted.cleanup();
+    }
+  });
+});
+
+describe("StudyBuddyProfilePicker", () => {
+  it("uses the existing model-picker jump keybindings to select execution profiles", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const onCoordinatorChange = vi.fn();
+    const onOpenChange = vi.fn();
+    const keybindings = [
+      {
+        command: "modelPicker.jump.1",
+        shortcut: {
+          key: "1",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        whenAst: { type: "identifier", name: "modelPickerOpen" },
+      },
+    ] satisfies ResolvedKeybindingsConfig;
+    const screen = await render(
+      <StudyBuddyProfilePicker
+        activeProfile={STUDY_BUDDY_BUILT_IN_PROFILES[1]!}
+        compact={false}
+        keybindings={keybindings}
+        open
+        terminalOpen={false}
+        onCoordinatorChange={onCoordinatorChange}
+        onOpenChange={onOpenChange}
+      />,
+      { container: host },
+    );
+
+    try {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "1",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      const fastProfile = STUDY_BUDDY_BUILT_IN_PROFILES[0]!;
+      await vi.waitFor(() => {
+        expect(onCoordinatorChange).toHaveBeenCalledWith(
+          fastProfile.roles.coordinator.instanceId,
+          fastProfile.roles.coordinator.model,
+          studyBuddyCoordinatorOptions(fastProfile),
+        );
+        expect(onOpenChange).toHaveBeenCalledWith(false);
+      });
+    } finally {
+      await screen.unmount();
+      host.remove();
     }
   });
 });
