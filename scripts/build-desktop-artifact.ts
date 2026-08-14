@@ -23,10 +23,15 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { pathToFileURL } from "node:url";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const STUDY_BUDDY_APP_ID = "com.studybuddy.t3code";
 const STUDY_BUDDY_EXECUTABLE_NAME = "study-buddy-t3code";
+
+export function isDirectExecution(moduleUrl: string, entryPath: string | undefined): boolean {
+  return entryPath !== undefined && pathToFileURL(entryPath).href === moduleUrl;
+}
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
@@ -1121,7 +1126,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
 
 const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
 
-if (import.meta.main) {
+if (import.meta.main || isDirectExecution(import.meta.url, process.argv[1])) {
   Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),
