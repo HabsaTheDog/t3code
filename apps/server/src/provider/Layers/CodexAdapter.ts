@@ -55,6 +55,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { captureStudyBuddyEmailApprovalRequest } from "../../custom-skills/sources/emailSendApprovals.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -85,6 +86,8 @@ export interface CodexAdapterLiveOptions {
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Server-side evidence augmentation. Never pass credentials through this hook. */
+  readonly augmentTurnInput?: (input: string) => Promise<string>;
 }
 
 interface CodexAdapterSessionContext {
@@ -613,6 +616,7 @@ function mapToRuntimeEvents(
       if (!questions) {
         return [];
       }
+      captureStudyBuddyEmailApprovalRequest(String(canonicalThreadId), event.requestId, questions);
       return [
         {
           ...runtimeEventBase(event, canonicalThreadId),
@@ -1622,6 +1626,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
+    const augmentedInput =
+      input.input !== undefined && options?.augmentTurnInput
+        ? yield* Effect.promise(async () => {
+            try {
+              return await options.augmentTurnInput!(input.input!);
+            } catch {
+              return input.input;
+            }
+          })
+        : input.input;
     const reasoningEffort =
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
@@ -1632,7 +1646,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         : undefined;
     return yield* session.runtime
       .sendTurn({
-        ...(input.input !== undefined ? { input: input.input } : {}),
+        ...(augmentedInput !== undefined ? { input: augmentedInput } : {}),
         ...(input.modelSelection?.instanceId === boundInstanceId
           ? { model: input.modelSelection.model }
           : {}),

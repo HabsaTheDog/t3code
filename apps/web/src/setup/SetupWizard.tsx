@@ -3,6 +3,7 @@ import type {
   StudyBuddyConfigurationPatch,
   StudyBuddyConnectionTarget,
   StudyBuddyConnectionTestResult,
+  StudyBuddySourceInventory,
   TelemetryConsentDecision,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
@@ -18,6 +19,7 @@ import {
   GraduationCapIcon,
   LinkIcon,
   LockKeyholeIcon,
+  PlusIcon,
   ShieldCheckIcon,
   WandSparklesIcon,
   WifiIcon,
@@ -50,20 +52,13 @@ import { systemTelemetryRandom } from "../telemetry/types";
 import { registerTelemetrySecret, telemetry } from "../telemetry/runtime";
 import { ProviderSetupStep, type ProviderSetupStepHandle } from "./ProviderSetupStep";
 import { SpeechModelCard } from "../components/speech/SpeechModelCard";
+import { SourceInventory } from "../components/settings/SourceInventory";
 
 export const ONBOARDING_VERSION = 1;
 export const CONSENT_VERSION = 1;
 const SETUP_BRAND_LOGO_SRC = "/logo-highlight.png";
 
-type SetupStepId =
-  | "privacy"
-  | "environment"
-  | "provider"
-  | "voice"
-  | "moodle"
-  | "cis"
-  | "calendar"
-  | "quiz-safety";
+type SetupStepId = "privacy" | "environment" | "provider" | "voice" | "sources" | "quiz-safety";
 
 interface SetupStep {
   id: SetupStepId;
@@ -80,29 +75,25 @@ const ALL_STEPS: readonly SetupStep[] = [
   { id: "environment", label: "Environment", icon: WifiIcon },
   { id: "provider", label: "Codex", icon: BotIcon },
   { id: "voice", label: "Voice input", icon: AudioWaveformIcon },
-  { id: "moodle", label: "Moodle", icon: GraduationCapIcon },
-  { id: "cis", label: "CIS", icon: LockKeyholeIcon },
-  { id: "calendar", label: "Calendar", icon: LinkIcon },
+  { id: "sources", label: "Sources", icon: GraduationCapIcon },
   { id: "quiz-safety", label: "Quiz safety", icon: ShieldCheckIcon },
 ];
 
 function normalizeSetupStepId(stepId: string | null): SetupStepId | null {
   switch (stepId) {
     case "accounts":
-      return "moodle";
-    case "sources":
-      return "cis";
     case "sys":
-      return "cis";
+    case "moodle":
+    case "cis":
+    case "calendar":
+      return "sources";
     case "summary":
       return "quiz-safety";
     case "privacy":
     case "environment":
     case "provider":
     case "voice":
-    case "moodle":
-    case "cis":
-    case "calendar":
+    case "sources":
     case "quiz-safety":
       return stepId;
     default:
@@ -186,9 +177,6 @@ function SetupWizard({
   const [stepSaveError, setStepSaveError] = useState<string | null>(null);
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
-  const [sessionConnectionChecks, setSessionConnectionChecks] = useState<
-    Partial<Record<StudyBuddyConnectionTarget, StudyBuddyConnectionTestResult>>
-  >({});
   const studyConfigurationStepRef = useRef<StepSaveHandle>(null);
   const quizSafetyStepRef = useRef<StepSaveHandle>(null);
   const providerSetupStepRef = useRef<ProviderSetupStepHandle>(null);
@@ -291,7 +279,7 @@ function SetupWizard({
       const currentStepSaved =
         step.id === "provider"
           ? await providerSetupStepRef.current?.save()
-          : step.id === "moodle" || step.id === "cis" || step.id === "calendar"
+          : step.id === "sources"
             ? await studyConfigurationStepRef.current?.save()
             : step.id === "quiz-safety"
               ? await quizSafetyStepRef.current?.save()
@@ -335,7 +323,7 @@ function SetupWizard({
   };
 
   return (
-    <main className="fixed inset-0 z-[100] overflow-hidden bg-background text-foreground">
+    <main className="fixed inset-0 z-40 overflow-hidden bg-background text-foreground">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_14%,color-mix(in_srgb,var(--primary)_14%,transparent),transparent_30%),linear-gradient(125deg,var(--background),color-mix(in_srgb,var(--background)_92%,var(--muted)))]" />
       <div className="relative grid h-full lg:grid-cols-[300px_1fr]">
         <aside className="hidden border-r border-border/70 bg-card/50 p-8 backdrop-blur-xl lg:flex lg:flex-col">
@@ -384,8 +372,7 @@ function SetupWizard({
             })}
           </ol>
           <p className="mt-auto text-xs leading-5 text-muted-foreground">
-            You only need Codex to get started. Moodle, CIS, Calendar, and voice input can all be
-            added later.
+            Only Codex is required. You can add Moodle, websites, calendars, and email now or later.
           </p>
         </aside>
 
@@ -438,39 +425,7 @@ function SetupWizard({
                 <ProviderStep providerSetupStepRef={providerSetupStepRef} />
               ) : null}
               {step.id === "voice" ? <VoiceInputStep /> : null}
-              {step.id === "moodle" ? (
-                <StudyConfigurationStep
-                  key="moodle"
-                  ref={studyConfigurationStepRef}
-                  target="moodle"
-                  connectionCheck={sessionConnectionChecks.moodle ?? null}
-                  onConnectionCheck={(result) =>
-                    setSessionConnectionChecks((current) => ({ ...current, moodle: result }))
-                  }
-                />
-              ) : null}
-              {step.id === "cis" ? (
-                <StudyConfigurationStep
-                  key="cis"
-                  ref={studyConfigurationStepRef}
-                  target="cis"
-                  connectionCheck={sessionConnectionChecks.cis ?? null}
-                  onConnectionCheck={(result) =>
-                    setSessionConnectionChecks((current) => ({ ...current, cis: result }))
-                  }
-                />
-              ) : null}
-              {step.id === "calendar" ? (
-                <StudyConfigurationStep
-                  key="calendar"
-                  ref={studyConfigurationStepRef}
-                  target="calendar"
-                  connectionCheck={sessionConnectionChecks.calendar ?? null}
-                  onConnectionCheck={(result) =>
-                    setSessionConnectionChecks((current) => ({ ...current, calendar: result }))
-                  }
-                />
-              ) : null}
+              {step.id === "sources" ? <SourcesSetupStep ref={studyConfigurationStepRef} /> : null}
               {step.id === "quiz-safety" ? <QuizSafetyStep ref={quizSafetyStepRef} /> : null}
             </div>
           </div>
@@ -775,13 +730,83 @@ function VoiceInputStep() {
   );
 }
 
+const SourcesSetupStep = forwardRef<StepSaveHandle>(function SourcesSetupStep(_props, ref) {
+  const [inventory, setInventory] = useState<StudyBuddySourceInventory | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [addRequest, setAddRequest] = useState(0);
+
+  useImperativeHandle(ref, () => ({ save: async () => true }), []);
+
+  useEffect(() => {
+    void ensureLocalApi()
+      .server.getStudyBuddySourceInventory()
+      .then(setInventory)
+      .catch((cause) =>
+        setLoadError(
+          cause instanceof Error
+            ? cause.message
+            : "We couldn’t load sources on this device. You can finish this later in Settings.",
+        ),
+      );
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <StepIntro
+        title="Add your study sources"
+        description="Choose where Study Buddy can find your courses, schedule, learning materials, and email."
+        icon={GraduationCapIcon}
+      />
+      {loadError ? (
+        <p className="text-sm text-destructive" role="alert">
+          {loadError}
+        </p>
+      ) : null}
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border/60 px-4 py-3 sm:px-5">
+          <div>
+            <h3 className="text-sm font-semibold">Your sources</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Passwords and private links stay on this device. Study Buddy never shows them in chat.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!inventory}
+            onClick={() => setAddRequest((request) => request + 1)}
+          >
+            <PlusIcon className="size-3.5" />
+            Add source
+          </Button>
+        </div>
+        {inventory ? (
+          <SourceInventory
+            inventory={inventory}
+            addRequest={addRequest}
+            onInventoryChange={setInventory}
+          />
+        ) : (
+          <div className="px-5 py-10 text-center text-xs text-muted-foreground">
+            Loading sources…
+          </div>
+        )}
+      </Card>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        You can skip this step and add sources later. Each email account has separate controls for
+        reading, preparing drafts, and asking you before sending.
+      </p>
+    </div>
+  );
+});
+
 interface StudyConfigurationStepProps {
   target: StudyBuddyConnectionTarget;
   connectionCheck: StudyBuddyConnectionTestResult | null;
   onConnectionCheck: (result: StudyBuddyConnectionTestResult) => void;
 }
 
-const StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStepProps>(
+const _StudyConfigurationStep = forwardRef<StepSaveHandle, StudyConfigurationStepProps>(
   function StudyConfigurationStep({ target, connectionCheck, onConnectionCheck }, ref) {
     const settings = useSettings();
     const { updateSettings } = useUpdateSettings();

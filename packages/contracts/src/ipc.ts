@@ -106,6 +106,21 @@ import type {
   StudyBuddyConnectionTestResult,
   StudyBuddyUpdateConfigurationInput,
 } from "./studyBuddy.ts";
+import type {
+  StudyBuddyCreateSourceInput,
+  StudyBuddyDeleteSourceInput,
+  StudyBuddyEmailMessagePage,
+  StudyBuddyListEmailMessagesInput,
+  StudyBuddyReadEmailMessageInput,
+  StudyBuddyReadEmailMessageResult,
+  StudyBuddySearchEmailMessagesInput,
+  StudyBuddySetSourceAuthInput,
+  StudyBuddySourceInventory,
+  StudyBuddySourceTestResult,
+  StudyBuddyTestSourceInput,
+  StudyBuddyUpdateEmailPermissionsInput,
+  StudyBuddyUpdateSourceInput,
+} from "./studyBuddySources.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -590,6 +605,32 @@ export interface LocalApi {
     testStudyBuddyConnection: (
       input: StudyBuddyConnectionTestInput,
     ) => Promise<StudyBuddyConnectionTestResult>;
+    getStudyBuddySourceInventory: () => Promise<StudyBuddySourceInventory>;
+    createStudyBuddySource: (
+      input: StudyBuddyCreateSourceInput,
+    ) => Promise<StudyBuddySourceInventory>;
+    updateStudyBuddySource: (
+      input: StudyBuddyUpdateSourceInput,
+    ) => Promise<StudyBuddySourceInventory>;
+    deleteStudyBuddySource: (
+      input: StudyBuddyDeleteSourceInput,
+    ) => Promise<StudyBuddySourceInventory>;
+    setStudyBuddySourceAuth: (
+      input: StudyBuddySetSourceAuthInput,
+    ) => Promise<StudyBuddySourceInventory>;
+    updateStudyBuddyEmailPermissions: (
+      input: StudyBuddyUpdateEmailPermissionsInput,
+    ) => Promise<StudyBuddySourceInventory>;
+    testStudyBuddySource: (input: StudyBuddyTestSourceInput) => Promise<StudyBuddySourceTestResult>;
+    listStudyBuddyEmailMessages: (
+      input: StudyBuddyListEmailMessagesInput,
+    ) => Promise<StudyBuddyEmailMessagePage>;
+    searchStudyBuddyEmailMessages: (
+      input: StudyBuddySearchEmailMessagesInput,
+    ) => Promise<StudyBuddyEmailMessagePage>;
+    readStudyBuddyEmailMessage: (
+      input: StudyBuddyReadEmailMessageInput,
+    ) => Promise<StudyBuddyReadEmailMessageResult>;
   };
 }
 

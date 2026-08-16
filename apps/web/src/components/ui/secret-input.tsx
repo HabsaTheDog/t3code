@@ -41,7 +41,7 @@ function SecretInput({
 
   return (
     <div
-      className={cn("ph-no-capture flex items-center gap-2 pt-3", className)}
+      className={cn("ph-no-capture flex w-full min-w-0 items-center gap-2", className)}
       data-ph-no-capture={noCapture ? true : undefined}
     >
       <Input
@@ -52,7 +52,7 @@ function SecretInput({
         autoComplete={autoComplete}
         placeholder={placeholder}
         aria-label={label}
-        className={inputClassName}
+        className={cn("min-w-0 flex-1", inputClassName)}
         onChange={(event) => {
           const next = event.currentTarget.value;
           setValue(next);
@@ -68,14 +68,16 @@ function SecretInput({
               variant="outline"
               className="shrink-0"
               disabled={disabled}
-              aria-label={revealed ? `Hide ${label}` : `Reveal ${label}`}
+              aria-label={revealed ? `Hide ${label}` : `Show ${label}`}
               onClick={() => setRevealed((current) => !current)}
             />
           }
         >
           {revealed ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
         </TooltipTrigger>
-        <TooltipPopup side="top">{revealed ? "Hide secret" : "Reveal secret"}</TooltipPopup>
+        <TooltipPopup side="top">
+          {revealed ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+        </TooltipPopup>
       </Tooltip>
     </div>
   );

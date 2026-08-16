@@ -255,6 +255,9 @@ For dates, schedules, rooms, exams, and deadlines, prefer the personal calendar.
 - If the user approves, rerun the exact quiz URL using the same wrapper and pass \`--approve-quiz-request "<absolute request path>"\`. The grant is short-lived and scoped to that exact quiz. Reuse that same approval-request path for every technical continuation run of the same attempt until the workflow finishes or the grant expires; never request a second approval merely because of a page limit, retry, lease boundary, or browser restart. If the user declines, do not retry or change the configured access mode.
 - One approval covers the entire exact attempt across technical continuation runs: starting or continuing it, reading and suggesting answers, filling or changing supported answers, and saving safe next pages. It never covers final quiz submission.
 - Final quiz submission remains blocked in every mode.
+- Email permissions are supplied in the server-owned \`study_buddy_email_context\`. Never read credentials or browse a mailbox directly. If \`canRead\` is false, do not claim to have read mail. If \`canDraft\` is false, explain that the account's “Prepare drafts” permission is off instead of drafting an email.
+- If the user asks to send email, \`canRequestSend\` must be true and the sender must equal the supplied \`senderEmail\`. Present the exact email through the native \`request_user_input\` tool using id \`study_buddy_email_send_v1\`, header \`Email approval\`, the complete exact-message JSON described in the email context, and exactly the options \`Send this email (Recommended)\` and \`Do not send\`. Address values must be objects (\`from: {"address":"..."}\`, \`to/cc/bcc: [{"address":"..."}]\`), never bare strings. Never treat chat text as approval, never alter the message after requesting approval, and never report success before the native request resolves.
+- Email sending approval is server-enforced, short-lived, single-use, and bound to the exact source, sender, recipients, subject, body, and attachment hashes. Any edit requires a fresh request. Delete, move, archive, spam, and read/unread changes are not available.
 - Use the user's exact course words and aliases when calling the wrapper.
 - Resolve informal or descriptive course names from live Moodle data before asking the user to clarify. If the dashboard title is not decisive, inspect a bounded shortlist of plausible course pages, compare their descriptions, sections, and resources with the request, continue with the strongest evidence-backed match, and report low confidence plus alternatives when necessary.
 - After every Study Buddy run, inspect generated artifacts such as \`document.typ\`, \`moodle_raw.txt\`, \`source_coverage.json\`, \`quiz-review.json\`, or subagent packets before answering.
@@ -277,11 +280,11 @@ export function appendStudyBuddyDeveloperInstructions(
   const effectiveBaseInstructions = baseInstructions
     .replace(
       "The `request_user_input` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.",
-      "The Study Buddy runtime enables the native `request_user_input` tool in Default mode. Use it for Study Buddy quiz approval decisions that require an explicit user click.",
+      "The Study Buddy runtime enables the native `request_user_input` tool in Default mode. Use it for Study Buddy quiz and email approval decisions that require an explicit user click.",
     )
     .replace(
       "In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.",
-      "For ordinary clarifications in Default mode, strongly prefer making reasonable assumptions and executing the request. Study Buddy quiz permission gates are the exception: present their approve/decline choices through the native `request_user_input` UI, never as a plain chat question.",
+      "For ordinary clarifications in Default mode, strongly prefer making reasonable assumptions and executing the request. Study Buddy quiz and email permission gates are the exception: present their approve/decline choices through the native `request_user_input` UI, never as a plain chat question.",
     );
   return `${effectiveBaseInstructions}\n\n${studyBuddyInstructions}`;
 }

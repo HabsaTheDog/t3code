@@ -12,6 +12,7 @@ const {
   flushMock,
   getDurableState,
   getStudyBuddyConfigurationMock,
+  getStudyBuddySourceInventoryMock,
   updateStudyBuddyConfigurationMock,
   testStudyBuddyConnectionMock,
   randomUuidMock,
@@ -76,6 +77,13 @@ const {
     },
     flushMock: vi.fn(async () => undefined),
     getStudyBuddyConfigurationMock: vi.fn(async () => studyBuddyConfiguration),
+    getStudyBuddySourceInventoryMock: vi.fn(async () => ({
+      version: 1,
+      revision: 0,
+      adapters: [],
+      connections: [],
+      sources: [],
+    })),
     updateStudyBuddyConfigurationMock: vi.fn(
       async ({ patch }: { patch: Record<string, unknown> }) => {
         if ("moodleUsername" in patch)
@@ -156,6 +164,49 @@ vi.mock("~/localApi", () => {
   const api = {
     server: {
       getStudyBuddyConfiguration: getStudyBuddyConfigurationMock,
+      getStudyBuddySourceInventory: getStudyBuddySourceInventoryMock,
+      createStudyBuddySource: async () => ({
+        version: 1,
+        revision: 0,
+        adapters: [],
+        connections: [],
+        sources: [],
+      }),
+      updateStudyBuddySource: async () => ({
+        version: 1,
+        revision: 0,
+        adapters: [],
+        connections: [],
+        sources: [],
+      }),
+      deleteStudyBuddySource: async () => ({
+        version: 1,
+        revision: 0,
+        adapters: [],
+        connections: [],
+        sources: [],
+      }),
+      setStudyBuddySourceAuth: async () => ({
+        version: 1,
+        revision: 0,
+        adapters: [],
+        connections: [],
+        sources: [],
+      }),
+      updateStudyBuddyEmailPermissions: async () => ({
+        version: 1,
+        revision: 0,
+        adapters: [],
+        connections: [],
+        sources: [],
+      }),
+      testStudyBuddySource: async ({ sourceId }: { sourceId: string }) => ({
+        sourceId,
+        status: "success",
+        code: "ok",
+        message: "Connected",
+        checkedAt: "2026-01-01T00:00:00.000Z",
+      }),
       updateStudyBuddyConfiguration: updateStudyBuddyConfigurationMock,
       testStudyBuddyConnection: testStudyBuddyConnectionMock,
       getProviderSetupCapabilities: async () => [],
@@ -262,6 +313,7 @@ describe.sequential("first-run privacy and setup", () => {
     randomUuidMock.mockClear();
     captureMock.mockClear();
     getStudyBuddyConfigurationMock.mockClear();
+    getStudyBuddySourceInventoryMock.mockClear();
     updateStudyBuddyConfigurationMock.mockClear();
     testStudyBuddyConnectionMock.mockClear();
     getDurableState().calls.length = 0;
@@ -344,7 +396,7 @@ describe.sequential("first-run privacy and setup", () => {
     await screen.unmount();
   });
 
-  it.sequential("checks Moodle inline and only advances when continuing", async () => {
+  it.sequential("maps legacy source steps into the generalized Sources step", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -355,71 +407,24 @@ describe.sequential("first-run privacy and setup", () => {
     const screen = await renderSetup();
 
     await expect
-      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .element(page.getByRole("heading", { name: "Sources", level: 1 }))
       .toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle website")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle username")).toBeInTheDocument();
-    await expect
-      .element(page.getByLabelText("Moodle password", { exact: true }))
-      .toBeInTheDocument();
-
-    await page.getByLabelText("Moodle website").fill("https://moodle.example/");
-    await page.getByLabelText("Moodle username").fill("student123");
-    await page.getByLabelText("Moodle password", { exact: true }).fill("secret");
-    await page.getByRole("button", { name: "Check connection" }).click();
-
-    await vi.waitFor(() => {
-      expect(updateStudyBuddyConfigurationMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          patch: expect.objectContaining({
-            moodleUsername: "student123",
-            moodleDashboardUrl: "https://moodle.example/",
-            moodlePassword: expect.objectContaining({
-              operation: "set",
-              value: "secret",
-            }),
-          }),
-        }),
-      );
-    });
-    await vi.waitFor(() => {
-      expect(testStudyBuddyConnectionMock).toHaveBeenCalledWith({
-        target: "moodle",
-      });
-      expect(updateSettingsMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          studyBuddyConnectionChecks: expect.objectContaining({
-            moodle: expect.objectContaining({
-              status: "success",
-              message: "Connection successful",
-            }),
-          }),
-        }),
-      );
-    });
-    await expect.element(page.getByText("Connection successful")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Moodle password", { exact: true })).toHaveValue("");
-    await expect
-      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
-      .toBeInTheDocument();
-
-    testStudyBuddyConnectionMock.mockClear();
+    await expect.element(page.getByText("STEP 4 OF 5")).toBeInTheDocument();
+    await expect.element(page.getByText("No sources yet")).toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
-
-    await vi.waitFor(() => {
-      expect(updateStudyBuddyConfigurationMock).toHaveBeenCalledTimes(2);
-    });
-    expect(testStudyBuddyConnectionMock).not.toHaveBeenCalled();
-    await expect.element(page.getByRole("heading", { name: "CIS", level: 1 })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Quiz safety", level: 1 }))
+      .toBeInTheDocument();
 
     await page.getByRole("button", { name: "Back" }).click();
-    await expect.element(page.getByText("Connection successful")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Connection check passed")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Sources", level: 1 }))
+      .toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it.sequential("does not present a result from an earlier setup run as a fresh check", async () => {
+  it.sequential("does not expose legacy connection-check state on the Sources step", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -429,7 +434,7 @@ describe.sequential("first-run privacy and setup", () => {
       studyBuddyConnectionChecks: {
         moodle: {
           target: "moodle",
-          message: "Moodle login and page reachability succeeded.",
+          message: "Moodle is connected.",
           status: "success",
           code: "ok",
           checkedAt: "2026-01-01T00:00:00.000Z",
@@ -438,15 +443,9 @@ describe.sequential("first-run privacy and setup", () => {
     });
     const screen = await renderSetup();
 
+    await expect.element(page.getByText("Moodle is connected.")).not.toBeInTheDocument();
     await expect
-      .element(page.getByText("Moodle login and page reachability succeeded."))
-      .not.toBeInTheDocument();
-    await expect.element(page.getByLabelText("Connection check passed")).not.toBeInTheDocument();
-    await expect
-      .element(page.getByText("Check the connection to make sure everything works."))
-      .toBeInTheDocument();
-    await expect
-      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .element(page.getByRole("heading", { name: "Sources", level: 1 }))
       .toBeInTheDocument();
     expect(testStudyBuddyConnectionMock).not.toHaveBeenCalled();
 
@@ -524,7 +523,7 @@ describe.sequential("first-run privacy and setup", () => {
       .toBeInTheDocument();
     await page.getByRole("button", { name: "Skip" }).click();
     await expect
-      .element(page.getByRole("heading", { name: "Moodle", level: 1 }))
+      .element(page.getByRole("heading", { name: "Sources", level: 1 }))
       .toBeInTheDocument();
     await resumed.unmount();
 
@@ -564,7 +563,7 @@ describe.sequential("first-run privacy and setup", () => {
     await expect
       .element(page.getByRole("heading", { name: "Quiz safety", level: 1 }))
       .toBeInTheDocument();
-    await expect.element(page.getByText("Step 7 of 7")).toBeInTheDocument();
+    await expect.element(page.getByText("Step 5 of 5")).toBeInTheDocument();
     await expect
       .element(
         page.getByRole("heading", {

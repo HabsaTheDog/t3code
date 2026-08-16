@@ -46,6 +46,11 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { prepareStudyBuddyWorkspace } from "../../workspace/prepareStudyBuddyWorkspace.ts";
+import {
+  captureStudyBuddyEmailApprovalActivity,
+  resolveStudyBuddyEmailApprovalResponse,
+  STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID,
+} from "../../custom-skills/sources/emailSendApprovals.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -934,11 +939,62 @@ const make = Effect.gen(function* () {
         });
       }
 
+      const emailApproval = yield* Effect.promise(async () => {
+        try {
+          const persistedRequest = thread.activities
+            .toReversed()
+            .find((activity) => activity.kind === "user-input.requested");
+          if (persistedRequest) {
+            captureStudyBuddyEmailApprovalActivity(
+              String(event.payload.threadId),
+              String(event.payload.requestId),
+              persistedRequest.payload,
+            );
+          }
+          const result = await resolveStudyBuddyEmailApprovalResponse(
+            String(event.payload.threadId),
+            String(event.payload.requestId),
+            event.payload.answers,
+          );
+          return { ...result, failed: false as const };
+        } catch (cause) {
+          return {
+            handled: true,
+            sent: false,
+            failed: true as const,
+            detail: cause instanceof Error ? cause.message : String(cause),
+          };
+        }
+      });
+      if (emailApproval.failed) {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.user-input.respond.failed",
+          summary: "Email was not sent",
+          detail: emailApproval.detail,
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          requestId: event.payload.requestId,
+        });
+      }
+      const providerAnswers = emailApproval.failed
+        ? {
+            ...event.payload.answers,
+            [STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID]: "Do not send",
+          }
+        : emailApproval.handled && emailApproval.sent
+          ? {
+              ...event.payload.answers,
+              [STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID]:
+                "Email sent and verified by the Study Buddy server",
+            }
+          : event.payload.answers;
+
       yield* providerService
         .respondToUserInput({
           threadId: event.payload.threadId,
           requestId: event.payload.requestId,
-          answers: event.payload.answers,
+          answers: providerAnswers,
         })
         .pipe(
           Effect.catchCause((cause) =>

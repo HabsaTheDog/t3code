@@ -42,7 +42,7 @@ const loginCases: ReadonlyArray<{
     values: {
       CIS_USERNAME: "student",
       CIS_PASSWORD: "cis-secret",
-      CIS_URLS: "https://user:pass@cis.example/cis.php/?token=private",
+      CIS_URLS: "https://user:pass@cis.example/?token=private",
     },
     expectedUrl: "https://cis.example/cis.php/",
   },
@@ -68,14 +68,21 @@ describe("Study Buddy connection tests", () => {
         target: input.target,
         status: "success",
         code: "ok",
-        message: expect.stringContaining("succeeded"),
+        message: `${input.target === "moodle" ? "Moodle" : "CIS"} is connected.`,
         checkedAt,
       });
       const loginConfig = ensureLogin.mock.calls[0]?.[1];
       expect(loginConfig).toMatchObject({
         targetUrl: input.expectedUrl,
-        requireCredentialSubmission: true,
+        requireCredentialSubmission: input.target === "moodle",
       });
+      if (input.target === "cis") {
+        expect(browser.newPage).toHaveBeenLastCalledWith({
+          httpCredentials: { username: "student", password: "cis-secret" },
+        });
+      } else {
+        expect(browser.newPage).toHaveBeenLastCalledWith();
+      }
       expect(loginConfig?.resolveUsername()).toBe("student");
       expect(loginConfig?.allowedOrigins).toEqual(new Set([new URL(input.expectedUrl).origin]));
       expect(JSON.stringify(result)).not.toContain("secret");

@@ -1108,6 +1108,69 @@ function createSnapshotWithQuizPermission(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithEmailPermission(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithPendingUserInput();
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: thread.activities.map((activity) =>
+              activity.kind === "user-input.requested"
+                ? {
+                    ...activity,
+                    payload: {
+                      requestId: "req-browser-email-permission",
+                      questions: [
+                        {
+                          id: "study_buddy_email_send_v1",
+                          header: "Email approval",
+                          question: JSON.stringify({
+                            version: 1,
+                            owner: "study-buddy",
+                            action: "send_email",
+                            sourceId: "source-university-mail",
+                            from: {
+                              name: "Student",
+                              address: "student@example.edu",
+                            },
+                            to: [
+                              {
+                                name: "Study Office",
+                                address: "office@example.edu",
+                              },
+                            ],
+                            cc: [{ address: "tutor@example.edu" }],
+                            bcc: [],
+                            subject: "Question about the lab room",
+                            bodyText:
+                              "Hello,\n\nCould you confirm which room we should use?\n\nThank you",
+                            attachments: [],
+                            expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+                          }),
+                          options: [
+                            {
+                              label: "Send this email (Recommended)",
+                              description: "Send this exact email once.",
+                            },
+                            {
+                              label: "Do not send",
+                              description: "Nothing will be sent.",
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  }
+                : activity,
+            ),
+          }
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithPlanFollowUpPrompt(options?: {
   modelSelection?: { instanceId: ProviderInstanceId; model: string };
   planMarkdown?: string;
@@ -1637,18 +1700,6 @@ async function expectComposerActionsContained(): Promise<void> {
       }
     },
     { timeout: 8_000, interval: 16 },
-  );
-}
-
-async function waitForInteractionModeButton(
-  expectedLabel: "Build" | "Plan",
-): Promise<HTMLButtonElement> {
-  return waitForElement(
-    () =>
-      Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === expectedLabel,
-      ) as HTMLButtonElement | null,
-    `Unable to find ${expectedLabel} interaction mode button.`,
   );
 }
 
@@ -3370,7 +3421,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
+  it("keeps Build and Plan controls out of the composer toolbar", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -3380,56 +3431,35 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.title).toContain("enter plan mode");
-
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
       await waitForLayout();
-
-      expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
-
-      const composerEditor = await waitForComposerEditor();
-      composerEditor.focus();
-      composerEditor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
+      const footer = document.querySelector('[data-chat-composer-footer="true"]');
+      expect(footer).toBeTruthy();
+      const buttonLabels = Array.from(footer?.querySelectorAll("button") ?? []).map((button) =>
+        button.textContent?.trim(),
       );
+      expect(buttonLabels).not.toContain("Build");
+      expect(buttonLabels).not.toContain("Plan");
 
-      await vi.waitFor(
-        async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
-            "return to normal build mode",
-          );
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-
-      composerEditor.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Tab",
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-
-      await vi.waitFor(
-        async () => {
-          expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
+      const runtimeControl = footer?.querySelector('[aria-label="Runtime mode"]');
+      const emailControl = footer?.querySelector('[aria-label="Email access permissions"]');
+      const quizControl = footer?.querySelector('[aria-label="Quiz access mode"]');
+      expect(runtimeControl).toBeTruthy();
+      expect(emailControl).toBeTruthy();
+      expect(quizControl).toBeTruthy();
+      if (!runtimeControl || !emailControl || !quizControl) {
+        throw new Error("Composer permission controls were not rendered.");
+      }
+      expect(
+        Boolean(
+          runtimeControl.compareDocumentPosition(emailControl) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+      expect(
+        Boolean(
+          emailControl.compareDocumentPosition(quizControl) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ),
+      ).toBe(true);
+      expect(emailControl.querySelectorAll("svg")).toHaveLength(2);
     } finally {
       await mounted.cleanup();
     }
@@ -6538,6 +6568,59 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(dispatchRequest).toMatchObject({
             requestId: "req-browser-quiz-permission",
             answers: { study_buddy_quiz_permission_v1: "Work on quiz" },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders exact email approval in the native chat card and submits one clear choice", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithEmailPermission(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const permissionCard = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-study-buddy-email-permission="true"]'),
+        "Unable to find Study Buddy email permission card.",
+      );
+      expect(permissionCard.textContent).toContain("This exact email only");
+      expect(permissionCard.textContent).toContain("Student <student@example.edu>");
+      expect(permissionCard.textContent).toContain("Study Office <office@example.edu>");
+      expect(permissionCard.textContent).toContain("tutor@example.edu");
+      expect(permissionCard.textContent).toContain("Question about the lab room");
+      expect(permissionCard.textContent).toContain("Could you confirm which room we should use?");
+      expect(permissionCard.textContent).toContain("Approval can be used once");
+      expect(document.querySelector('[data-chat-composer-footer="true"]')).toBeNull();
+
+      const declineButton = await waitForButtonContainingText("Do not send");
+      declineButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          ) as
+            | {
+                requestId?: string;
+                answers?: Record<string, unknown>;
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            requestId: "req-browser-email-permission",
+            answers: { study_buddy_email_send_v1: "Do not send" },
           });
         },
         { timeout: 8_000, interval: 16 },

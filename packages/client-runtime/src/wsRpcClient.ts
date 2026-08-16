@@ -8,6 +8,14 @@ import {
   type RelayClientStatus,
   type ServerSettingsPatch,
   type StudyBuddyUpdateConfigurationInput,
+  type StudyBuddyCreateSourceInput,
+  type StudyBuddyDeleteSourceInput,
+  type StudyBuddyListEmailMessagesInput,
+  type StudyBuddyReadEmailMessageInput,
+  type StudyBuddySearchEmailMessagesInput,
+  type StudyBuddySetSourceAuthInput,
+  type StudyBuddyUpdateEmailPermissionsInput,
+  type StudyBuddyUpdateSourceInput,
   type VcsStatusResult,
   type VcsStatusStreamEvent,
   WS_METHODS,
@@ -174,6 +182,34 @@ export interface WsRpcClient {
     readonly testStudyBuddyConnection: RpcUnaryMethod<
       typeof WS_METHODS.serverTestStudyBuddyConnection
     >;
+    readonly getStudyBuddySourceInventory: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetStudyBuddySourceInventory
+    >;
+    readonly createStudyBuddySource: (
+      input: StudyBuddyCreateSourceInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverCreateStudyBuddySource>>;
+    readonly updateStudyBuddySource: (
+      input: StudyBuddyUpdateSourceInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateStudyBuddySource>>;
+    readonly deleteStudyBuddySource: (
+      input: StudyBuddyDeleteSourceInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverDeleteStudyBuddySource>>;
+    readonly setStudyBuddySourceAuth: (
+      input: StudyBuddySetSourceAuthInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverSetStudyBuddySourceAuth>>;
+    readonly updateStudyBuddyEmailPermissions: (
+      input: StudyBuddyUpdateEmailPermissionsInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverUpdateStudyBuddyEmailPermissions>>;
+    readonly testStudyBuddySource: RpcUnaryMethod<typeof WS_METHODS.serverTestStudyBuddySource>;
+    readonly listStudyBuddyEmailMessages: (
+      input: StudyBuddyListEmailMessagesInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverListStudyBuddyEmailMessages>>;
+    readonly searchStudyBuddyEmailMessages: (
+      input: StudyBuddySearchEmailMessagesInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverSearchStudyBuddyEmailMessages>>;
+    readonly readStudyBuddyEmailMessage: (
+      input: StudyBuddyReadEmailMessageInput,
+    ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverReadStudyBuddyEmailMessage>>;
   };
   readonly cloud: {
     readonly getRelayClientStatus: RpcUnaryNoArgMethod<typeof WS_METHODS.cloudGetRelayClientStatus>;
@@ -376,6 +412,30 @@ export function createWsRpcClient(
         ),
       testStudyBuddyConnection: (input) =>
         transport.request((client) => client[WS_METHODS.serverTestStudyBuddyConnection](input)),
+      getStudyBuddySourceInventory: () =>
+        transport.request((client) => client[WS_METHODS.serverGetStudyBuddySourceInventory]({})),
+      createStudyBuddySource: (input) =>
+        transport.request((client) => client[WS_METHODS.serverCreateStudyBuddySource](input)),
+      updateStudyBuddySource: (input) =>
+        transport.request((client) => client[WS_METHODS.serverUpdateStudyBuddySource](input)),
+      deleteStudyBuddySource: (input) =>
+        transport.request((client) => client[WS_METHODS.serverDeleteStudyBuddySource](input)),
+      setStudyBuddySourceAuth: (input) =>
+        transport.request((client) => client[WS_METHODS.serverSetStudyBuddySourceAuth](input)),
+      updateStudyBuddyEmailPermissions: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.serverUpdateStudyBuddyEmailPermissions](input),
+        ),
+      testStudyBuddySource: (input) =>
+        transport.request((client) => client[WS_METHODS.serverTestStudyBuddySource](input)),
+      listStudyBuddyEmailMessages: (input) =>
+        transport.request((client) => client[WS_METHODS.serverListStudyBuddyEmailMessages](input)),
+      searchStudyBuddyEmailMessages: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.serverSearchStudyBuddyEmailMessages](input),
+        ),
+      readStudyBuddyEmailMessage: (input) =>
+        transport.request((client) => client[WS_METHODS.serverReadStudyBuddyEmailMessage](input)),
     },
     cloud: {
       getRelayClientStatus: () =>
