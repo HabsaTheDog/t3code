@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-type Theme = "light" | "dark" | "system";
+export type Theme = "study-buddy" | "light" | "dark" | "system";
 type ThemeSnapshot = {
   theme: Theme;
   systemDark: boolean;
@@ -8,8 +8,9 @@ type ThemeSnapshot = {
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
+export const DEFAULT_THEME: Theme = "study-buddy";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
-  theme: "system",
+  theme: DEFAULT_THEME,
   systemDark: false,
 };
 const THEME_COLOR_META_NAME = "theme-color";
@@ -31,11 +32,26 @@ function getSystemDark() {
   return typeof window !== "undefined" && window.matchMedia(MEDIA_QUERY).matches;
 }
 
+export function parseStoredTheme(raw: string | null): Theme {
+  if (raw === "study-buddy" || raw === "light" || raw === "dark" || raw === "system") {
+    return raw;
+  }
+  return DEFAULT_THEME;
+}
+
 function getStored(): Theme {
-  if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.theme;
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw === "light" || raw === "dark" || raw === "system") return raw;
-  return DEFAULT_THEME_SNAPSHOT.theme;
+  if (!hasThemeStorage()) return DEFAULT_THEME;
+  return parseStoredTheme(localStorage.getItem(STORAGE_KEY));
+}
+
+export function resolveTheme(theme: Theme, systemDark: boolean): "light" | "dark" {
+  if (theme === "study-buddy" || theme === "dark") return "dark";
+  if (theme === "light") return "light";
+  return systemDark ? "dark" : "light";
+}
+
+export function resolveDesktopTheme(theme: Theme): "light" | "dark" | "system" {
+  return theme === "study-buddy" ? "dark" : theme;
 }
 
 function ensureThemeColorMetaTag(): HTMLMetaElement {
@@ -92,10 +108,12 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
   }
-  const isDark = theme === "dark" || (theme === "system" && getSystemDark());
+  const isStudyBuddyTheme = theme === "study-buddy";
+  const isDark = resolveTheme(theme, getSystemDark()) === "dark";
+  document.documentElement.classList.toggle("study-buddy-theme", isStudyBuddyTheme);
   document.documentElement.classList.toggle("dark", isDark);
   syncBrowserChromeTheme();
-  syncDesktopTheme(theme);
+  syncDesktopTheme(resolveDesktopTheme(theme));
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     // oxlint-disable-next-line no-unused-expressions
@@ -106,7 +124,7 @@ function applyTheme(theme: Theme, suppressTransitions = false) {
   }
 }
 
-function syncDesktopTheme(theme: Theme) {
+function syncDesktopTheme(theme: "light" | "dark" | "system") {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
   if (!bridge || typeof bridge.setTheme !== "function" || lastDesktopTheme === theme) {
@@ -175,8 +193,7 @@ export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
 
-  const resolvedTheme: "light" | "dark" =
-    theme === "system" ? (snapshot.systemDark ? "dark" : "light") : theme;
+  const resolvedTheme = resolveTheme(theme, snapshot.systemDark);
 
   const setTheme = useCallback((next: Theme) => {
     if (!hasThemeStorage()) return;

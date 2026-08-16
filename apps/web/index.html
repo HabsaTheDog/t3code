@@ -19,11 +19,17 @@
         try {
           const storedTheme = window.localStorage.getItem("t3code:theme");
           const theme =
-            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
+            storedTheme === "study-buddy" ||
+            storedTheme === "light" ||
+            storedTheme === "dark" ||
+            storedTheme === "system"
               ? storedTheme
-              : "system";
+              : "study-buddy";
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const isDark = theme === "dark" || (theme === "system" && prefersDark);
+          const isStudyBuddyTheme = theme === "study-buddy";
+          const isDark =
+            isStudyBuddyTheme || theme === "dark" || (theme === "system" && prefersDark);
+          document.documentElement.classList.toggle("study-buddy-theme", isStudyBuddyTheme);
           document.documentElement.classList.toggle("dark", isDark);
           const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
           document.documentElement.style.backgroundColor = chromeColor;

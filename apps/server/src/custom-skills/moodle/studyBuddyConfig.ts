@@ -85,7 +85,9 @@ export function publicStudyBuddyConfiguration(
     cisUsername: values[CONFIG_KEYS.cisUsername] ?? "",
     cisUrl: publicUrl(firstUrl(values[CONFIG_KEYS.cisUrl]) ?? DEFAULT_CIS_URL),
     cisPasswordConfigured: hasSecret(values[CONFIG_KEYS.cisPassword]),
-    calendarUrl: values[CONFIG_KEYS.calendarUrl] ?? "",
+    // A private iCalendar URL is a bearer credential. Only expose its status;
+    // connection tests and the runtime consume the value inside the server.
+    calendarUrl: "",
     calendarUrlConfigured: hasSecret(values[CONFIG_KEYS.calendarUrl]),
     quiz: {
       accessMode: parseQuizMode(values[CONFIG_KEYS.quizMode]),

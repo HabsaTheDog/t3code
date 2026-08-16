@@ -140,6 +140,22 @@ import {
   StudyBuddyConnectionTestResult,
   StudyBuddyUpdateConfigurationInput,
 } from "./studyBuddy.ts";
+import {
+  StudyBuddyCreateSourceInput,
+  StudyBuddyDeleteSourceInput,
+  StudyBuddyEmailMessagePage,
+  StudyBuddyListEmailMessagesInput,
+  StudyBuddyReadEmailMessageInput,
+  StudyBuddyReadEmailMessageResult,
+  StudyBuddySearchEmailMessagesInput,
+  StudyBuddySetSourceAuthInput,
+  StudyBuddySourceError,
+  StudyBuddySourceInventory,
+  StudyBuddySourceTestResult,
+  StudyBuddyTestSourceInput,
+  StudyBuddyUpdateEmailPermissionsInput,
+  StudyBuddyUpdateSourceInput,
+} from "./studyBuddySources.ts";
 import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
@@ -204,6 +220,16 @@ export const WS_METHODS = {
   serverGetStudyBuddyConfiguration: "server.getStudyBuddyConfiguration",
   serverUpdateStudyBuddyConfiguration: "server.updateStudyBuddyConfiguration",
   serverTestStudyBuddyConnection: "server.testStudyBuddyConnection",
+  serverGetStudyBuddySourceInventory: "server.getStudyBuddySourceInventory",
+  serverCreateStudyBuddySource: "server.createStudyBuddySource",
+  serverUpdateStudyBuddySource: "server.updateStudyBuddySource",
+  serverDeleteStudyBuddySource: "server.deleteStudyBuddySource",
+  serverSetStudyBuddySourceAuth: "server.setStudyBuddySourceAuth",
+  serverUpdateStudyBuddyEmailPermissions: "server.updateStudyBuddyEmailPermissions",
+  serverTestStudyBuddySource: "server.testStudyBuddySource",
+  serverListStudyBuddyEmailMessages: "server.listStudyBuddyEmailMessages",
+  serverSearchStudyBuddyEmailMessages: "server.searchStudyBuddyEmailMessages",
+  serverReadStudyBuddyEmailMessage: "server.readStudyBuddyEmailMessage",
   serverRedactConversationTurn: "server.redactConversationTurn",
 
   // Cloud environment methods
@@ -368,6 +394,84 @@ export const WsServerTestStudyBuddyConnectionRpc = Rpc.make(
     payload: StudyBuddyConnectionTestInput,
     success: StudyBuddyConnectionTestResult,
     error: Schema.Union([StudyBuddyConfigurationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerGetStudyBuddySourceInventoryRpc = Rpc.make(
+  WS_METHODS.serverGetStudyBuddySourceInventory,
+  {
+    payload: Schema.Struct({}),
+    success: StudyBuddySourceInventory,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerCreateStudyBuddySourceRpc = Rpc.make(WS_METHODS.serverCreateStudyBuddySource, {
+  payload: StudyBuddyCreateSourceInput,
+  success: StudyBuddySourceInventory,
+  error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerUpdateStudyBuddySourceRpc = Rpc.make(WS_METHODS.serverUpdateStudyBuddySource, {
+  payload: StudyBuddyUpdateSourceInput,
+  success: StudyBuddySourceInventory,
+  error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerDeleteStudyBuddySourceRpc = Rpc.make(WS_METHODS.serverDeleteStudyBuddySource, {
+  payload: StudyBuddyDeleteSourceInput,
+  success: StudyBuddySourceInventory,
+  error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerSetStudyBuddySourceAuthRpc = Rpc.make(
+  WS_METHODS.serverSetStudyBuddySourceAuth,
+  {
+    payload: StudyBuddySetSourceAuthInput,
+    success: StudyBuddySourceInventory,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUpdateStudyBuddyEmailPermissionsRpc = Rpc.make(
+  WS_METHODS.serverUpdateStudyBuddyEmailPermissions,
+  {
+    payload: StudyBuddyUpdateEmailPermissionsInput,
+    success: StudyBuddySourceInventory,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerTestStudyBuddySourceRpc = Rpc.make(WS_METHODS.serverTestStudyBuddySource, {
+  payload: StudyBuddyTestSourceInput,
+  success: StudyBuddySourceTestResult,
+  error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerListStudyBuddyEmailMessagesRpc = Rpc.make(
+  WS_METHODS.serverListStudyBuddyEmailMessages,
+  {
+    payload: StudyBuddyListEmailMessagesInput,
+    success: StudyBuddyEmailMessagePage,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerSearchStudyBuddyEmailMessagesRpc = Rpc.make(
+  WS_METHODS.serverSearchStudyBuddyEmailMessages,
+  {
+    payload: StudyBuddySearchEmailMessagesInput,
+    success: StudyBuddyEmailMessagePage,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerReadStudyBuddyEmailMessageRpc = Rpc.make(
+  WS_METHODS.serverReadStudyBuddyEmailMessage,
+  {
+    payload: StudyBuddyReadEmailMessageInput,
+    success: StudyBuddyReadEmailMessageResult,
+    error: Schema.Union([StudyBuddySourceError, EnvironmentAuthorizationError]),
   },
 );
 
@@ -681,6 +785,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStudyBuddyConfigurationRpc,
   WsServerUpdateStudyBuddyConfigurationRpc,
   WsServerTestStudyBuddyConnectionRpc,
+  WsServerGetStudyBuddySourceInventoryRpc,
+  WsServerCreateStudyBuddySourceRpc,
+  WsServerUpdateStudyBuddySourceRpc,
+  WsServerDeleteStudyBuddySourceRpc,
+  WsServerSetStudyBuddySourceAuthRpc,
+  WsServerUpdateStudyBuddyEmailPermissionsRpc,
+  WsServerTestStudyBuddySourceRpc,
+  WsServerListStudyBuddyEmailMessagesRpc,
+  WsServerSearchStudyBuddyEmailMessagesRpc,
+  WsServerReadStudyBuddyEmailMessageRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,

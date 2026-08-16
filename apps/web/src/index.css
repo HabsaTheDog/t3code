@@ -148,6 +148,41 @@
   }
 }
 
+/*
+ * The Study Buddy preset is intentionally independent of the host color scheme.
+ * Keep these tokens explicit so browser, desktop, and mobile-web captures resolve
+ * to the same branded navy/gold surface even if the generic dark palette evolves.
+ */
+:root.study-buddy-theme {
+  color-scheme: dark;
+  --background: #10172f;
+  --app-chrome-background: #10172f;
+  --foreground: #f7f8fb;
+  --card: color-mix(in srgb, #10172f 92%, white);
+  --card-foreground: #f7f8fb;
+  --popover: color-mix(in srgb, #10172f 92%, white);
+  --popover-foreground: #f7f8fb;
+  --primary: color-mix(in srgb, #323a61 72%, white);
+  --primary-foreground: var(--color-white);
+  --secondary: color-mix(in srgb, #323a61 18%, transparent);
+  --secondary-foreground: #f7f8fb;
+  --muted: color-mix(in srgb, #323a61 14%, transparent);
+  --muted-foreground: #aeb6cf;
+  --accent: color-mix(in srgb, #dfbb63 16%, transparent);
+  --accent-foreground: #f4d88d;
+  --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+  --border: color-mix(in srgb, #323a61 24%, transparent);
+  --input: color-mix(in srgb, #323a61 28%, transparent);
+  --ring: #dfbb63;
+  --destructive-foreground: var(--color-red-400);
+  --info: color-mix(in srgb, #323a61 72%, white);
+  --info-foreground: #cdd4eb;
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-400);
+  --warning: #dfbb63;
+  --warning-foreground: #f4d88d;
+}
+
 body {
   font-family:
     "DM Sans",

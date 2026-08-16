@@ -199,6 +199,46 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         rpcClient
           ? rpcClient.server.testStudyBuddyConnection(input)
           : Promise.reject(unavailableLocalBackendError()),
+      getStudyBuddySourceInventory: () =>
+        rpcClient
+          ? rpcClient.server.getStudyBuddySourceInventory()
+          : Promise.reject(unavailableLocalBackendError()),
+      createStudyBuddySource: (input) =>
+        rpcClient
+          ? rpcClient.server.createStudyBuddySource(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      updateStudyBuddySource: (input) =>
+        rpcClient
+          ? rpcClient.server.updateStudyBuddySource(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      deleteStudyBuddySource: (input) =>
+        rpcClient
+          ? rpcClient.server.deleteStudyBuddySource(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      setStudyBuddySourceAuth: (input) =>
+        rpcClient
+          ? rpcClient.server.setStudyBuddySourceAuth(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      updateStudyBuddyEmailPermissions: (input) =>
+        rpcClient
+          ? rpcClient.server.updateStudyBuddyEmailPermissions(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      testStudyBuddySource: (input) =>
+        rpcClient
+          ? rpcClient.server.testStudyBuddySource(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      listStudyBuddyEmailMessages: (input) =>
+        rpcClient
+          ? rpcClient.server.listStudyBuddyEmailMessages(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      searchStudyBuddyEmailMessages: (input) =>
+        rpcClient
+          ? rpcClient.server.searchStudyBuddyEmailMessages(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      readStudyBuddyEmailMessage: (input) =>
+        rpcClient
+          ? rpcClient.server.readStudyBuddyEmailMessage(input)
+          : Promise.reject(unavailableLocalBackendError()),
     },
   };
 }

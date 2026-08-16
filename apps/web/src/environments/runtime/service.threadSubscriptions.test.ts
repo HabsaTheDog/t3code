@@ -164,6 +164,16 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       getStudyBuddyConfiguration: vi.fn(),
       updateStudyBuddyConfiguration: vi.fn(),
       testStudyBuddyConnection: vi.fn(),
+      getStudyBuddySourceInventory: vi.fn(),
+      createStudyBuddySource: vi.fn(),
+      updateStudyBuddySource: vi.fn(),
+      deleteStudyBuddySource: vi.fn(),
+      setStudyBuddySourceAuth: vi.fn(),
+      updateStudyBuddyEmailPermissions: vi.fn(),
+      testStudyBuddySource: vi.fn(),
+      listStudyBuddyEmailMessages: vi.fn(),
+      searchStudyBuddyEmailMessages: vi.fn(),
+      readStudyBuddyEmailMessage: vi.fn(),
     },
   };
   return {

@@ -21,7 +21,9 @@ import {
 interface ConnectionTestPage {}
 
 interface ConnectionTestBrowser {
-  readonly newPage: () => Promise<ConnectionTestPage>;
+  readonly newPage: (options?: {
+    readonly httpCredentials?: { readonly username: string; readonly password: string };
+  }) => Promise<ConnectionTestPage>;
   readonly close: () => Promise<void>;
 }
 
@@ -64,7 +66,7 @@ export const testStudyBuddyConnection = (
           }
           const text = await dependencies.fetchCalendar(normalizeCalendarUrl(url));
           dependencies.parseCalendar(text);
-          return success(target, "Calendar HTTPS fetch and iCalendar parse succeeded.", checkedAt);
+          return success(target, "Calendar is connected.", checkedAt);
         }
 
         const isMoodle = target === "moodle";
@@ -73,7 +75,7 @@ export const testStudyBuddyConnection = (
           : firstUrl(stored.values.CIS_URLS) || "https://cis.technikum-wien.at/cis.php/";
         const targetUrl = isMoodle
           ? moodleDashboardUrl(configuredUrl)
-          : sanitizedUrl(configuredUrl);
+          : cisProtectedUrl(configuredUrl);
         const username = isMoodle
           ? stored.values.MOODLE_USERNAME
           : stored.values.CIS_USERNAME || stored.values.MOODLE_USERNAME;
@@ -91,7 +93,12 @@ export const testStudyBuddyConnection = (
 
         const browser = await dependencies.launchBrowser();
         try {
-          const page = await browser.newPage();
+          // CIS protects /cis.php with HTTP Basic auth rather than an HTML
+          // username/password form. Supplying credentials on the browser
+          // context makes the protected response itself the login proof.
+          const page = isMoodle
+            ? await browser.newPage()
+            : await browser.newPage({ httpCredentials: { username, password } });
           await dependencies.ensureLogin(
             page,
             createBrowserLoginConfig({
@@ -102,7 +109,7 @@ export const testStudyBuddyConnection = (
               // This probe launches a brand-new browser without stored cookies.
               // Reachability alone is not proof that the configured credentials
               // work, so require the service to accept an actual login form.
-              requireCredentialSubmission: true,
+              requireCredentialSubmission: isMoodle,
               allowedOrigins: parseAllowedOrigins(
                 stored.values[
                   isMoodle ? "MOODLE_LOGIN_ALLOWED_ORIGINS" : "CIS_LOGIN_ALLOWED_ORIGINS"
@@ -113,11 +120,7 @@ export const testStudyBuddyConnection = (
         } finally {
           await browser.close();
         }
-        return success(
-          target,
-          `${label(target)} login and page reachability succeeded.`,
-          checkedAt,
-        );
+        return success(target, `${label(target)} is connected.`, checkedAt);
       } catch (error) {
         return failure(target, diagnosticCode(error), safeMessage(error, target), checkedAt);
       }
@@ -131,6 +134,14 @@ export const testStudyBuddyConnection = (
 function moodleDashboardUrl(value: string): string {
   const parsed = new URL(sanitizedUrl(value));
   parsed.pathname = "/my/";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function cisProtectedUrl(value: string): string {
+  const parsed = new URL(sanitizedUrl(value));
+  if (!/\/cis\.php(?:\/|$)/i.test(parsed.pathname)) parsed.pathname = "/cis.php/";
   parsed.search = "";
   parsed.hash = "";
   return parsed.toString();
