@@ -262,6 +262,7 @@ interface ResolvedBuildOptions {
 
 interface StagePackageJson {
   readonly name: string;
+  readonly desktopName: string;
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
@@ -714,16 +715,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  const publishConfig = resolveGitHubPublishConfig(updateChannel);
-  if (publishConfig) {
-    buildConfig.publish = [publishConfig];
-  } else if (mockUpdates) {
+  if (mockUpdates) {
     buildConfig.publish = [
       {
         provider: "generic",
         url: resolveMockUpdateServerUrl(mockUpdateServerPort),
       },
     ];
+  } else {
+    const publishConfig = resolveGitHubPublishConfig(updateChannel);
+    if (publishConfig) {
+      buildConfig.publish = [publishConfig];
+    }
   }
 
   if (platform === "mac") {
@@ -748,6 +751,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.linux = {
       target: [target],
       executableName: STUDY_BUDDY_EXECUTABLE_NAME,
+      syncDesktopName: true,
       icon: "icons",
       category: "Development",
       desktop: {
@@ -949,6 +953,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
     name: STUDY_BUDDY_EXECUTABLE_NAME,
+    desktopName: STUDY_BUDDY_EXECUTABLE_NAME,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -1124,7 +1129,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a Study Buddy desktop artifact."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

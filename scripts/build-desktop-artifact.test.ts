@@ -46,6 +46,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const linuxConfig = config.linux as
         | {
             readonly executableName?: string;
+            readonly syncDesktopName?: boolean;
             readonly desktop?: { readonly entry?: { readonly StartupWMClass?: string } };
           }
         | undefined;
@@ -61,6 +62,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         },
       ]);
       assert.equal(linuxConfig?.executableName, "study-buddy-t3code");
+      assert.isTrue(linuxConfig?.syncDesktopName);
       assert.equal(linuxConfig?.desktop?.entry?.StartupWMClass, "study-buddy-t3code");
     }),
   );
@@ -96,6 +98,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           repo: "StudyBuddy",
           releaseType: "prerelease",
           channel: "alpha",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("uses the local generic feed for explicit updater simulations", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.1.0-alpha.1",
+        false,
+        true,
+        34567,
+      );
+      assert.deepStrictEqual(config.publish, [
+        {
+          provider: "generic",
+          url: "http://localhost:34567",
         },
       ]);
     }),
