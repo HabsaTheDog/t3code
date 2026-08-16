@@ -14,7 +14,6 @@ updates:
     exclude-paths:
       # These inherited applications are not installed, built, or shipped by
       # the Study Buddy desktop workspace.
-      - "apps/marketing/**"
       - "apps/mobile/**"
       - "infra/**"
     groups:
