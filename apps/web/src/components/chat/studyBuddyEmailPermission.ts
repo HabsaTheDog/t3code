@@ -83,6 +83,12 @@ export function parseStudyBuddyEmailPermissionQuestion(
   };
 }
 
+export function isStudyBuddyEmailPermissionQuestion(
+  question: UserInputQuestion | null | undefined,
+): boolean {
+  return parseStudyBuddyEmailPermissionQuestion(question) !== null;
+}
+
 function normalizeAddress(value: unknown): { name?: string; address: string } | null {
   const candidate = typeof value === "string" ? { address: value } : value;
   return isAddress(candidate) ? candidate : null;
