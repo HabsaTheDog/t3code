@@ -16,7 +16,7 @@ import {
   resolveDefaultDesktopSettings,
 } from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -93,7 +93,10 @@ function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+  const updateChannel = resolveDefaultDesktopUpdateChannel(input.appVersion);
+  if (updateChannel === "nightly") return "Nightly";
+  if (updateChannel === "beta") return "Beta";
+  return "Alpha";
 }
 
 function resolveDesktopAppBranding(input: {

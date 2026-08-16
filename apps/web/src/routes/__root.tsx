@@ -16,6 +16,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { DesktopUpdateLaunchNotification } from "../components/DesktopUpdateLaunchNotification";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
@@ -161,6 +162,7 @@ function RootRouteView() {
         <RelayClientInstallDialog />
         <SshPasswordPromptDialog />
         <HostedStaticEnvironmentBootstrap />
+        <DesktopUpdateLaunchNotification />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {primaryEnvironmentAuthenticated ? <WebSocketConnectionCoordinator /> : null}

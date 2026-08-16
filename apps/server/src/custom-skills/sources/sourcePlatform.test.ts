@@ -71,6 +71,7 @@ async function harness(options: { webmailRuntime?: StudyBuddyWebmailRuntime } = 
           bodyFingerprint: "fixture",
         },
       }),
+      assertPublicNetworkHost: async () => undefined,
       ...(options.webmailRuntime
         ? { emailBrokerDependencies: { webmailRuntime: options.webmailRuntime } }
         : {}),
@@ -109,6 +110,41 @@ describe("Study Buddy IMAP source configuration", () => {
       "utf8",
     );
     expect(registry).not.toContain("app-password");
+  });
+
+  it("rejects IMAPS endpoints that fail the public-network policy", async () => {
+    const { platform } = await harness();
+    const guardedPlatform = createStudyBuddySourcePlatform(
+      {
+        cwd: "/tmp",
+        stateDir: path.join(temporaryDirectories.at(-1)!, "guarded-state"),
+        secretsDir: path.join(temporaryDirectories.at(-1)!, "guarded-secrets"),
+      } as ServerConfigShape,
+      {
+        get: () => Effect.succeed(null),
+        set: () => Effect.void,
+        create: () => Effect.void,
+        getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+        remove: () => Effect.void,
+      },
+      {
+        assertPublicNetworkHost: async () => {
+          throw new Error("URL resolves to a local or private network address.");
+        },
+      },
+    );
+    void platform;
+
+    await expect(
+      guardedPlatform.createSource({
+        expectedRevision: 0,
+        kind: "email",
+        label: "Unsafe IMAP",
+        url: "imaps://127.0.0.1:993",
+        enabled: true,
+        auth: { operation: "set-password", username: "student", password: "secret" },
+      }),
+    ).rejects.toThrow("local or private network address");
   });
 
   it("profiles an HTTPS webmail URL without putting credentials in the registry", async () => {

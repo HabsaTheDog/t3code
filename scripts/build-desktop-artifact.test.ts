@@ -26,17 +26,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.isFalse(isDirectExecution(import.meta.url, "/tmp/a-different-script.ts"));
   });
 
-  it("resolves the dedicated nightly updater channel from nightly versions", () => {
+  it("resolves stable and prerelease updater channels from semantic versions", () => {
+    assert.equal(resolveDesktopUpdateChannel("0.1.0-alpha.1"), "alpha");
+    assert.equal(resolveDesktopUpdateChannel("0.1.0-beta.2"), "beta");
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
   });
 
-  it("keeps Study Buddy branding for stable builds and switches to nightly for nightly builds", () => {
-    assert.equal(resolveDesktopProductName("0.0.17"), "Study Buddy T3 Code");
-    assert.equal(
-      resolveDesktopProductName("0.0.17-nightly.20260413.42"),
-      "Study Buddy T3 Code (Nightly)",
-    );
+  it("keeps Study Buddy branding and identifies prerelease builds", () => {
+    assert.equal(resolveDesktopProductName("0.0.17"), "Study Buddy");
+    assert.equal(resolveDesktopProductName("0.1.0-alpha.1"), "Study Buddy (Alpha)");
+    assert.equal(resolveDesktopProductName("0.1.0-beta.2"), "Study Buddy (Beta)");
+    assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "Study Buddy (Nightly)");
   });
 
   it.effect("uses Study Buddy-only desktop packaging identity", () =>
@@ -50,7 +51,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         | undefined;
 
       assert.equal(config.appId, "com.studybuddy.t3code");
-      assert.equal(config.artifactName, "Study-Buddy-T3-Code-${version}-${arch}.${ext}");
+      assert.equal(config.artifactName, "Study-Buddy-${version}-${arch}.${ext}");
+      assert.deepStrictEqual(config.publish, [
+        {
+          provider: "github",
+          owner: "HabsaTheDog",
+          repo: "StudyBuddy",
+          releaseType: "release",
+        },
+      ]);
       assert.equal(linuxConfig?.executableName, "study-buddy-t3code");
       assert.equal(linuxConfig?.desktop?.entry?.StartupWMClass, "study-buddy-t3code");
     }),
@@ -69,6 +78,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
   });
+
+  it.effect("publishes alpha metadata to the alpha GitHub prerelease channel", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.1.0-alpha.1",
+        false,
+        false,
+        3000,
+      );
+      assert.deepStrictEqual(config.publish, [
+        {
+          provider: "github",
+          owner: "HabsaTheDog",
+          repo: "StudyBuddy",
+          releaseType: "prerelease",
+          channel: "alpha",
+        },
+      ]);
+    }),
+  );
 
   it("omits bundled workspace packages from staged desktop dependencies", () => {
     assert.deepStrictEqual(

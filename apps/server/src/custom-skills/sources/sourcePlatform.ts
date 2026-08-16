@@ -19,7 +19,11 @@ import type {
   StudyBuddyUpdateEmailPermissionsInput,
   StudyBuddyUpdateSourceInput,
 } from "@t3tools/contracts";
-import { StudyBuddySourceError } from "@t3tools/contracts";
+import {
+  StudyBuddySourceBlock as StudyBuddySourceBlockSchema,
+  StudyBuddySourceConnection as StudyBuddySourceConnectionSchema,
+  StudyBuddySourceError,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -27,7 +31,7 @@ import { chromium } from "playwright";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "../moodle/browserAuth.ts";
-import { assertPublicHttpsUrl } from "../moodle/browserSecurity.ts";
+import { assertPublicHttpsUrl, assertPublicNetworkHostname } from "../moodle/browserSecurity.ts";
 import {
   fetchCalendarText,
   normalizeCalendarUrl,
@@ -47,10 +51,10 @@ import {
 } from "./webmailDiscovery.ts";
 
 interface StoredSourceDocument {
-  version: 1;
-  revision: number;
-  connections: StudyBuddySourceConnection[];
-  sources: StudyBuddySourceBlock[];
+  readonly version: 1;
+  readonly revision: number;
+  readonly connections: readonly StudyBuddySourceConnection[];
+  readonly sources: readonly StudyBuddySourceBlock[];
 }
 
 interface PasswordSecret {
@@ -67,6 +71,26 @@ interface BearerSecret {
 
 type SourceSecret = PasswordSecret | BearerSecret;
 const isStudyBuddySourceError = Schema.is(StudyBuddySourceError);
+const StoredSourceDocumentSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  connections: Schema.Array(StudyBuddySourceConnectionSchema),
+  sources: Schema.Array(StudyBuddySourceBlockSchema),
+});
+const decodeStoredSourceDocument = Schema.decodeUnknownSync(StoredSourceDocumentSchema);
+const SourceSecretSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("password"),
+    username: Schema.String.check(Schema.isMaxLength(1_000)),
+    password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
+    emailAddress: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(320))),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("bearer-url"),
+    value: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
+  }),
+]);
+const decodeSourceSecret = Schema.decodeUnknownSync(SourceSecretSchema);
 
 function nowIso(): string {
   return DateTime.formatIso(DateTime.nowUnsafe());
@@ -143,6 +167,7 @@ export interface StudyBuddySourcePlatform {
 export interface StudyBuddySourcePlatformDependencies {
   readonly discoverWebmailProvider?: (url: string) => Promise<StudyBuddyWebmailDiscoveryResult>;
   readonly emailBrokerDependencies?: StudyBuddyEmailBrokerDependencies;
+  readonly assertPublicNetworkHost?: (hostname: string) => Promise<void>;
 }
 
 export function createStudyBuddySourcePlatform(
@@ -153,6 +178,8 @@ export function createStudyBuddySourcePlatform(
   const registryPath = path.join(config.stateDir, "study-buddy-sources.json");
   const discoverWebmailProvider =
     dependencies.discoverWebmailProvider ?? discoverStudyBuddyWebmailProvider;
+  const assertPublicNetworkHost =
+    dependencies.assertPublicNetworkHost ?? assertPublicNetworkHostname;
   let mutationQueue: Promise<void> = Promise.resolve();
 
   const withMutation = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -206,6 +233,7 @@ export function createStudyBuddySourcePlatform(
     const target = `${connection.displayOrigin}${connection.entryPath || "/"}`;
     if (connection.displayOrigin.startsWith("imaps://")) {
       const endpoint = validateEmailImapUrl(target);
+      await assertPublicNetworkHost(endpoint.hostname);
       return {
         transport: "imap",
         sourceId,
@@ -242,6 +270,7 @@ export function createStudyBuddySourcePlatform(
       assertRevision(document, input.expectedRevision);
       const descriptor = adapterForKind(input.kind);
       const parsed = validatePublicSourceUrl(input.url, input.kind, input.auth.operation);
+      if (parsed.protocol === "imaps:") await assertPublicNetworkHost(parsed.hostname);
       const webmail =
         input.kind === "email" && parsed.protocol === "https:"
           ? await discoverWebmailProvider(parsed.href)
@@ -325,6 +354,7 @@ export function createStudyBuddySourcePlatform(
           throw sourceError("invalid", "Replace a private calendar link through its secret field.");
         }
         const parsed = validatePublicSourceUrl(input.url, source.kind);
+        if (parsed.protocol === "imaps:") await assertPublicNetworkHost(parsed.hostname);
         const webmail =
           source.kind === "email" && parsed.protocol === "https:"
             ? await discoverWebmailProvider(parsed.href)
@@ -815,13 +845,11 @@ async function publicInventory(
 }
 
 function validateStoredDocument(value: unknown): StoredSourceDocument {
-  if (!isRecord(value) || value.version !== 1 || !Number.isInteger(value.revision)) {
+  try {
+    return decodeStoredSourceDocument(value);
+  } catch {
     throw sourceError("internal", "Source registry is invalid.");
   }
-  if (!Array.isArray(value.connections) || !Array.isArray(value.sources)) {
-    throw sourceError("internal", "Source registry is invalid.");
-  }
-  return value as unknown as StoredSourceDocument;
 }
 
 async function writeDocument(filePath: string, document: StoredSourceDocument): Promise<void> {
@@ -998,8 +1026,7 @@ async function getSecret(
   const bytes = await Effect.runPromise(secrets.get(secretName(connectionId)));
   if (!bytes) return null;
   try {
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as SourceSecret;
-    return value?.type === "password" || value?.type === "bearer-url" ? value : null;
+    return decodeSourceSecret(JSON.parse(new TextDecoder().decode(bytes)));
   } catch {
     return null;
   }
@@ -1093,8 +1120,4 @@ function firstUrl(value: string | undefined): string | null {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -48,7 +48,10 @@ export const DesktopConfig = Config.all({
     Config.withDefault(10_000),
   ),
   appImagePath: trimmedString("APPIMAGE"),
-  disableAutoUpdate: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
+  disableAutoUpdate: Config.all({
+    studyBuddy: optionalBoolean("STUDY_BUDDY_DISABLE_AUTO_UPDATE"),
+    legacy: optionalBoolean("T3CODE_DISABLE_AUTO_UPDATE"),
+  }).pipe(Config.map(({ studyBuddy, legacy }) => studyBuddy || legacy)),
   mockUpdates: optionalBoolean("T3CODE_DESKTOP_MOCK_UPDATES"),
   mockUpdateServerPort: Config.port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(
     Config.withDefault(3000),

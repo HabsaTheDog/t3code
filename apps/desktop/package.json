@@ -30,5 +30,5 @@
     "electron-builder-squirrel-windows": "26.15.3",
     "vite-plus": "catalog:"
   },
-  "productName": "Study Buddy T3 Code"
+  "productName": "Study Buddy"
 }

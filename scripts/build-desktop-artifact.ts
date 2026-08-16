@@ -28,6 +28,8 @@ import { pathToFileURL } from "node:url";
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const STUDY_BUDDY_APP_ID = "com.studybuddy.t3code";
 const STUDY_BUDDY_EXECUTABLE_NAME = "study-buddy-t3code";
+const STUDY_BUDDY_UPDATE_REPOSITORY = "HabsaTheDog/StudyBuddy";
+type DesktopUpdateChannel = "latest" | "alpha" | "beta" | "nightly";
 
 export function isDirectExecution(moduleUrl: string, entryPath: string | undefined): boolean {
   return entryPath !== undefined && pathToFileURL(entryPath).href === moduleUrl;
@@ -629,20 +631,19 @@ export function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
-function resolveGitHubPublishConfig(updateChannel: "latest" | "nightly"):
+export function resolveGitHubPublishConfig(updateChannel: DesktopUpdateChannel):
   | {
       readonly provider: "github";
       readonly owner: string;
       readonly repo: string;
       readonly releaseType: "release" | "prerelease";
-      readonly channel?: "nightly";
+      readonly channel?: Exclude<DesktopUpdateChannel, "latest">;
     }
   | undefined {
   const rawRepo =
+    process.env.STUDY_BUDDY_DESKTOP_UPDATE_REPOSITORY?.trim() ||
     process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
-    process.env.GITHUB_REPOSITORY?.trim() ||
-    "";
-  if (!rawRepo) return undefined;
+    STUDY_BUDDY_UPDATE_REPOSITORY;
 
   const [owner, repo, ...rest] = rawRepo.split("/");
   if (!owner || !repo || rest.length > 0) return undefined;
@@ -651,13 +652,16 @@ function resolveGitHubPublishConfig(updateChannel: "latest" | "nightly"):
     provider: "github",
     owner,
     repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    releaseType: updateChannel === "latest" ? "release" : "prerelease",
+    ...(updateChannel === "latest" ? {} : { channel: updateChannel }),
   };
 }
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
+export function resolveDesktopUpdateChannel(version: string): DesktopUpdateChannel {
+  const match = version.match(/-(alpha|beta|nightly)(?:\.|$)/);
+  return match?.[1] === "alpha" || match?.[1] === "beta" || match?.[1] === "nightly"
+    ? match[1]
+    : "latest";
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
@@ -681,9 +685,9 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "Study Buddy T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+  const channel = resolveDesktopUpdateChannel(version);
+  if (channel === "latest") return desktopPackageJson.productName ?? "Study Buddy";
+  return `Study Buddy (${channel[0]!.toUpperCase()}${channel.slice(1)})`;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -697,7 +701,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: STUDY_BUDDY_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "Study-Buddy-T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Study-Buddy-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -733,7 +737,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
       protocols: [
         {
-          name: "Study Buddy T3 Code",
+          name: "Study Buddy",
           schemes: [STUDY_BUDDY_EXECUTABLE_NAME],
         },
       ],
