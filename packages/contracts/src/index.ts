@@ -25,4 +25,5 @@ export * from "./review.ts";
 export * from "./telemetry.ts";
 export * from "./providerSetup.ts";
 export * from "./studyBuddy.ts";
+export * from "./studyBuddySources.ts";
 export * from "./rpc.ts";

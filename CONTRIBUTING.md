@@ -1,65 +1,45 @@
-# Contributing
+# Contributing to the Study Buddy interface
 
-## Read This First
+Contributions are welcome, especially focused bug fixes, reliability and
+accessibility improvements, tests, documentation, and security hardening.
 
-We are not actively accepting contributions right now.
+Use the main [Study Buddy issue tracker](https://github.com/HabsaTheDog/StudyBuddy/issues)
+for proposals and user-facing bugs. Open an issue before substantial UI,
+architecture, authentication, privacy, permission, network, or release changes.
+Security vulnerabilities must be reported privately as described in
+[SECURITY.md](SECURITY.md).
 
-You can still open an issue or PR, but please do so knowing there is a high chance we close it, defer it forever, or never look at it.
+## Pull requests
 
-If that sounds annoying, that is because it is. This project is still early and we are trying to keep scope, quality, and direction under control.
+Keep each change reviewable and include:
 
-PRs are automatically labeled with a `vouch:*` trust status and a `size:*` diff size based on changed lines.
+- a linked issue or concise problem statement;
+- tests for changed behavior;
+- commands run and their results;
+- a security, privacy, and data-flow assessment;
+- before/after screenshots for visual changes and a short recording for motion;
+- provenance and compatible licensing for new assets or dependencies.
 
-If you are an external contributor, expect `vouch:unvouched` until we explicitly add you to [.github/VOUCHED.td](.github/VOUCHED.td).
+Do not commit credentials, cookies, storage state, private URLs, authenticated
+captures, student records, real course material, or generated user artifacts.
+Use synthetic fixtures and reserved example domains.
 
-## What We Are Most Likely To Accept
+## Local gates
 
-Small, focused bug fixes.
+```bash
+corepack enable
+corepack prepare pnpm@10.24.0 --activate
+pnpm install --frozen-lockfile
+pnpm exec vp check
+pnpm exec vp run typecheck
+pnpm exec vp run test
+node scripts/study-buddy-audit.ts
+```
 
-Small reliability fixes.
+Desktop behavior must also be checked in the real Electron shell with
+`pnpm study-buddy:app`. Changes are merged here first; the resulting public
+commit is then pinned and tested by the parent repository.
 
-Small performance improvements.
-
-Tightly scoped maintenance work that clearly improves the project without changing its direction.
-
-## What We Are Least Likely To Accept
-
-Large PRs.
-
-Drive-by feature work.
-
-Opinionated rewrites.
-
-Anything that expands product scope without us asking for it first.
-
-If you open a 1,000+ line PR full of new features, we will probably close it quickly and remember that you ignored the clearly written instructions.
-
-## If You Still Want To Open A PR
-
-Keep it small.
-
-Explain exactly what changed.
-
-Explain exactly why the change should exist.
-
-Do not mix unrelated fixes together.
-
-If the PR makes anything resembling a UI change, include clear before/after images.
-
-If the change depends on motion, timing, transitions, or interaction details, include a short video.
-
-If we have to guess what changed, we are much less likely to review it.
-
-## Issues First
-
-If you are thinking about a non-trivial change, open an issue first.
-
-That still does not mean we will want the PR, but it gives you a chance to avoid wasting your time.
-
-## Be Realistic
-
-Opening a PR does not create an obligation on our side.
-
-We may close it. We may ignore it. We may ask you to shrink it. We may reimplement the idea ourselves later.
-
-If you are fine with that, proceed.
+Contributions are accepted under the repository's MIT License (inbound equals
+outbound) and must follow the main project's
+[Code of Conduct](https://github.com/HabsaTheDog/StudyBuddy/blob/master/CODE_OF_CONDUCT.md).

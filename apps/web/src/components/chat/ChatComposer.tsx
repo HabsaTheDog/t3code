@@ -69,6 +69,7 @@ import { StudyBuddyProfilePicker } from "./StudyBuddyProfilePicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { EmailPermissionsComposerControl } from "./EmailPermissionsComposerControl";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import {
   ComposerVoiceInput,
@@ -78,6 +79,7 @@ import {
 } from "./ComposerVoiceInput";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
+import { isStudyBuddyEmailPermissionQuestion } from "./studyBuddyEmailPermission";
 import { isStudyBuddyQuizPermissionQuestion } from "./studyBuddyQuizPermission";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -106,7 +108,6 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
@@ -345,6 +346,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           })}
         </SelectPopup>
       </Select>
+
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+
+      <EmailPermissionsComposerControl compact={false} />
 
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
@@ -925,15 +930,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const composerProviderControls = useMemo(
-    () => ({
-      showInteractionModeToggle: getProviderInteractionModeToggle(
-        providerStatuses,
-        selectedProvider,
-      ),
-    }),
-    [providerStatuses, selectedProvider],
-  );
   const storedStudyBuddyModelSelection =
     composerDraft.modelSelectionByProvider[selectedInstanceId] ?? activeThreadModelSelection;
   const hasExplicitStudyBuddyProfile = Boolean(
@@ -1154,6 +1150,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isStudyBuddyQuizPermission = isStudyBuddyQuizPermissionQuestion(
     activePendingUserInputQuestion,
   );
+  const isStudyBuddyEmailPermission = isStudyBuddyEmailPermissionQuestion(
+    activePendingUserInputQuestion,
+  );
+  const isStudyBuddyGuardedActionPermission =
+    isStudyBuddyQuizPermission || isStudyBuddyEmailPermission;
   const hasComposerHeader =
     isComposerApprovalState ||
     pendingUserInputs.length > 0 ||
@@ -1217,7 +1218,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isMobileViewport &&
     !isComposerCollapsedMobile &&
     pendingPrimaryAction !== null &&
-    !isStudyBuddyQuizPermission;
+    !isStudyBuddyGuardedActionPermission;
 
   // ------------------------------------------------------------------
   // Prompt helpers
@@ -2210,7 +2211,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div
                 className={cn(
                   "bg-muted/20",
-                  isStudyBuddyQuizPermission
+                  isStudyBuddyGuardedActionPermission
                     ? "rounded-[19px]"
                     : "rounded-t-[19px] border-b border-border/65",
                 )}
@@ -2263,7 +2264,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onToggleOption={onSelectActivePendingUserInputOption}
                 onAdvance={onAdvanceActivePendingUserInput}
               />
-              {!isStudyBuddyQuizPermission ? (
+              {!isStudyBuddyGuardedActionPermission ? (
                 <div className="px-3 pb-3 sm:px-4">
                   <div
                     data-chat-composer-mobile-pending-compact="true"
@@ -2359,7 +2360,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               "relative px-3 pb-2 sm:px-4",
               hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
               isComposerCollapsedMobile && "hidden",
-              isStudyBuddyQuizPermission && "hidden",
+              isStudyBuddyGuardedActionPermission && "hidden",
             )}
           >
             {composerMenuOpen && !isComposerApprovalState && (
@@ -2573,7 +2574,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onRespondToApproval={onRespondToApproval}
               />
             </div>
-          ) : isStudyBuddyQuizPermission ? null : (
+          ) : isStudyBuddyGuardedActionPermission ? null : (
             <div
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
@@ -2595,24 +2596,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
 
                 {isComposerFooterCompact ? (
-                  <CompactComposerControlsMenu
-                    activePlan={showPlanSidebarToggle}
-                    interactionMode={interactionMode}
-                    planSidebarLabel={planSidebarLabel}
-                    planSidebarOpen={planSidebarOpen}
-                    quizAccessMode={quizAccess.mode}
-                    quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
-                    runtimeMode={runtimeMode}
-                    showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                    onToggleInteractionMode={trackToggleInteractionMode}
-                    onTogglePlanSidebar={trackTogglePlanSidebar}
-                    onQuizAccessModeChange={quizAccess.updateMode}
-                    onRuntimeModeChange={trackRuntimeModeChange}
-                  />
+                  <>
+                    <EmailPermissionsComposerControl compact />
+                    <CompactComposerControlsMenu
+                      activePlan={showPlanSidebarToggle}
+                      interactionMode={interactionMode}
+                      planSidebarLabel={planSidebarLabel}
+                      planSidebarOpen={planSidebarOpen}
+                      quizAccessMode={quizAccess.mode}
+                      quizAccessDisabled={!quizAccess.available || quizAccess.isSaving}
+                      runtimeMode={runtimeMode}
+                      showInteractionModeToggle={false}
+                      onToggleInteractionMode={trackToggleInteractionMode}
+                      onTogglePlanSidebar={trackTogglePlanSidebar}
+                      onQuizAccessModeChange={quizAccess.updateMode}
+                      onRuntimeModeChange={trackRuntimeModeChange}
+                    />
+                  </>
                 ) : (
                   <>
                     <ComposerFooterModeControls
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      showInteractionModeToggle={false}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
                       quizAccessMode={quizAccess.mode}

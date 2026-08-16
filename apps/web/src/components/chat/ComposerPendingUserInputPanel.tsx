@@ -10,9 +10,16 @@ import {
   Clock3Icon,
   KeyRoundIcon,
   LockKeyholeIcon,
+  MailCheckIcon,
+  PaperclipIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
+import {
+  emailPermissionOptionCopy,
+  formatEmailAddress,
+  parseStudyBuddyEmailPermissionQuestion,
+} from "./studyBuddyEmailPermission";
 import {
   formatStudyBuddyQuizTime,
   parseStudyBuddyQuizPermissionQuestion,
@@ -137,6 +144,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const quizPermission = parseStudyBuddyQuizPermissionQuestion(activeQuestion);
+  const emailPermission = parseStudyBuddyEmailPermissionQuestion(activeQuestion);
+  if (emailPermission) {
+    return (
+      <StudyBuddyEmailPermissionCard
+        details={emailPermission}
+        question={activeQuestion}
+        selectedOptionLabels={progress.selectedOptionLabels}
+        isResponding={isResponding}
+        onSelect={handleOptionSelection}
+      />
+    );
+  }
   if (quizPermission) {
     return (
       <StudyBuddyQuizPermissionCard
@@ -213,6 +232,146 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     </div>
   );
 });
+
+function StudyBuddyEmailPermissionCard({
+  details,
+  question,
+  selectedOptionLabels,
+  isResponding,
+  onSelect,
+}: {
+  details: NonNullable<ReturnType<typeof parseStudyBuddyEmailPermissionQuestion>>;
+  question: NonNullable<ReturnType<typeof derivePendingUserInputProgress>["activeQuestion"]>;
+  selectedOptionLabels: readonly string[];
+  isResponding: boolean;
+  onSelect: (questionId: string, optionLabel: string) => void;
+}) {
+  const expiry = formatExpiry(details.expiresAt);
+  const recipientRows = [
+    ["To", details.to],
+    ["CC", details.cc],
+    ["BCC", details.bcc],
+  ] as const;
+
+  return (
+    <section
+      className="max-h-[75dvh] overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5"
+      aria-labelledby={`${question.id}-title`}
+      data-study-buddy-email-permission="true"
+    >
+      <div className="flex items-start gap-3.5">
+        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg border border-amber-400/20 bg-amber-400/10 text-amber-300">
+          <MailCheckIcon className="size-[18px]" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-semibold tracking-[0.16em] text-amber-300/80 uppercase">
+              Email approval
+            </span>
+            <span className="rounded border border-border/55 bg-background/35 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/70">
+              This exact email only
+            </span>
+          </div>
+          <h2 id={`${question.id}-title`} className="mt-1 text-[15px] font-semibold">
+            Review before sending
+          </h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground/70">
+            Check every recipient and the complete message. Editing anything requires a new
+            approval.
+          </p>
+        </div>
+      </div>
+
+      <dl className="mt-4 overflow-hidden rounded-lg border border-border/55 bg-background/25 text-xs">
+        <EmailAddressRow label="From" value={formatEmailAddress(details.from)} />
+        {recipientRows.map(([label, addresses]) =>
+          addresses.length ? (
+            <EmailAddressRow
+              key={label}
+              label={label}
+              value={addresses.map(formatEmailAddress).join(", ")}
+            />
+          ) : null,
+        )}
+        <EmailAddressRow label="Subject" value={details.subject || "(No subject)"} />
+      </dl>
+
+      <div className="mt-3 rounded-lg border border-border/55 bg-background/25 p-3">
+        <p className="text-[10px] font-medium tracking-wide text-muted-foreground/60 uppercase">
+          Message
+        </p>
+        <pre className="mt-2 max-h-64 whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-foreground/90">
+          {details.bodyText || "(Empty message)"}
+        </pre>
+      </div>
+
+      {details.attachments.length ? (
+        <div className="mt-3 rounded-lg border border-border/55 bg-background/25 p-3">
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <PaperclipIcon className="size-3.5" aria-hidden="true" />
+            {details.attachments.length} attachment{details.attachments.length === 1 ? "" : "s"}
+          </div>
+          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {details.attachments.map((attachment) => (
+              <li key={attachment.id}>{attachment.name}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-border/45 pt-3 text-[11px] text-muted-foreground/60">
+        <span>Approval can be used once</span>
+        {expiry ? <span>Expires at {expiry}</span> : null}
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {question.options.map((option, index) => {
+          const copy = emailPermissionOptionCopy(option.label, option.description);
+          const isSelected = selectedOptionLabels.includes(option.label);
+          return (
+            <button
+              key={`${question.id}:${option.label}`}
+              type="button"
+              disabled={isResponding}
+              onClick={() => onSelect(question.id, option.label)}
+              className={cn(
+                "group flex min-h-14 items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/55",
+                copy.intent === "approve"
+                  ? "border-emerald-400/25 bg-emerald-400/8 hover:border-emerald-400/45 hover:bg-emerald-400/12"
+                  : "border-border/55 bg-background/25 hover:border-border hover:bg-muted/35",
+                isSelected &&
+                  (copy.intent === "approve"
+                    ? "border-emerald-400/55 bg-emerald-400/15"
+                    : "border-blue-400/45 bg-blue-400/10"),
+                isResponding && "cursor-not-allowed opacity-50",
+              )}
+            >
+              <kbd className="flex size-5 shrink-0 items-center justify-center rounded bg-muted/45 text-[11px] font-medium text-muted-foreground/65">
+                {index + 1}
+              </kbd>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold">{copy.label}</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground/65">
+                  {copy.description}
+                </span>
+              </span>
+              {isSelected ? <CheckIcon className="size-4 shrink-0 text-emerald-400" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function EmailAddressRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[4rem_1fr] gap-2 border-b border-border/45 px-3 py-2.5 last:border-b-0">
+      <dt className="font-medium text-muted-foreground/65">{label}</dt>
+      <dd className="break-words text-foreground/90">{value}</dd>
+    </div>
+  );
+}
 
 function StudyBuddyQuizPermissionCard({
   details,

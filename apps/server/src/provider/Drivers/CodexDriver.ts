@@ -57,6 +57,7 @@ import {
   ensureStudyBuddyCodexHome,
   studyBuddyCodexEnvironment,
 } from "../setup/studyBuddyCodexPolicy.ts";
+import { augmentPromptWithStudyBuddyEmailContext } from "../StudyBuddyEmailContext.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -220,6 +221,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const adapter = yield* makeCodexAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        augmentTurnInput: augmentPromptWithStudyBuddyEmailContext,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeCodexTextGeneration(effectiveConfig, processEnv);

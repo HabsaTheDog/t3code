@@ -30,7 +30,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
-import { useTheme } from "../../hooks/useTheme";
+import { DEFAULT_THEME, useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -82,6 +82,10 @@ import { useServerObservability, useServerProviders } from "../../rpc/serverStat
 import { isProviderDriverAvailable } from "../../providerAvailability";
 
 const THEME_OPTIONS = [
+  {
+    value: "study-buddy",
+    label: "Study Buddy",
+  },
   {
     value: "system",
     label: "System",
@@ -319,7 +323,7 @@ function AboutVersionSection() {
       {hasDesktopBridge ? (
         <SettingsRow
           title="Update track"
-          description="Stable follows full releases. Nightly follows the nightly desktop channel and can switch back to stable immediately."
+          description="Stable follows full releases. Alpha, Beta, and Nightly are optional prerelease tracks."
           control={
             <Select
               value={selectedUpdateChannel}
@@ -333,12 +337,22 @@ function AboutVersionSection() {
                 disabled={isChangingUpdateChannel}
               >
                 <SelectValue>
-                  {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
+                  {
+                    { latest: "Stable", alpha: "Alpha", beta: "Beta", nightly: "Nightly" }[
+                      selectedUpdateChannel
+                    ]
+                  }
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="latest">
                   Stable
+                </SelectItem>
+                <SelectItem hideIndicator value="alpha">
+                  Alpha
+                </SelectItem>
+                <SelectItem hideIndicator value="beta">
+                  Beta
                 </SelectItem>
                 <SelectItem hideIndicator value="nightly">
                   Nightly
@@ -392,7 +406,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
   const changedSettingLabels = useMemo(
     () => [
-      ...(theme !== "system" ? ["Theme"] : []),
+      ...(theme !== DEFAULT_THEME ? ["Theme"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -460,7 +474,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    setTheme("system");
+    setTheme(DEFAULT_THEME);
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
@@ -527,24 +541,29 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose a light or dark look, or match your device."
+          description="Use the consistent Study Buddy look, or choose a device-based theme."
           resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+            theme !== DEFAULT_THEME ? (
+              <SettingResetButton label="theme" onClick={() => setTheme(DEFAULT_THEME)} />
             ) : null
           }
           control={
             <Select
               value={theme}
               onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
+                if (
+                  value === "study-buddy" ||
+                  value === "system" ||
+                  value === "light" ||
+                  value === "dark"
+                ) {
                   setTheme(value);
                 }
               }}
             >
               <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
                 <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
+                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "Study Buddy"}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

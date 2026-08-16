@@ -12,9 +12,8 @@ updates:
     # deliberately while the Study Buddy fork tracks its upstream application.
     open-pull-requests-limit: 0
     exclude-paths:
-      # These are upstream reference snapshots and applications that are not
-      # installed, built, or shipped by the Study Buddy workspace.
-      - ".repos/**"
+      # These inherited applications are not installed, built, or shipped by
+      # the Study Buddy desktop workspace.
       - "apps/marketing/**"
       - "apps/mobile/**"
       - "infra/**"

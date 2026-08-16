@@ -359,6 +359,48 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("augments turn text through a server-owned evidence hook", () => {
+    const emailRuntimeFactory = makeRuntimeFactory();
+    const emailLayer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: emailRuntimeFactory.factory,
+          augmentTurnInput: async (input) =>
+            `${input}\n<email-context>safe evidence</email-context>`,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-email-context"),
+        runtimeMode: "full-access",
+      });
+      const runtime = emailRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      yield* adapter.sendTurn({
+        threadId: asThreadId("sess-email-context"),
+        input: "Check my inbox",
+        attachments: [],
+      });
+
+      assert.equal(
+        runtime.sendTurnImpl.mock.calls[0]?.[0].input,
+        "Check my inbox\n<email-context>safe evidence</email-context>",
+      );
+    }).pipe(Effect.provide(emailLayer));
+  });
+
   it.effect("maps codex model options for the adapter's bound custom instance id", () => {
     const customInstanceId = ProviderInstanceId.make("codex_personal");
     const customRuntimeFactory = makeRuntimeFactory();

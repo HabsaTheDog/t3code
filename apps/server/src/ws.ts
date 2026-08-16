@@ -37,6 +37,7 @@ import {
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   ProviderSetupError,
+  StudyBuddySourceError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OrchestrationReplayEventsError,
@@ -120,11 +121,30 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { createStudyBuddySourcePlatform } from "./custom-skills/sources/sourcePlatform.ts";
+import { registerStudyBuddyEmailApprovalExecutor } from "./custom-skills/sources/emailSendApprovals.ts";
+import {
+  registerStudyBuddyEmailContextReader,
+  studyBuddyEmailSearchTerm,
+} from "./provider/StudyBuddyEmailContext.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isFilesystemPreviewError = Schema.is(FilesystemPreviewError);
+const isStudyBuddySourceError = Schema.is(StudyBuddySourceError);
+const sourcePlatformEffect = <A>(operation: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: operation,
+    catch: (cause) =>
+      isStudyBuddySourceError(cause)
+        ? cause
+        : new StudyBuddySourceError({
+            code: "internal",
+            message: cause instanceof Error ? cause.message : "Source operation failed.",
+          }),
+  });
 const isConversationTurnRedactionError = Schema.is(ConversationTurnRedactionError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -181,6 +201,16 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetStudyBuddyConfiguration, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateStudyBuddyConfiguration, AuthOrchestrationOperateScope],
   [WS_METHODS.serverTestStudyBuddyConnection, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetStudyBuddySourceInventory, AuthOrchestrationReadScope],
+  [WS_METHODS.serverCreateStudyBuddySource, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpdateStudyBuddySource, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDeleteStudyBuddySource, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverSetStudyBuddySourceAuth, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpdateStudyBuddyEmailPermissions, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverTestStudyBuddySource, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverListStudyBuddyEmailMessages, AuthOrchestrationReadScope],
+  [WS_METHODS.serverSearchStudyBuddyEmailMessages, AuthOrchestrationReadScope],
+  [WS_METHODS.serverReadStudyBuddyEmailMessage, AuthOrchestrationReadScope],
   [WS_METHODS.cloudGetRelayClientStatus, AuthRelayWriteScope],
   [WS_METHODS.cloudInstallRelayClient, AuthRelayWriteScope],
   [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
@@ -301,6 +331,79 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const sourceSecrets = yield* ServerSecretStore.ServerSecretStore;
+      const studyBuddySources = createStudyBuddySourcePlatform(config, sourceSecrets);
+      registerStudyBuddyEmailApprovalExecutor(async ({ payload }) => {
+        await studyBuddySources.email.sendExact(payload);
+      });
+      registerStudyBuddyEmailContextReader(async ({ query, limit, includeBodies }) => {
+        const inventory = await studyBuddySources.getInventory();
+        const sources = inventory.sources.filter(
+          (source) => source.kind === "email" && source.enabled,
+        );
+        if (sources.length === 0) throw new Error("No enabled email source is configured.");
+        const connections = new Map(
+          inventory.connections.map((connection) => [connection.id, connection]),
+        );
+        const accounts = sources.map((source) => {
+          const connection = connections.get(source.connectionId);
+          return {
+            sourceId: source.id,
+            sourceLabel: source.label,
+            ...(connection?.auth.emailAddress ? { senderEmail: connection.auth.emailAddress } : {}),
+            canRead:
+              source.policy.authenticatedReads === "allowed" &&
+              source.capabilities.includes("mail.message.read"),
+            canDraft:
+              source.policy.remoteDrafts === "allowed" &&
+              source.capabilities.includes("mail.draft.local"),
+            canRequestSend:
+              source.policy.emailSend === "approval-required" &&
+              source.capabilities.includes("mail.send") &&
+              Boolean(connection?.auth.emailAddress),
+          };
+        });
+        if (!includeBodies) return { readStatePreserved: true, accounts, messages: [] };
+        const readableSources = sources.filter((source) =>
+          accounts.some((account) => account.sourceId === source.id && account.canRead),
+        );
+        if (readableSources.length === 0) {
+          return { readStatePreserved: true, accounts, messages: [] };
+        }
+        const perSourceLimit = Math.max(1, Math.min(10, Math.ceil(limit / readableSources.length)));
+        const searchTerm = studyBuddyEmailSearchTerm(query);
+        const outcomes = await Promise.allSettled(
+          readableSources.map(async (source) => ({
+            source,
+            messages: await studyBuddySources.email.readContext({
+              sourceId: source.id,
+              ...(searchTerm ? { query: searchTerm } : {}),
+              limit: perSourceLimit,
+            }),
+          })),
+        );
+        const successful = outcomes.flatMap((outcome) =>
+          outcome.status === "fulfilled" ? [outcome.value] : [],
+        );
+        if (successful.length === 0) throw new Error("Configured email sources were unavailable.");
+        const messages = successful.flatMap(({ source, messages: sourceMessages }) => {
+          if (sourceMessages.some((message) => !message.seenState.preserved)) {
+            throw new Error("Email read state could not be preserved.");
+          }
+          return sourceMessages.map((message) => ({
+            id: message.message.messageId,
+            sourceLabel: source.label,
+            from:
+              message.message.from.map((address) => address.name || address.address).join(", ") ||
+              "Unknown sender",
+            subject: message.message.subject,
+            receivedAt: message.message.receivedAt ?? message.message.sentAt ?? "",
+            bodyText: message.body.sanitizedText,
+            isUnread: !message.seenState.seenBefore,
+          }));
+        });
+        return { readStatePreserved: true, accounts, messages: messages.slice(0, limit) };
+      });
       const runtimeContext = yield* Effect.context<never>();
       const runPromise = Effect.runPromiseWith(runtimeContext);
       const studyBuddyCodexPaths = yield* Effect.tryPromise({
@@ -1263,6 +1366,66 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverGetStudyBuddySourceInventory]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetStudyBuddySourceInventory,
+            sourcePlatformEffect(() => studyBuddySources.getInventory()),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCreateStudyBuddySource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateStudyBuddySource,
+            sourcePlatformEffect(() => studyBuddySources.createSource(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverUpdateStudyBuddySource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateStudyBuddySource,
+            sourcePlatformEffect(() => studyBuddySources.updateSource(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverDeleteStudyBuddySource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverDeleteStudyBuddySource,
+            sourcePlatformEffect(() => studyBuddySources.deleteSource(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSetStudyBuddySourceAuth]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSetStudyBuddySourceAuth,
+            sourcePlatformEffect(() => studyBuddySources.setSourceAuth(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverUpdateStudyBuddyEmailPermissions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateStudyBuddyEmailPermissions,
+            sourcePlatformEffect(() => studyBuddySources.updateEmailPermissions(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverTestStudyBuddySource]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverTestStudyBuddySource,
+            sourcePlatformEffect(() => studyBuddySources.testSource(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverListStudyBuddyEmailMessages]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListStudyBuddyEmailMessages,
+            sourcePlatformEffect(() => studyBuddySources.email.listMessages(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverSearchStudyBuddyEmailMessages]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverSearchStudyBuddyEmailMessages,
+            sourcePlatformEffect(() => studyBuddySources.email.searchMessages(input)),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverReadStudyBuddyEmailMessage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverReadStudyBuddyEmailMessage,
+            sourcePlatformEffect(() => studyBuddySources.email.readMessage(input)),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudGetRelayClientStatus, relayClient.resolve, {
