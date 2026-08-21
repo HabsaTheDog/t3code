@@ -38,7 +38,10 @@ import {
   validateCalendarText,
 } from "../moodle/calendarConnection.ts";
 import { testStudyBuddyConnection } from "../moodle/connectionTests.ts";
-import { readStoredStudyBuddyConfiguration } from "../moodle/studyBuddyConfig.ts";
+import {
+  readStoredStudyBuddyConfiguration,
+  updateStudyBuddyConfiguration,
+} from "../moodle/studyBuddyConfig.ts";
 import {
   createStudyBuddyEmailReadBroker,
   type StudyBuddyEmailAccess,
@@ -371,6 +374,14 @@ export function createStudyBuddySourcePlatform(
           allowedOrigins: [...allowedOrigins],
           revision: connection.revision + 1,
         };
+        const legacyTarget = legacyTargetFor(source.id);
+        if (legacyTarget === "moodle") {
+          await Effect.runPromise(
+            updateStudyBuddyConfiguration(config, { moodleDashboardUrl: input.url }),
+          );
+        } else if (legacyTarget === "cis") {
+          await Effect.runPromise(updateStudyBuddyConfiguration(config, { cisUrl: input.url }));
+        }
       }
       if (input.label !== undefined) nextConnection = { ...nextConnection, label: input.label };
       const nextSource: StudyBuddySourceBlock = {
@@ -434,9 +445,7 @@ export function createStudyBuddySourcePlatform(
       assertRevision(document, input.expectedRevision);
       const source = document.sources.find((entry) => entry.id === input.sourceId);
       if (!source) throw sourceError("not-found", "Source was not found.");
-      if (isLegacyConnection(source.connectionId)) {
-        throw sourceError("invalid", "Edit legacy credentials in the existing connection fields.");
-      }
+      const legacyTarget = legacyTargetFor(source.id);
       const connectionIndex = document.connections.findIndex(
         (entry) => entry.id === source.connectionId,
       );
@@ -444,16 +453,25 @@ export function createStudyBuddySourcePlatform(
       const connection = document.connections[connectionIndex]!;
       let auth: StudyBuddySourceConnection["auth"];
       let displayOrigin = connection.displayOrigin;
+      let allowedOrigins = connection.allowedOrigins;
       if (input.operation === "clear") {
-        await removeSecret(secrets, connection.id);
+        if (legacyTarget) {
+          await updateLegacySourceAuth(config, legacyTarget, input);
+        } else {
+          await removeSecret(secrets, connection.id);
+        }
         auth = { mode: connection.auth.mode, state: "not-configured" };
       } else if (input.operation === "set-password") {
-        await setSecret(secrets, connection.id, {
-          type: "password",
-          username: input.username,
-          password: input.password,
-          ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
-        });
+        if (legacyTarget) {
+          await updateLegacySourceAuth(config, legacyTarget, input);
+        } else {
+          await setSecret(secrets, connection.id, {
+            type: "password",
+            username: input.username,
+            password: input.password,
+            ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
+          });
+        }
         auth = {
           mode: "password",
           state: "configured",
@@ -462,20 +480,33 @@ export function createStudyBuddySourcePlatform(
         };
       } else {
         const parsed = validatePrivateBearerUrl(input.value);
-        await setSecret(secrets, connection.id, { type: "bearer-url", value: input.value });
+        if (legacyTarget) {
+          await updateLegacySourceAuth(config, legacyTarget, input);
+        } else {
+          await setSecret(secrets, connection.id, { type: "bearer-url", value: input.value });
+        }
         auth = { mode: "bearer-url", state: "configured" };
         displayOrigin = parsed.origin;
+        allowedOrigins = [parsed.origin];
       }
       const connections = [...document.connections];
       connections[connectionIndex] = {
         ...connection,
         displayOrigin,
+        allowedOrigins,
         auth,
         revision: connection.revision + 1,
       };
       const sources = document.sources.map((entry) =>
         entry.id === source.id
-          ? { ...entry, health: { status: "unknown" as const }, revision: entry.revision + 1 }
+          ? {
+              ...entry,
+              ...(input.operation === "set-bearer-url"
+                ? { scope: { ...entry.scope, allowedOrigins } }
+                : {}),
+              health: { status: "unknown" as const },
+              revision: entry.revision + 1,
+            }
           : entry,
       );
       const next = { ...document, revision: document.revision + 1, connections, sources };
@@ -714,7 +745,9 @@ async function readDocument(
   registryPath: string,
 ): Promise<StoredSourceDocument> {
   try {
-    return validateStoredDocument(JSON.parse(await readFile(registryPath, "utf8")));
+    return withoutUnconfiguredLegacyPlaceholders(
+      validateStoredDocument(JSON.parse(await readFile(registryPath, "utf8"))),
+    );
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return projectLegacySources(config);
     if (error instanceof SyntaxError) throw sourceError("internal", "Source registry is invalid.");
@@ -742,8 +775,9 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: string;
     capabilities: StudyBuddySourceCapability[];
     authMode: StudyBuddySourceConnection["auth"]["mode"];
+    accountLabel?: string;
   }) => {
-    if (!input.configured && !input.url) return;
+    if (!input.configured) return;
     const parsed = publicLegacyUrl(input.url);
     const connectionId = `${input.id}-connection`;
     connections.push({
@@ -757,6 +791,7 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
       auth: {
         mode: input.authMode,
         state: input.configured ? "configured" : "not-configured",
+        ...(input.accountLabel ? { accountLabel: input.accountLabel } : {}),
       },
       revision: 0,
     });
@@ -794,6 +829,7 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: "legacy-moodle",
     capabilities: adapterForKind("moodle-course").defaultCapabilities.slice(),
     authMode: "password",
+    ...(stored.values.MOODLE_USERNAME ? { accountLabel: stored.values.MOODLE_USERNAME } : {}),
   });
   add({
     id: "legacy-cis",
@@ -804,6 +840,9 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: "legacy-cis",
     capabilities: ["content.search", "content.list", "content.read", "calendar.events.read"],
     authMode: "password",
+    ...(stored.values.CIS_USERNAME || stored.values.MOODLE_USERNAME
+      ? { accountLabel: stored.values.CIS_USERNAME || stored.values.MOODLE_USERNAME }
+      : {}),
   });
   add({
     id: "legacy-calendar",
@@ -816,6 +855,39 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     authMode: "bearer-url",
   });
   return { version: 1, revision: 0, connections, sources };
+}
+
+function withoutUnconfiguredLegacyPlaceholders(
+  document: StoredSourceDocument,
+): StoredSourceDocument {
+  const placeholderIds = new Set(
+    document.sources
+      .filter((source) => {
+        if (!source.scope.tags.includes("legacy")) return false;
+        const connection = document.connections.find((entry) => entry.id === source.connectionId);
+        if (!connection || connection.auth.state !== "not-configured") return false;
+        return (
+          (source.id === "legacy-moodle" &&
+            source.label === "Moodle" &&
+            connection.displayOrigin === "https://moodle.technikum-wien.at") ||
+          (source.id === "legacy-cis" &&
+            source.label === "CIS student portal" &&
+            connection.displayOrigin === "https://cis.technikum-wien.at") ||
+          (source.id === "legacy-calendar" &&
+            source.label === "Personal calendar" &&
+            connection.displayOrigin === "https://calendar.invalid")
+        );
+      })
+      .map((source) => source.id),
+  );
+  if (placeholderIds.size === 0) return document;
+  const sources = document.sources.filter((source) => !placeholderIds.has(source.id));
+  const connectionIds = new Set(sources.map((source) => source.connectionId));
+  return {
+    ...document,
+    sources,
+    connections: document.connections.filter((connection) => connectionIds.has(connection.id)),
+  };
 }
 
 async function publicInventory(
@@ -1094,6 +1166,50 @@ function legacyTargetFor(sourceId: string): "moodle" | "cis" | "calendar" | null
   if (sourceId === "legacy-cis") return "cis";
   if (sourceId === "legacy-calendar") return "calendar";
   return null;
+}
+
+async function updateLegacySourceAuth(
+  config: ServerConfigShape,
+  target: "moodle" | "cis" | "calendar",
+  input: StudyBuddySetSourceAuthInput,
+): Promise<void> {
+  if (target === "calendar") {
+    if (input.operation === "set-password") {
+      throw sourceError("invalid", "Calendar sources use a private calendar link.");
+    }
+    await Effect.runPromise(
+      updateStudyBuddyConfiguration(config, {
+        calendarUrlSecret:
+          input.operation === "set-bearer-url"
+            ? { operation: "set", value: input.value }
+            : { operation: "clear" },
+      }),
+    );
+    return;
+  }
+
+  if (input.operation === "set-bearer-url") {
+    throw sourceError("invalid", "This source uses username and password sign-in.");
+  }
+  const password =
+    input.operation === "set-password"
+      ? ({ operation: "set", value: input.password } as const)
+      : ({ operation: "clear" } as const);
+  if (target === "moodle") {
+    await Effect.runPromise(
+      updateStudyBuddyConfiguration(config, {
+        ...(input.operation === "set-password" ? { moodleUsername: input.username } : {}),
+        moodlePassword: password,
+      }),
+    );
+    return;
+  }
+  await Effect.runPromise(
+    updateStudyBuddyConfiguration(config, {
+      ...(input.operation === "set-password" ? { cisUsername: input.username } : {}),
+      cisPassword: password,
+    }),
+  );
 }
 
 function isLegacyConnection(connectionId: string): boolean {

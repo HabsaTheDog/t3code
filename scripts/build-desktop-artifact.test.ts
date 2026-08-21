@@ -68,6 +68,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
+    assert.match(BRAND_ASSET_PATHS.productionWindowsIconIco, /study-buddy-windows\.ico$/);
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
       macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
       linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
@@ -80,6 +81,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
   });
+
+  it.effect("keeps Windows resource editing enabled for unsigned builds", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("win", "nsis", "0.1.0-alpha.2", false, false, 3000);
+      const win = config.win as
+        | {
+            readonly icon?: string;
+            readonly signExecutable?: boolean;
+            readonly signAndEditExecutable?: boolean;
+          }
+        | undefined;
+
+      assert.equal(win?.icon, "icon.ico");
+      assert.isFalse(win?.signExecutable);
+      assert.isUndefined(win?.signAndEditExecutable);
+    }),
+  );
 
   it.effect("publishes alpha metadata to the alpha GitHub prerelease channel", () =>
     Effect.gen(function* () {

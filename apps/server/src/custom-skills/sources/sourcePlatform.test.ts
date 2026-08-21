@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated filesystem fixtures for source persistence.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as Effect from "effect/Effect";
@@ -78,6 +78,162 @@ async function harness(options: { webmailRuntime?: StudyBuddyWebmailRuntime } = 
     }),
   };
 }
+
+describe("Study Buddy source inventory", () => {
+  it("starts fresh installations without preselected sources", async () => {
+    const { platform } = await harness();
+
+    await expect(platform.getInventory()).resolves.toMatchObject({
+      revision: 0,
+      connections: [],
+      sources: [],
+    });
+  });
+
+  it("removes untouched unconfigured placeholders left by the first alpha", async () => {
+    const { directory, platform } = await harness();
+    const stateDirectory = path.join(directory, "state");
+    await mkdir(stateDirectory, { recursive: true });
+    await writeFile(
+      path.join(stateDirectory, "study-buddy-sources.json"),
+      `${JSON.stringify({
+        version: 1,
+        revision: 3,
+        connections: [
+          {
+            id: "legacy-calendar-connection",
+            adapterId: "legacy-calendar",
+            adapterVersion: "legacy-v1",
+            label: "Personal calendar",
+            displayOrigin: "https://calendar.invalid",
+            entryPath: "",
+            allowedOrigins: ["https://calendar.invalid"],
+            auth: { mode: "bearer-url", state: "not-configured" },
+            revision: 0,
+          },
+        ],
+        sources: [
+          {
+            id: "legacy-calendar",
+            label: "Personal calendar",
+            kind: "calendar",
+            enabled: true,
+            connectionId: "legacy-calendar-connection",
+            priority: 10,
+            scope: {
+              allowedOrigins: ["https://calendar.invalid"],
+              pathPrefixes: [],
+              courseIds: [],
+              mailFolders: [],
+              tags: ["legacy"],
+            },
+            capabilities: ["calendar.events.read"],
+            policy: {
+              authenticatedReads: "allowed",
+              downloads: "allowed",
+              remoteDrafts: "denied",
+              emailSend: "denied",
+            },
+            health: { status: "unknown" },
+            revision: 0,
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(platform.getInventory()).resolves.toMatchObject({
+      revision: 3,
+      connections: [],
+      sources: [],
+    });
+  });
+
+  it("allows users to keep adding sources without a fixed three-source limit", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.getInventory();
+
+    for (let index = 1; index <= 12; index += 1) {
+      inventory = await platform.createSource({
+        expectedRevision: inventory.revision,
+        kind: "website",
+        label: `Study website ${index}`,
+        url: `https://source-${index}.example.edu/resources/`,
+        enabled: true,
+        auth: { operation: "set-none" },
+      });
+    }
+
+    expect(inventory.sources).toHaveLength(12);
+    expect(inventory.connections).toHaveLength(12);
+    expect(inventory.revision).toBe(12);
+  });
+
+  it("replaces private calendar links without persisting their bearer path", async () => {
+    const { directory, platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "calendar",
+      label: "University calendar",
+      url: "https://calendar.example.edu/old-private-token.ics",
+      enabled: true,
+      auth: {
+        operation: "set-bearer-url",
+        value: "https://calendar.example.edu/old-private-token.ics",
+      },
+    });
+    const calendar = inventory.sources[0]!;
+
+    inventory = await platform.setSourceAuth({
+      operation: "set-bearer-url",
+      expectedRevision: inventory.revision,
+      sourceId: calendar.id,
+      value: "https://new-calendar.example.edu/new-private-token.ics",
+    });
+
+    expect(inventory.connections[0]?.displayOrigin).toBe("https://new-calendar.example.edu");
+    expect(inventory.sources[0]?.scope.allowedOrigins).toEqual([
+      "https://new-calendar.example.edu",
+    ]);
+    const registry = await readFile(
+      path.join(directory, "state", "study-buddy-sources.json"),
+      "utf8",
+    );
+    expect(registry).not.toContain("old-private-token");
+    expect(registry).not.toContain("new-private-token");
+  });
+
+  it("keeps configured legacy sources editable during the alpha migration", async () => {
+    const { directory, platform } = await harness();
+    await writeFile(
+      path.join(directory, ".env.local"),
+      "MOODLE_USERNAME=old-user\nMOODLE_PASSWORD=old-password\n",
+      "utf8",
+    );
+    let inventory = await platform.getInventory();
+    const moodle = inventory.sources.find((source) => source.id === "legacy-moodle")!;
+
+    inventory = await platform.updateSource({
+      expectedRevision: inventory.revision,
+      sourceId: moodle.id,
+      label: "My Moodle",
+      url: "https://learn.example.edu/my/",
+    });
+    inventory = await platform.setSourceAuth({
+      operation: "set-password",
+      expectedRevision: inventory.revision,
+      sourceId: moodle.id,
+      username: "new-user",
+      password: "new-password",
+    });
+
+    expect(inventory.sources.find((source) => source.id === moodle.id)?.label).toBe("My Moodle");
+    const raw = await readFile(path.join(directory, ".env.local"), "utf8");
+    expect(raw).toContain("MOODLE_USERNAME=new-user\n");
+    expect(raw).toContain("MOODLE_PASSWORD=new-password\n");
+    expect(raw).toContain("MOODLE_DASHBOARD_URL=https://learn.example.edu/my/\n");
+  });
+});
 
 describe("Study Buddy IMAP source configuration", () => {
   it("persists only a sanitized IMAPS origin while keeping credentials in the secret store", async () => {

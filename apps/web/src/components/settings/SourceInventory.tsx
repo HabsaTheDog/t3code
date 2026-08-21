@@ -78,9 +78,7 @@ export function SourceInventory({
     try {
       const result = await ensureLocalApi().server.testStudyBuddySource({ sourceId: source.id });
       setTestResults((current) => ({ ...current, [source.id]: result }));
-      if (source.kind === "email" && result.status === "success") {
-        onInventoryChange(await ensureLocalApi().server.getStudyBuddySourceInventory());
-      }
+      onInventoryChange(await ensureLocalApi().server.getStudyBuddySourceInventory());
       toastManager.add({
         type:
           result.status === "success"
@@ -166,25 +164,47 @@ export function SourceInventory({
   return (
     <>
       {orderedSources.length === 0 ? (
-        <div className="flex flex-col items-center px-6 py-10 text-center">
-          <div className="mb-4 flex size-10 items-center justify-center rounded-full border border-primary/20 bg-primary/6 text-primary">
-            <PlusIcon className="size-4" />
+        <div className="relative isolate overflow-hidden px-6 py-12 text-center sm:px-10 sm:py-14">
+          <div
+            className="pointer-events-none absolute inset-x-10 top-3 -z-10 h-32 rounded-full bg-primary/8 blur-3xl"
+            aria-hidden="true"
+          />
+          <div className="mx-auto flex w-fit items-center -space-x-2" aria-hidden="true">
+            {Object.values(SOURCE_KIND_PRESENTATION).map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <span
+                  key={item.label}
+                  className={cn(
+                    "flex size-11 items-center justify-center rounded-xl border border-primary/20 bg-background text-primary shadow-sm",
+                    index === 2 &&
+                      "z-10 size-13 border-primary/35 bg-primary text-primary-foreground",
+                  )}
+                >
+                  <Icon className={index === 2 ? "size-5" : "size-4.5"} />
+                </span>
+              );
+            })}
           </div>
-          <h3 className="text-sm font-semibold">No sources yet</h3>
-          <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">
-            Add Moodle, a calendar, a website, a resource portal, or email.
+          <h3 className="mt-6 text-base font-semibold">Start with the sources you actually use</h3>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+            Nothing is connected by default. Add Moodle, calendars, websites, resource portals, or
+            email — and keep adding as many sources as you need.
           </p>
           <Button
-            className="mt-4"
-            size="sm"
+            className="mt-6 min-w-48"
+            size="xl"
             onClick={() => {
               setEditingSourceId(null);
               setDialogOpen(true);
             }}
           >
-            <PlusIcon className="size-3.5" />
-            Add source
+            <PlusIcon />
+            Add your first source
           </Button>
+          <p className="mt-3 text-[11px] text-muted-foreground/75">
+            Passwords and private links stay on this device.
+          </p>
         </div>
       ) : (
         <ul aria-label="Study Buddy sources" className="divide-y divide-border/60">

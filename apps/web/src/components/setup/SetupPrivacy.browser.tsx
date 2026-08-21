@@ -410,7 +410,12 @@ describe.sequential("first-run privacy and setup", () => {
       .element(page.getByRole("heading", { name: "Sources", level: 1 }))
       .toBeInTheDocument();
     await expect.element(page.getByText("STEP 4 OF 5")).toBeInTheDocument();
-    await expect.element(page.getByText("No sources yet")).toBeInTheDocument();
+    await expect
+      .element(page.getByText("Start with the sources you actually use"))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Add your first source" }))
+      .toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
     await expect
       .element(page.getByRole("heading", { name: "Quiz safety", level: 1 }))
