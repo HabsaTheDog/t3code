@@ -262,15 +262,17 @@ export function StudyBuddySettingsPanel() {
         title="Sources"
         icon={<DatabaseZapIcon className="size-3.5" />}
         headerAction={
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={!sourceInventory}
-            onClick={() => setSourceDialogRequested((request) => request + 1)}
-          >
-            <PlusIcon className="size-3.5" />
-            Add source
-          </Button>
+          sourceInventory && sourceInventory.sources.length > 0 ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={!sourceInventory}
+              onClick={() => setSourceDialogRequested((request) => request + 1)}
+            >
+              <PlusIcon className="size-3.5" />
+              Add another source
+            </Button>
+          ) : null
         }
       >
         {sourceInventory ? (

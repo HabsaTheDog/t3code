@@ -771,7 +771,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
     } else {
-      winConfig.signAndEditExecutable = false;
+      // Keep resedit enabled so unsigned builds still embed the Study Buddy icon and metadata.
+      // This disables only Authenticode signing; it does not require a certificate.
+      winConfig.signExecutable = false;
     }
     buildConfig.win = winConfig;
   }
