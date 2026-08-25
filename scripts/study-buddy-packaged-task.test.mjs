@@ -1,6 +1,14 @@
 import { assert, it } from "@effect/vitest";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +69,38 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
     writeFileSync(path.join(staleRun, "document.pdf"), "stale\n");
     assert.isFalse(inspectRunContract(staleRun).completed);
 
+    const partialAnswer = path.join(temp, "partial-answer");
+    mkdirSync(partialAnswer);
+    writeFileSync(
+      path.join(partialAnswer, "run-summary.md"),
+      "Route: quick_answer\nRun status: partial\n",
+    );
+    writeFileSync(path.join(partialAnswer, "error.log"), "");
+    writeFileSync(
+      path.join(partialAnswer, "config.json"),
+      JSON.stringify({
+        stage: "all",
+        intentDecision: { intent: "quick_answer", wantsQuickAnswer: true },
+      }),
+    );
+    writeFileSync(
+      path.join(partialAnswer, "run-progress.json"),
+      JSON.stringify({ status: "partial", artifacts: {} }),
+    );
+    writeFileSync(path.join(partialAnswer, "answer.md"), "partial\n");
+    writeFileSync(path.join(partialAnswer, "answer.json"), "{}\n");
+    assert.isFalse(inspectRunContract(partialAnswer).completed);
+    const partialCheckpoint = spawnSync(
+      process.execPath,
+      [adapterPath, "checkpoint", partialAnswer],
+      { encoding: "utf8" },
+    );
+    assert.deepInclude(JSON.parse(partialCheckpoint.stdout), { report: "blocked" });
+    const partialWait = spawnSync(process.execPath, [adapterPath, "wait", partialAnswer, "1"], {
+      encoding: "utf8",
+    });
+    assert.equal(partialWait.status, 1, partialWait.stderr);
+
     const activeRun = path.join(temp, "active");
     mkdirSync(activeRun);
     writeFileSync(path.join(activeRun, "run-summary.md"), "Run status: running\n");
@@ -91,6 +131,10 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
     writeFileSync(
       path.join(activeRun, "pid.json"),
       `${JSON.stringify({ child_pid: process.pid })}\n`,
+    );
+    writeFileSync(
+      path.join(activeRun, "run-progress.json"),
+      JSON.stringify({ status: "queued", artifacts: {} }),
     );
     const activeCheckpoint = spawnSync(process.execPath, [adapterPath, "checkpoint", activeRun], {
       encoding: "utf8",
@@ -238,6 +282,48 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
       { encoding: "utf8" },
     );
     assert.equal(nativeDirectoryWait.status, 1, nativeDirectoryWait.stderr);
+
+    const createControlSymlinkRun = (name, controlName) => {
+      const runDir = path.join(temp, name);
+      mkdirSync(runDir);
+      writeFileSync(
+        path.join(runDir, "run-summary.md"),
+        `${controlName === "config.json" ? "Route: document" : "Route: quick_answer"}\nRun status: success\n`,
+      );
+      writeFileSync(path.join(runDir, "error.log"), "");
+      writeFileSync(
+        path.join(runDir, "config.json"),
+        JSON.stringify({
+          stage: "all",
+          intentDecision: { intent: "quick_answer", wantsQuickAnswer: true },
+        }),
+      );
+      writeFileSync(
+        path.join(runDir, "run-progress.json"),
+        JSON.stringify({ status: "success", artifacts: {} }),
+      );
+      writeFileSync(path.join(runDir, "answer.md"), "answer\n");
+      writeFileSync(path.join(runDir, "answer.json"), "{}\n");
+      const external = path.join(temp, `${name}-external-control`);
+      writeFileSync(external, readFileSync(path.join(runDir, controlName), "utf8"));
+      rmSync(path.join(runDir, controlName));
+      symlinkSync(external, path.join(runDir, controlName));
+      return runDir;
+    };
+    for (const runDir of [
+      createControlSymlinkRun("summary-symlink", "run-summary.md"),
+      createControlSymlinkRun("config-symlink", "config.json"),
+    ]) {
+      assert.isFalse(inspectRunContract(runDir).completed);
+      const controlCheckpoint = spawnSync(process.execPath, [adapterPath, "checkpoint", runDir], {
+        encoding: "utf8",
+      });
+      assert.deepInclude(JSON.parse(controlCheckpoint.stdout), { report: "blocked" });
+      const controlWait = spawnSync(process.execPath, [adapterPath, "wait", runDir, "1"], {
+        encoding: "utf8",
+      });
+      assert.equal(controlWait.status, 1, controlWait.stderr);
+    }
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
@@ -345,12 +431,17 @@ it("validates packaged interactive Study Guide workflow-root completion", () => 
     const pdfDirectoryPath = path.join(pdfDirectory, "pdf-render", "document.pdf");
     rmSync(pdfDirectoryPath);
     mkdirSync(pdfDirectoryPath);
+    const symlinkedHtml = createGuide({ name: "symlink", status: "success" });
+    const symlinkTarget = path.join(temp, "outside-symlink-target.html");
+    writeFileSync(symlinkTarget, "outside\n");
+    symlinkSync(symlinkTarget, path.join(symlinkedHtml, "web-layout", "document.html"));
     for (const runDir of [
       createGuide({ name: "missing", status: "success" }),
       createGuide({ name: "outside", status: "success", outputPath: outsidePath }),
       createGuide({ name: "failed", status: "failed", html: true }),
       htmlDirectory,
       pdfDirectory,
+      symlinkedHtml,
     ]) {
       assert.isFalse(inspectRunContract(runDir).completed);
       const waited = spawnSync(process.execPath, [adapterPath, "wait", runDir, "1"], {
