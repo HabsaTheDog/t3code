@@ -46,6 +46,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
+    sourceSecretKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
@@ -207,6 +208,11 @@ describe("DesktopBackendManager", () => {
 
         assert.equal(spawnedCommand.command, "/electron");
         assert.deepEqual(spawnedCommand.args, ["/server/bin.mjs", "--bootstrap-fd", "3"]);
+        assert.notInclude(spawnedCommand.args.join(" "), configWithObservability.sourceSecretKey!);
+        assert.notInclude(
+          Object.values(spawnedCommand.options.env ?? {}).join(" "),
+          configWithObservability.sourceSecretKey!,
+        );
         assert.equal(spawnedCommand.options.cwd, "/server");
         assert.equal(spawnedCommand.options.extendEnv, true);
         assert.equal(spawnedCommand.options.stdout, "pipe");

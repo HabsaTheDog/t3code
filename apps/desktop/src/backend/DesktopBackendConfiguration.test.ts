@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopSourceSecretKeyStore from "../app/DesktopSourceSecretKeyStore.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
@@ -35,6 +36,11 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposureShape);
+
+const sourceSecretKeyStoreLayer = Layer.succeed(
+  DesktopSourceSecretKeyStore.DesktopSourceSecretKeyStore,
+  { getOrCreate: Effect.succeed("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=") },
+);
 
 function makeEnvironmentLayer(
   baseDir: string,
@@ -90,6 +96,7 @@ const withHarness = <A, E, R>(
         DesktopBackendConfiguration.layer.pipe(
           Layer.provideMerge(serverExposureLayer),
           Layer.provideMerge(makeEnvironmentLayer(baseDir)),
+          Layer.provideMerge(sourceSecretKeyStoreLayer),
         ),
       ),
     );
@@ -122,6 +129,10 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.bootstrap.tailscaleServeEnabled, true);
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
+        assert.equal(
+          first.bootstrap.sourceSecretKey,
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        );
         assert.equal(second.bootstrap.desktopBootstrapToken, first.bootstrap.desktopBootstrapToken);
       }),
     ),
@@ -187,6 +198,7 @@ describe("DesktopBackendConfiguration", () => {
                 devServerUrl: "http://127.0.0.1:5733",
               }),
             ),
+            Layer.provideMerge(sourceSecretKeyStoreLayer),
           ),
         ),
       );

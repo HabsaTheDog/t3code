@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import type { ServerSecretStoreShape } from "../../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../../config.ts";
 import {
   parseEnvDocument,
@@ -11,6 +12,26 @@ import {
   publicStudyBuddyConfiguration,
   updateStudyBuddyConfiguration,
 } from "../studyBuddyConfig.ts";
+
+function secretStore(): {
+  readonly store: ServerSecretStoreShape;
+  readonly values: Map<string, Uint8Array>;
+} {
+  const values = new Map<string, Uint8Array>();
+  return {
+    values,
+    store: {
+      get: (name) => Effect.succeed(values.get(name) ?? null),
+      set: (name, value) => Effect.sync(() => void values.set(name, value)),
+      create: (name, value) => Effect.sync(() => void values.set(name, value)),
+      getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+      remove: (name) => Effect.sync(() => void values.delete(name)),
+    },
+  };
+}
+
+const secureConfig = (cwd: string) =>
+  ({ cwd, sourceSecretKey: Buffer.alloc(32, 9).toString("base64") }) as ServerConfigShape;
 
 describe("typed Study Buddy configuration", () => {
   it("preserves unknown env entries while patching allowlisted values", () => {
@@ -76,30 +97,45 @@ describe("typed Study Buddy configuration", () => {
     const previousRoot = process.env.STUDY_BUDDY_ROOT;
     process.env.STUDY_BUDDY_ROOT = root;
     try {
-      const config = { cwd: root } as ServerConfigShape;
+      const config = secureConfig(root);
+      const secrets = secretStore();
       await Effect.runPromise(
-        updateStudyBuddyConfiguration(config, {
-          moodleUsername: "if00test",
-          moodlePassword: { operation: "set", value: "moodle-secret" },
-          cisPassword: { operation: "clear" },
-          calendarUrlSecret: {
-            operation: "set",
-            value: "webcal://calendar.example/private.ics",
+        updateStudyBuddyConfiguration(
+          config,
+          {
+            moodleUsername: "if00test",
+            moodlePassword: { operation: "set", value: "moodle-secret" },
+            cisPassword: { operation: "clear" },
+            calendarUrlSecret: {
+              operation: "set",
+              value: "webcal://calendar.example/private.ics",
+            },
           },
-        }),
+          secrets.store,
+        ),
       );
       await Effect.runPromise(
-        updateStudyBuddyConfiguration(config, {
-          moodlePassword: { operation: "unchanged" },
-          calendarUrlSecret: { operation: "unchanged" },
-        }),
+        updateStudyBuddyConfiguration(
+          config,
+          {
+            moodlePassword: { operation: "unchanged" },
+            calendarUrlSecret: { operation: "unchanged" },
+          },
+          secrets.store,
+        ),
       );
 
       const envPath = path.join(root, ".env.local");
       const raw = await readFile(envPath, "utf8");
-      expect(raw).toContain("MOODLE_PASSWORD=moodle-secret\n");
+      expect(raw).not.toContain("if00test");
+      expect(raw).not.toContain("moodle-secret");
       expect(raw).toContain("CIS_PASSWORD=\n");
-      expect(raw).toContain("CIS_CALENDAR_URL=webcal://calendar.example/private.ics\n");
+      expect(raw).not.toContain("private.ics");
+      const encrypted = Array.from(secrets.values.values(), (value) =>
+        new TextDecoder().decode(value),
+      ).join("\n");
+      expect(encrypted).not.toContain("moodle-secret");
+      expect(encrypted).not.toContain("private.ics");
       expect((await stat(envPath)).mode & 0o777).toBe(0o600);
     } finally {
       if (previousRoot === undefined) delete process.env.STUDY_BUDDY_ROOT;
@@ -114,9 +150,13 @@ describe("typed Study Buddy configuration", () => {
     try {
       await expect(
         Effect.runPromise(
-          updateStudyBuddyConfiguration({ cwd: root } as ServerConfigShape, {
-            moodleDashboardUrl: "http://university.example/login",
-          }),
+          updateStudyBuddyConfiguration(
+            secureConfig(root),
+            {
+              moodleDashboardUrl: "http://university.example/login",
+            },
+            secretStore().store,
+          ),
         ),
       ).rejects.toMatchObject({ message: expect.stringContaining("use HTTPS") });
     } finally {

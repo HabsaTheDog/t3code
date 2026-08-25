@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { chromium } from "playwright";
+import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "./browserAuth.ts";
 import {
@@ -40,7 +41,9 @@ interface ConnectionTestDependencies {
 }
 
 const liveDependencies: ConnectionTestDependencies = {
-  readConfiguration: readStoredStudyBuddyConfiguration,
+  readConfiguration: async () => {
+    throw new Error("Secure source storage was not provided.");
+  },
   fetchCalendar: fetchCalendarText,
   parseCalendar: validateCalendarText,
   launchBrowser: () => chromium.launch({ headless: true }),
@@ -52,10 +55,20 @@ export const testStudyBuddyConnection = (
   config: ServerConfigShape,
   target: StudyBuddyConnectionTarget,
   dependencyOverrides: Partial<ConnectionTestDependencies> = {},
+  secrets?: ServerSecretStoreShape,
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const dependencies = { ...liveDependencies, ...dependencyOverrides };
+      const dependencies = {
+        ...liveDependencies,
+        ...(secrets
+          ? {
+              readConfiguration: (serverConfig: ServerConfigShape) =>
+                readStoredStudyBuddyConfiguration(serverConfig, secrets),
+            }
+          : {}),
+        ...dependencyOverrides,
+      };
       const stored = await dependencies.readConfiguration(config);
       const checkedAt = dependencies.now();
       try {

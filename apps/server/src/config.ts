@@ -70,6 +70,8 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly noBrowser: boolean;
   readonly startupPresentation: StartupPresentation;
   readonly desktopBootstrapToken: string | undefined;
+  /** In-memory only; delivered by the desktop parent over the one-shot bootstrap pipe. */
+  readonly sourceSecretKey?: string;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
   readonly tailscaleServeEnabled: boolean;

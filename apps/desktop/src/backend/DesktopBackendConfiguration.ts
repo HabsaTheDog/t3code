@@ -12,12 +12,13 @@ import * as Ref from "effect/Ref";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopSourceSecretKeyStore from "../app/DesktopSourceSecretKeyStore.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 
 export interface DesktopBackendConfigurationShape {
   readonly resolve: Effect.Effect<
     DesktopBackendManager.DesktopBackendStartConfig,
-    PlatformError.PlatformError
+    PlatformError.PlatformError | DesktopSourceSecretKeyStore.DesktopSourceSecretKeyStoreError
   >;
 }
 
@@ -88,6 +89,7 @@ const readPersistedBackendObservabilitySettings: Effect.Effect<
 const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolveStartConfig")(
   function* (input: {
     readonly bootstrapToken: string;
+    readonly sourceSecretKey: string;
     readonly observabilitySettings: BackendObservabilitySettings;
   }): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -113,6 +115,7 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         t3Home: environment.baseDir,
         host: backendExposure.bindHost,
         desktopBootstrapToken: input.bootstrapToken,
+        sourceSecretKey: input.sourceSecretKey,
         tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
         tailscaleServePort: backendExposure.tailscaleServePort,
         ...Option.match(input.observabilitySettings.otlpTracesUrl, {
@@ -137,6 +140,7 @@ export const layer = Layer.effect(
     const fileSystem = yield* FileSystem.FileSystem;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const crypto = yield* Crypto.Crypto;
+    const sourceSecretKeyStore = yield* DesktopSourceSecretKeyStore.DesktopSourceSecretKeyStore;
     const tokenRef = yield* Ref.make(Option.none<string>());
     const getOrCreateBootstrapToken = Effect.gen(function* () {
       const existing = yield* Ref.get(tokenRef);
@@ -152,12 +156,14 @@ export const layer = Layer.effect(
     return DesktopBackendConfiguration.of({
       resolve: Effect.gen(function* () {
         const bootstrapToken = yield* getOrCreateBootstrapToken;
+        const sourceSecretKey = yield* sourceSecretKeyStore.getOrCreate;
         const observabilitySettings = yield* readPersistedBackendObservabilitySettings.pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
         );
         return yield* resolveBackendStartConfig({
           bootstrapToken,
+          sourceSecretKey,
           observabilitySettings,
         }).pipe(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
