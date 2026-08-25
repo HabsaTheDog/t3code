@@ -22,6 +22,11 @@ describe("feature telemetry catalog", () => {
 
   it("describes route exposure without route or user content", () => {
     expect(featuresExposedOnRoute("chat")).toContain("chat.profile");
+    expect(featuresExposedOnRoute("chat")).toContain("email.permissions");
+    expect(featuresExposedOnRoute("/settings/study-buddy")).toEqual(
+      expect.arrayContaining(["sources.management", "sources.connection", "email.inbox"]),
+    );
+    expect(featuresExposedOnRoute("/settings/general")).toContain("settings.theme");
     expect(featuresExposedOnRoute("chat")).not.toContain("chat.voice");
     expect(FEATURE_CATALOG.map(({ id }) => id)).toContain("voice.setup");
     expect(featureProperties("chat.profile", { surface: "chat" })).toEqual({

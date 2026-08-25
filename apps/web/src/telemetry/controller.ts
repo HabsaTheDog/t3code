@@ -32,6 +32,13 @@ const SEMANTIC_EVENTS = new Set([
   "provider.auth_completed",
   "provider.auth_failed",
   "study_connection.tested",
+  "source.changed",
+  "source.connection.tested",
+  "email.permission.changed",
+  "email.inbox.loaded",
+  "email.message.opened",
+  "email.send_approval.responded",
+  "theme.selected",
   "speech.model.install_started",
   "speech.model.install_completed",
   "speech.model.install_failed",
@@ -107,7 +114,7 @@ export class TelemetryController {
     this.#projectToken = options.projectToken?.trim() ?? "";
     this.#configuredSecrets = options.configuredSecrets ?? (() => []);
     this.#contextProperties =
-      options.contextProperties ?? (() => ({ telemetry_schema_version: 6 }));
+      options.contextProperties ?? (() => ({ telemetry_schema_version: 7 }));
     this.#onInstallationIdCreated = options.onInstallationIdCreated;
     this.#createOutbox = options.createOutbox ?? (() => new TelemetryOutbox(options.outboxOptions));
     this.#posthog = options.posthogClient ?? new BrowserPostHogTelemetryClient();

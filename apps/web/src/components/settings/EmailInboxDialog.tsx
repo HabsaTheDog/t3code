@@ -2,11 +2,15 @@ import type {
   StudyBuddyEmailMessageSummary,
   StudyBuddyReadEmailMessageResult,
   StudyBuddySourceBlock,
+  StudyBuddySourceInventory,
 } from "@t3tools/contracts";
 import { MailIcon, SearchIcon, ShieldCheckIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import { sourceTelemetryProperties, telemetryCountBucket } from "../../telemetry/sourceTelemetry";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -24,10 +28,12 @@ import { Spinner } from "../ui/spinner";
 
 export function EmailInboxDialog({
   source,
+  inventory,
   open,
   onOpenChange,
 }: {
   source: StudyBuddySourceBlock | undefined;
+  inventory: StudyBuddySourceInventory;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -41,6 +47,7 @@ export function EmailInboxDialog({
   const loadMessages = useCallback(
     async (searchQuery?: string) => {
       if (!source) return;
+      const operation = searchQuery?.trim() ? "search" : "list";
       setLoadingList(true);
       setError(null);
       setSelected(null);
@@ -58,19 +65,40 @@ export function EmailInboxDialog({
               limit: 25,
             });
         setMessages(result.messages);
+        void telemetry.capture({
+          event: "email.inbox.loaded",
+          properties: {
+            ...sourceTelemetryProperties(source, inventory),
+            operation,
+            outcome: "success",
+            result_count: telemetryCountBucket(result.messages.length),
+          },
+        });
       } catch (cause) {
         setMessages([]);
         setError(message(cause));
+        void telemetry.capture({
+          event: "email.inbox.loaded",
+          properties: {
+            ...sourceTelemetryProperties(source, inventory),
+            operation,
+            outcome: "failed",
+          },
+        });
       } finally {
         setLoadingList(false);
       }
     },
-    [source],
+    [inventory, source],
   );
 
   useEffect(() => {
     if (!open || !source) return;
     setQuery("");
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("email.inbox", { surface: "settings" }),
+    });
     void loadMessages();
   }, [loadMessages, open, source]);
 
@@ -85,6 +113,18 @@ export function EmailInboxDialog({
         messageId: summary.messageId,
       });
       setSelected(result);
+      const seenStatePreserved =
+        result.seenState.preserved && result.seenState.seenBefore === result.seenState.seenAfter;
+      void telemetry.capture({
+        event: "email.message.opened",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          outcome: seenStatePreserved ? "opened" : "blocked",
+          was_unread: !summary.isSeen,
+          has_attachments: summary.hasAttachments,
+          body_truncated: result.body.truncated,
+        },
+      });
       if (
         !result.seenState.preserved ||
         result.seenState.seenBefore !== result.seenState.seenAfter
@@ -95,6 +135,15 @@ export function EmailInboxDialog({
       }
     } catch (cause) {
       setError(message(cause));
+      void telemetry.capture({
+        event: "email.message.opened",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          outcome: "failed",
+          was_unread: !summary.isSeen,
+          has_attachments: summary.hasAttachments,
+        },
+      });
     } finally {
       setLoadingMessageId(null);
     }
@@ -125,7 +174,12 @@ export function EmailInboxDialog({
               onChange={(event) => setQuery(event.currentTarget.value)}
               placeholder="Search subject, sender, or message text"
             />
-            <Button type="submit" variant="outline" disabled={loadingList}>
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={loadingList}
+              data-analytics-id="email.inbox.search"
+            >
               {loadingList ? <Spinner className="size-3.5" /> : <SearchIcon className="size-3.5" />}
               Search
             </Button>
@@ -159,6 +213,7 @@ export function EmailInboxDialog({
                     <li key={`${summary.folder}:${summary.messageId}`}>
                       <button
                         type="button"
+                        data-analytics-id="email.inbox.message"
                         className="w-full px-4 py-3 text-left outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={() => void readMessage(summary)}
                       >
@@ -224,7 +279,11 @@ export function EmailInboxDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            data-analytics-id="email.inbox.close"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Close
           </Button>
         </DialogFooter>

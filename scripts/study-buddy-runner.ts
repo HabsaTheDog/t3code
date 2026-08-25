@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { sanitizeStudyBuddyHostEnvironment } from "./lib/study-buddy-environment.ts";
+import { assertStudyBuddyRuntimeIsolation } from "./lib/study-buddy-runtime-isolation.ts";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const T3_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -22,6 +23,8 @@ const command = (process.argv[2] ?? "help") as CommandName | "help";
 const passthroughArgs = process.argv.slice(3);
 
 const t3Home = path.resolve(process.env.STUDY_BUDDY_T3_HOME || DEFAULT_T3_HOME);
+
+assertStudyBuddyRuntimeIsolation({ t3Home });
 
 function ensureT3Home(): void {
   mkdirSync(t3Home, { recursive: true });

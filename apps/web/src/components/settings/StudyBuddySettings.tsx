@@ -265,6 +265,7 @@ export function StudyBuddySettingsPanel() {
           <Button
             size="xs"
             variant="ghost"
+            data-analytics-id="sources.add"
             disabled={!sourceInventory}
             onClick={() => setSourceDialogRequested((request) => request + 1)}
           >
