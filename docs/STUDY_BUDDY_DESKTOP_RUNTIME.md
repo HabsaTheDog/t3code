@@ -15,14 +15,22 @@ runtime dependencies. This makes transitive
 workflow dependency resolution lockfile-bound and fails closed on package/lock
 drift.
 
-The one intentional external runtime dependency is a Chromium-compatible
-system browser. Study Buddy resolves, in order, an explicit
+The one external dependency required for browser-backed sources is a
+Chromium-compatible system browser. Study Buddy resolves, in order, an explicit
 `STUDY_BUDDY_BROWSER_EXECUTABLE`, Microsoft Edge, Google Chrome, or Chromium.
 Windows 11 normally provides Edge; Fedora users can install Chromium or Chrome.
 If no supported executable exists, source checks fail with
 `browser-runtime-missing` instead of falling back to a developer Playwright
 cache. Bundling Playwright Chromium would add a large duplicate browser and is
 therefore not the default distribution model.
+
+Some document capabilities intentionally integrate with separately installed
+desktop tools: Typst is required only when generating a PDF, Poppler is required
+for complete PDF text/page extraction, and LibreOffice is optional for Office
+document conversion. Their absence must be reported as an unavailable
+capability with platform-specific remediation; it must not be mistaken for a
+missing Study Buddy JavaScript runtime. Offline HTML generation does not depend
+on these tools.
 
 Packaged workflow commands use a standalone cross-platform JavaScript adapter
 executed by Electron in Node mode. Windows does not require Git Bash, WSL, a
