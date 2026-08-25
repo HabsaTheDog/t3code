@@ -1222,7 +1222,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               const [thread, studyConfiguration, settings, threadEvents] = yield* Effect.all([
                 projectionSnapshotQuery.getThreadDetailById(input.threadId),
                 Effect.tryPromise({
-                  try: () => readStoredStudyBuddyConfiguration(config),
+                  try: () => readStoredStudyBuddyConfiguration(config, sourceSecrets),
                   catch: () =>
                     new ConversationTurnRedactionError({
                       message: "Conversation redaction configuration is unavailable.",
@@ -1346,7 +1346,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverGetStudyBuddyConfiguration]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetStudyBuddyConfiguration,
-            readStudyBuddyConfiguration(config),
+            readStudyBuddyConfiguration(config, sourceSecrets),
             {
               "rpc.aggregate": "server",
             },
@@ -1354,7 +1354,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverUpdateStudyBuddyConfiguration]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateStudyBuddyConfiguration,
-            updateStudyBuddyConfiguration(config, patch),
+            updateStudyBuddyConfiguration(config, patch, sourceSecrets),
             {
               "rpc.aggregate": "server",
             },
@@ -1362,7 +1362,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverTestStudyBuddyConnection]: ({ target }) =>
           observeRpcEffect(
             WS_METHODS.serverTestStudyBuddyConnection,
-            testStudyBuddyConnection(config, target),
+            testStudyBuddyConnection(config, target, {}, sourceSecrets),
             {
               "rpc.aggregate": "server",
             },

@@ -79,6 +79,34 @@ describe("TelemetryController consent lifecycle", () => {
     controller.stop();
   });
 
+  it("accepts the bounded sources, email, and theme event families", async () => {
+    const controller = new TelemetryController({
+      createOutbox: outboxFactory(),
+      posthogClient: posthogSpy(),
+    });
+    await controller.hydrate(
+      consent({
+        analyticsConsent: "accepted",
+        analyticsEnabledAt: "2026-06-27T10:00:00.000Z",
+      }),
+    );
+    const events = [
+      "source.changed",
+      "source.connection.tested",
+      "email.permission.changed",
+      "email.inbox.loaded",
+      "email.message.opened",
+      "email.send_approval.responded",
+      "theme.selected",
+    ] as const;
+
+    await expect(
+      Promise.all(events.map((event) => controller.capture({ event }))),
+    ).resolves.toEqual(events.map(() => true));
+    await expect(controller.diagnostics()).resolves.toMatchObject({ queuedItems: events.length });
+    controller.stop();
+  });
+
   it("keeps a fresh client silent with the production SDK boundary configured", async () => {
     const fetchSpy = vi.fn();
     const localStorage = {
@@ -217,7 +245,7 @@ describe("TelemetryController consent lifecycle", () => {
         event: "$$heatmap",
         properties: expect.objectContaining({
           distinct_id: "install-id",
-          telemetry_schema_version: 6,
+          telemetry_schema_version: 7,
           sdk_event_source: "posthog-js",
           $viewport_width: 1440,
           $viewport_height: 900,
@@ -277,7 +305,7 @@ describe("TelemetryController consent lifecycle", () => {
             route: "chat",
             $current_url: "https://app.t3.codes/_chat/",
             $session_id: "0198a748-305a-7000-8000-000000000001",
-            telemetry_schema_version: 6,
+            telemetry_schema_version: 7,
           }),
         }),
         expect.objectContaining({

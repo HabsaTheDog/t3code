@@ -18,7 +18,12 @@ afterEach(async () => {
   }
 });
 
-async function harness(options: { webmailRuntime?: StudyBuddyWebmailRuntime } = {}) {
+async function harness(
+  options: {
+    webmailRuntime?: StudyBuddyWebmailRuntime;
+    sourceSecretKey?: string | null;
+  } = {},
+) {
   const directory = await mkdtemp(path.join(tmpdir(), "study-buddy-email-source-"));
   temporaryDirectories.push(directory);
   const values = new Map<string, Uint8Array>();
@@ -38,9 +43,15 @@ async function harness(options: { webmailRuntime?: StudyBuddyWebmailRuntime } = 
     cwd: directory,
     stateDir: path.join(directory, "state"),
     secretsDir: path.join(directory, "secrets"),
+    ...(options.sourceSecretKey === null
+      ? {}
+      : { sourceSecretKey: options.sourceSecretKey ?? Buffer.alloc(32, 7).toString("base64") }),
   } as ServerConfigShape;
   return {
+    config,
     directory,
+    secretStore: secrets,
+    secretValues: values,
     platform: createStudyBuddySourcePlatform(config, secrets, {
       discoverWebmailProvider: async (url) => ({
         profile: {
@@ -229,9 +240,131 @@ describe("Study Buddy source inventory", () => {
 
     expect(inventory.sources.find((source) => source.id === moodle.id)?.label).toBe("My Moodle");
     const raw = await readFile(path.join(directory, ".env.local"), "utf8");
-    expect(raw).toContain("MOODLE_USERNAME=new-user\n");
-    expect(raw).toContain("MOODLE_PASSWORD=new-password\n");
+    expect(raw).not.toContain("old-user");
+    expect(raw).not.toContain("old-password");
+    expect(raw).not.toContain("new-user");
+    expect(raw).not.toContain("new-password");
     expect(raw).toContain("MOODLE_DASHBOARD_URL=https://learn.example.edu/my/\n");
+  });
+
+  it("encrypts source usernames, passwords, and private calendar URLs at rest", async () => {
+    const { directory, platform, secretValues } = await harness();
+    const username = "source-user-canary@example.edu";
+    const password = "source-password-canary";
+    const calendarUrl = "https://calendar.example.edu/private-calendar-canary.ics";
+
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "calendar",
+      label: "Calendar",
+      url: "https://calendar.example.edu",
+      enabled: true,
+      auth: { operation: "set-bearer-url", value: calendarUrl },
+    });
+
+    expect(inventory.connections.some((entry) => entry.auth.accountLabel === username)).toBe(true);
+    const persisted = [
+      await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
+      ...Array.from(secretValues.values(), (value) => new TextDecoder().decode(value)),
+    ].join("\n");
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+    expect(persisted).not.toContain(calendarUrl);
+    expect(persisted).toContain('"algorithm":"aes-256-gcm"');
+  });
+
+  it("migrates a legacy plaintext source secret only after verified encryption", async () => {
+    const { platform, secretValues } = await harness();
+    const username = "legacy-user-canary";
+    const password = "legacy-password-canary";
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+    const [encryptedSecretName] = secretValues.keys();
+    expect(encryptedSecretName).toMatch(/-v2$/);
+    const secretName = encryptedSecretName!.replace(/-v2$/, "");
+    secretValues.delete(encryptedSecretName!);
+    secretValues.set(
+      secretName!,
+      new TextEncoder().encode(JSON.stringify({ type: "password", username, password })),
+    );
+
+    const migrated = await platform.getInventory();
+    expect(migrated.connections[0]?.auth.accountLabel).toBe(username);
+    expect(secretValues.has(secretName)).toBe(false);
+    const persisted = new TextDecoder().decode(secretValues.get(encryptedSecretName!)!);
+    expect(persisted).toContain('"version":2');
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+
+    // A crash between verified encryption and legacy deletion is retry-safe.
+    secretValues.set(
+      secretName!,
+      new TextEncoder().encode(JSON.stringify({ type: "password", username, password })),
+    );
+    await platform.getInventory();
+    expect(secretValues.has(secretName)).toBe(false);
+    expect(inventory.sources).toHaveLength(1);
+  });
+
+  it("fails closed when the desktop source-secret key is missing or malformed", async () => {
+    const missing = await harness({ sourceSecretKey: null });
+    const malformed = await harness({ sourceSecretKey: "not-a-valid-key" });
+    const input = {
+      expectedRevision: 0,
+      kind: "moodle-course" as const,
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password" as const,
+        username: "student",
+        password: "secret",
+      },
+    };
+
+    await expect(missing.platform.createSource(input)).rejects.toThrow(
+      "Secure source storage is unavailable",
+    );
+    await expect(malformed.platform.createSource(input)).rejects.toThrow("invalid key");
+    expect(missing.secretValues.size).toBe(0);
+    expect(malformed.secretValues.size).toBe(0);
+  });
+
+  it("allows only the current OS-backed key to decrypt persisted source credentials", async () => {
+    const { config, platform, secretStore } = await harness();
+    await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "current-user-canary",
+        password: "current-user-password-canary",
+      },
+    });
+    const wrongUserPlatform = createStudyBuddySourcePlatform(
+      { ...config, sourceSecretKey: Buffer.alloc(32, 8).toString("base64") },
+      secretStore,
+      { assertPublicNetworkHost: async () => undefined },
+    );
+
+    await expect(wrongUserPlatform.getInventory()).rejects.toThrow("could not be unlocked");
   });
 });
 
@@ -275,6 +408,7 @@ describe("Study Buddy IMAP source configuration", () => {
         cwd: "/tmp",
         stateDir: path.join(temporaryDirectories.at(-1)!, "guarded-state"),
         secretsDir: path.join(temporaryDirectories.at(-1)!, "guarded-secrets"),
+        sourceSecretKey: Buffer.alloc(32, 7).toString("base64"),
       } as ServerConfigShape,
       {
         get: () => Effect.succeed(null),

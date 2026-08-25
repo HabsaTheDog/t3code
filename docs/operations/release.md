@@ -32,17 +32,22 @@ Required release assets include the installer/AppImage, channel YAML files
 `*.blockmap` files. The project website and in-app updater consume the same
 GitHub Release assets.
 
-`STUDY_BUDDY_DESKTOP_UPDATE_REPOSITORY=owner/repo` may override the build-time
-feed for controlled testing. `STUDY_BUDDY_DISABLE_AUTO_UPDATE=true` disables
-runtime update checks. Legacy `T3CODE_*` update variables remain accepted only
-for migration and local upstream compatibility.
+Release builds require explicit
+`STUDY_BUDDY_DESKTOP_UPDATE_REPOSITORY=owner/repo` and
+`STUDY_BUDDY_DESKTOP_UPDATE_CHANNEL=latest|alpha|beta|nightly` values. The
+channel must match the semantic version. `STUDY_BUDDY_DISABLE_AUTO_UPDATE=true`
+disables runtime update checks. Legacy `T3CODE_*` update variables remain
+accepted only for migration and local upstream compatibility.
 
 ## Signing boundary
 
-Unsigned Linux and Windows artifacts may be produced for internal alpha review.
-Windows release publication remains blocked until the reviewed SignPath
-Foundation integration signs the exact assembled artifact. Apple signing and
-notarization are outside the current product scope.
+The initial stable Linux and Windows artifacts are intentionally unsigned.
+Windows displays a SmartScreen/unknown-publisher warning, and the release notes
+must explain that warning and link users to the published SHA-256 checksums.
+The release workflow verifies and records the unsigned state instead of
+claiming a signature. A future trusted-signing integration must be reviewed
+before the workflow may report `signed: true`. Apple signing, notarization, and
+macOS distribution are outside the current product scope.
 
 For the complete tag, approval, checksumming, SBOM, and draft-publication
 procedure, follow the parent

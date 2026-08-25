@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalFetch:off
 // @effect-diagnostics globalTimers:off
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
@@ -31,14 +31,19 @@ import { chromium } from "playwright";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "../moodle/browserAuth.ts";
+import {
+  BROWSER_RUNTIME_MISSING_CODE,
+  isBrowserRuntimeMissingError,
+  resolveSystemBrowserExecutable,
+} from "../moodle/browserRuntime.ts";
 import { assertPublicHttpsUrl, assertPublicNetworkHostname } from "../moodle/browserSecurity.ts";
 import {
   fetchCalendarText,
   normalizeCalendarUrl,
   validateCalendarText,
 } from "../moodle/calendarConnection.ts";
-import { testStudyBuddyConnection } from "../moodle/connectionTests.ts";
 import {
+  clearLegacyStudyBuddySourceCredentials,
   readStoredStudyBuddyConfiguration,
   updateStudyBuddyConfiguration,
 } from "../moodle/studyBuddyConfig.ts";
@@ -52,6 +57,12 @@ import {
   discoverStudyBuddyWebmailProvider,
   type StudyBuddyWebmailDiscoveryResult,
 } from "./webmailDiscovery.ts";
+import {
+  getSourceSecret as getSecret,
+  removeSourceSecret as removeSecret,
+  setSourceSecret as setSecret,
+  type SourceSecret,
+} from "./sourceSecretStorage.ts";
 
 interface StoredSourceDocument {
   readonly version: 1;
@@ -60,19 +71,6 @@ interface StoredSourceDocument {
   readonly sources: readonly StudyBuddySourceBlock[];
 }
 
-interface PasswordSecret {
-  type: "password";
-  username: string;
-  password: string;
-  emailAddress?: string;
-}
-
-interface BearerSecret {
-  type: "bearer-url";
-  value: string;
-}
-
-type SourceSecret = PasswordSecret | BearerSecret;
 const isStudyBuddySourceError = Schema.is(StudyBuddySourceError);
 const StoredSourceDocumentSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -81,19 +79,6 @@ const StoredSourceDocumentSchema = Schema.Struct({
   sources: Schema.Array(StudyBuddySourceBlockSchema),
 });
 const decodeStoredSourceDocument = Schema.decodeUnknownSync(StoredSourceDocumentSchema);
-const SourceSecretSchema = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("password"),
-    username: Schema.String.check(Schema.isMaxLength(1_000)),
-    password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
-    emailAddress: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(320))),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("bearer-url"),
-    value: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
-  }),
-]);
-const decodeSourceSecret = Schema.decodeUnknownSync(SourceSecretSchema);
 
 function nowIso(): string {
   return DateTime.formatIso(DateTime.nowUnsafe());
@@ -195,13 +180,13 @@ export function createStudyBuddySourcePlatform(
   };
 
   const getInventory = async (): Promise<StudyBuddySourceInventory> =>
-    publicInventory(await readDocument(config, registryPath), secrets);
+    publicInventory(config, await materializedDocument(config, registryPath, secrets), secrets);
 
   const resolveEmailAccess = async (
     sourceId: string,
     purpose: "read" | "test" | "send",
   ): Promise<StudyBuddyEmailAccess> => {
-    const document = await readDocument(config, registryPath);
+    const document = await materializedDocument(config, registryPath, secrets);
     const source = document.sources.find((entry) => entry.id === sourceId);
     if (!source) throw sourceError("not-found", "Email source was not found.");
     if (source.kind !== "email") throw sourceError("invalid", "Source is not an email source.");
@@ -229,7 +214,7 @@ export function createStudyBuddySourcePlatform(
     }
     const connection = document.connections.find((entry) => entry.id === source.connectionId);
     if (!connection) throw sourceError("internal", "Email source connection is missing.");
-    const secret = await getSecret(secrets, connection.id);
+    const secret = await getSecret(config, secrets, connection.id);
     if (secret?.type !== "password") {
       throw sourceError("unavailable", "Email sign-in details are not configured.");
     }
@@ -245,7 +230,7 @@ export function createStudyBuddySourcePlatform(
         secure: true,
         username: secret.username,
         password: secret.password,
-        ...(connection.auth.emailAddress ? { senderEmail: connection.auth.emailAddress } : {}),
+        ...(secret.emailAddress ? { senderEmail: secret.emailAddress } : {}),
         folders: source.scope.mailFolders.length > 0 ? source.scope.mailFolders : ["INBOX"],
       };
     }
@@ -257,7 +242,7 @@ export function createStudyBuddySourcePlatform(
       baseUrl: endpoint.href,
       username: secret.username,
       password: secret.password,
-      ...(connection.auth.emailAddress ? { senderEmail: connection.auth.emailAddress } : {}),
+      ...(secret.emailAddress ? { senderEmail: secret.emailAddress } : {}),
       folders: source.scope.mailFolders.length > 0 ? source.scope.mailFolders : ["INBOX"],
     };
   };
@@ -269,7 +254,7 @@ export function createStudyBuddySourcePlatform(
 
   const createSource = (input: StudyBuddyCreateSourceInput) =>
     withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       assertRevision(document, input.expectedRevision);
       const descriptor = adapterForKind(input.kind);
       const parsed = validatePublicSourceUrl(input.url, input.kind, input.auth.operation);
@@ -283,7 +268,7 @@ export function createStudyBuddySourcePlatform(
       const suffix = randomUUID();
       const sourceId = `source-${suffix}`;
       const connectionId = `connection-${suffix}`;
-      const auth = publicAuthForCreate(input.auth);
+      const auth = storedAuth(publicAuthForCreate(input.auth));
       const connection: StudyBuddySourceConnection = {
         id: connectionId,
         adapterId: webmail?.profile.id ?? descriptor.id,
@@ -323,7 +308,7 @@ export function createStudyBuddySourcePlatform(
         revision: 0,
       };
       const secret = secretFromCreate(input.auth);
-      if (secret) await setSecret(secrets, connectionId, secret);
+      if (secret) await setSecret(config, secrets, connectionId, secret);
       const next: StoredSourceDocument = {
         ...document,
         revision: document.revision + 1,
@@ -336,12 +321,12 @@ export function createStudyBuddySourcePlatform(
         if (secret) await removeSecret(secrets, connectionId).catch(() => undefined);
         throw error;
       }
-      return publicInventory(next, secrets);
+      return publicInventory(config, next, secrets);
     }).catch(mapSourceError);
 
   const updateSource = (input: StudyBuddyUpdateSourceInput) =>
     withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       assertRevision(document, input.expectedRevision);
       const index = document.sources.findIndex((source) => source.id === input.sourceId);
       if (index < 0) throw sourceError("not-found", "Source was not found.");
@@ -377,10 +362,12 @@ export function createStudyBuddySourcePlatform(
         const legacyTarget = legacyTargetFor(source.id);
         if (legacyTarget === "moodle") {
           await Effect.runPromise(
-            updateStudyBuddyConfiguration(config, { moodleDashboardUrl: input.url }),
+            updateStudyBuddyConfiguration(config, { moodleDashboardUrl: input.url }, secrets),
           );
         } else if (legacyTarget === "cis") {
-          await Effect.runPromise(updateStudyBuddyConfiguration(config, { cisUrl: input.url }));
+          await Effect.runPromise(
+            updateStudyBuddyConfiguration(config, { cisUrl: input.url }, secrets),
+          );
         }
       }
       if (input.label !== undefined) nextConnection = { ...nextConnection, label: input.label };
@@ -411,12 +398,12 @@ export function createStudyBuddySourcePlatform(
       sources[index] = nextSource;
       const next = { ...document, revision: document.revision + 1, connections, sources };
       await writeDocument(registryPath, next);
-      return publicInventory(next, secrets);
+      return publicInventory(config, next, secrets);
     }).catch(mapSourceError);
 
   const deleteSource = (input: StudyBuddyDeleteSourceInput) =>
     withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       assertRevision(document, input.expectedRevision);
       const source = document.sources.find((entry) => entry.id === input.sourceId);
       if (!source) throw sourceError("not-found", "Source was not found.");
@@ -433,19 +420,18 @@ export function createStudyBuddySourcePlatform(
           : document.connections.filter((entry) => entry.id !== source.connectionId),
       };
       await writeDocument(registryPath, next);
-      if (!connectionStillUsed && !isLegacyConnection(source.connectionId)) {
+      if (!connectionStillUsed) {
         await removeSecret(secrets, source.connectionId);
       }
-      return publicInventory(next, secrets);
+      return publicInventory(config, next, secrets);
     }).catch(mapSourceError);
 
   const setSourceAuth = (input: StudyBuddySetSourceAuthInput) =>
     withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       assertRevision(document, input.expectedRevision);
       const source = document.sources.find((entry) => entry.id === input.sourceId);
       if (!source) throw sourceError("not-found", "Source was not found.");
-      const legacyTarget = legacyTargetFor(source.id);
       const connectionIndex = document.connections.findIndex(
         (entry) => entry.id === source.connectionId,
       );
@@ -455,36 +441,27 @@ export function createStudyBuddySourcePlatform(
       let displayOrigin = connection.displayOrigin;
       let allowedOrigins = connection.allowedOrigins;
       if (input.operation === "clear") {
-        if (legacyTarget) {
-          await updateLegacySourceAuth(config, legacyTarget, input);
-        } else {
-          await removeSecret(secrets, connection.id);
-        }
+        await removeSecret(secrets, connection.id);
         auth = { mode: connection.auth.mode, state: "not-configured" };
       } else if (input.operation === "set-password") {
-        if (legacyTarget) {
-          await updateLegacySourceAuth(config, legacyTarget, input);
-        } else {
-          await setSecret(secrets, connection.id, {
-            type: "password",
-            username: input.username,
-            password: input.password,
-            ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
-          });
-        }
-        auth = {
+        await setSecret(config, secrets, connection.id, {
+          type: "password",
+          username: input.username,
+          password: input.password,
+          ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
+        });
+        auth = storedAuth({
           mode: "password",
           state: "configured",
           accountLabel: input.username,
           ...(input.emailAddress ? { emailAddress: input.emailAddress } : {}),
-        };
+        });
       } else {
         const parsed = validatePrivateBearerUrl(input.value);
-        if (legacyTarget) {
-          await updateLegacySourceAuth(config, legacyTarget, input);
-        } else {
-          await setSecret(secrets, connection.id, { type: "bearer-url", value: input.value });
-        }
+        await setSecret(config, secrets, connection.id, {
+          type: "bearer-url",
+          value: input.value,
+        });
         auth = { mode: "bearer-url", state: "configured" };
         displayOrigin = parsed.origin;
         allowedOrigins = [parsed.origin];
@@ -511,12 +488,12 @@ export function createStudyBuddySourcePlatform(
       );
       const next = { ...document, revision: document.revision + 1, connections, sources };
       await writeDocument(registryPath, next);
-      return publicInventory(next, secrets);
+      return publicInventory(config, next, secrets);
     }).catch(mapSourceError);
 
   const updateEmailPermissions = (input: StudyBuddyUpdateEmailPermissionsInput) =>
     withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       assertRevision(document, input.expectedRevision);
       const sourceIndex = document.sources.findIndex((entry) => entry.id === input.sourceId);
       if (sourceIndex < 0) throw sourceError("not-found", "Email source was not found.");
@@ -573,30 +550,20 @@ export function createStudyBuddySourcePlatform(
       };
       const next = { ...document, revision: document.revision + 1, sources, connections };
       await writeDocument(registryPath, next);
-      return publicInventory(next, secrets);
+      return publicInventory(config, next, secrets);
     }).catch(mapSourceError);
 
   const testSourceOnce = async (
     input: StudyBuddyTestSourceInput,
   ): Promise<StudyBuddySourceTestResult> => {
     try {
-      const document = await readDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       const source = document.sources.find((entry) => entry.id === input.sourceId);
       if (!source) throw sourceError("not-found", "Source was not found.");
       const connection = document.connections.find((entry) => entry.id === source.connectionId);
       if (!connection) throw sourceError("internal", "Source connection is missing.");
       const checkedAt = nowIso();
       const legacyTarget = legacyTargetFor(source.id);
-      if (legacyTarget) {
-        const result = await Effect.runPromise(testStudyBuddyConnection(config, legacyTarget));
-        return {
-          sourceId: source.id,
-          status: result.status,
-          code: result.code,
-          message: result.message,
-          checkedAt: result.checkedAt,
-        };
-      }
       if (connection.auth.mode === "interactive-session" || connection.auth.mode === "oauth") {
         return {
           sourceId: source.id,
@@ -607,7 +574,7 @@ export function createStudyBuddySourcePlatform(
         };
       }
       if (source.kind === "calendar") {
-        const secret = await getSecret(secrets, connection.id);
+        const secret = await getSecret(config, secrets, connection.id);
         if (secret?.type !== "bearer-url") {
           return failure(source.id, "not-configured", "Private calendar link is not configured.");
         }
@@ -631,7 +598,7 @@ export function createStudyBuddySourcePlatform(
         await safeWebsiteProbe(targetUrl);
         return success(source.id, "Website is connected.");
       }
-      const secret = await getSecret(secrets, connection.id);
+      const secret = await getSecret(config, secrets, connection.id);
       if (secret?.type !== "password") {
         return failure(
           source.id,
@@ -639,9 +606,17 @@ export function createStudyBuddySourcePlatform(
           "Sign-in details are not configured.",
         );
       }
-      const browser = await chromium.launch({ headless: true });
+      const browser = await chromium.launch({
+        headless: true,
+        executablePath: await resolveSystemBrowserExecutable(),
+      });
       try {
-        const page = await browser.newPage();
+        const page =
+          legacyTarget === "cis"
+            ? await browser.newPage({
+                httpCredentials: { username: secret.username, password: secret.password },
+              })
+            : await browser.newPage();
         await ensureLoggedIn(
           page,
           createBrowserLoginConfig({
@@ -650,7 +625,7 @@ export function createStudyBuddySourcePlatform(
             username: secret.username,
             password: secret.password,
             allowedOrigins: connection.allowedOrigins,
-            requireCredentialSubmission: true,
+            requireCredentialSubmission: legacyTarget !== "cis",
           }),
         );
       } finally {
@@ -659,6 +634,13 @@ export function createStudyBuddySourcePlatform(
       return success(source.id, "Sign-in worked. This source is connected.");
     } catch (error) {
       if (isStudyBuddySourceError(error)) throw error;
+      if (isBrowserRuntimeMissingError(error)) {
+        return failure(
+          input.sourceId,
+          BROWSER_RUNTIME_MISSING_CODE,
+          "Study Buddy could not find Microsoft Edge, Google Chrome, or Chromium on this device.",
+        );
+      }
       return failure(input.sourceId, "connection-failed", safeErrorMessage(error));
     }
   };
@@ -684,7 +666,7 @@ export function createStudyBuddySourcePlatform(
 
   async function rememberEmailAddress(sourceId: string, emailAddress: string): Promise<void> {
     await withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       const source = document.sources.find((entry) => entry.id === sourceId);
       if (!source) return;
       const connectionIndex = document.connections.findIndex(
@@ -692,17 +674,15 @@ export function createStudyBuddySourcePlatform(
       );
       if (connectionIndex < 0) return;
       const connection = document.connections[connectionIndex]!;
-      if (connection.auth.emailAddress === emailAddress) return;
-      const connections = [...document.connections];
-      connections[connectionIndex] = {
-        ...connection,
-        auth: { ...connection.auth, emailAddress },
-        revision: connection.revision + 1,
-      };
+      const secret = await getSecret(config, secrets, connection.id);
+      if (secret?.type !== "password" || secret.emailAddress === emailAddress) return;
+      await setSecret(config, secrets, connection.id, { ...secret, emailAddress });
       await writeDocument(registryPath, {
         ...document,
         revision: document.revision + 1,
-        connections,
+        connections: document.connections.map((entry) =>
+          entry.id === connection.id ? { ...entry, revision: entry.revision + 1 } : entry,
+        ),
       });
     });
   }
@@ -712,7 +692,7 @@ export function createStudyBuddySourcePlatform(
     result: StudyBuddySourceTestResult,
   ): Promise<void> {
     await withMutation(async () => {
-      const document = await materializedDocument(config, registryPath);
+      const document = await materializedDocument(config, registryPath, secrets);
       const sourceIndex = document.sources.findIndex((entry) => entry.id === sourceId);
       if (sourceIndex < 0) return;
       const source = document.sources[sourceIndex]!;
@@ -743,13 +723,14 @@ export function createStudyBuddySourcePlatform(
 async function readDocument(
   config: ServerConfigShape,
   registryPath: string,
+  secrets: ServerSecretStoreShape,
 ): Promise<StoredSourceDocument> {
   try {
     return withoutUnconfiguredLegacyPlaceholders(
       validateStoredDocument(JSON.parse(await readFile(registryPath, "utf8"))),
     );
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return projectLegacySources(config);
+    if (isNodeError(error) && error.code === "ENOENT") return projectLegacySources(config, secrets);
     if (error instanceof SyntaxError) throw sourceError("internal", "Source registry is invalid.");
     throw error;
   }
@@ -758,12 +739,52 @@ async function readDocument(
 async function materializedDocument(
   config: ServerConfigShape,
   registryPath: string,
+  secrets: ServerSecretStoreShape,
 ): Promise<StoredSourceDocument> {
-  return readDocument(config, registryPath);
+  const document = await readDocument(config, registryPath, secrets);
+  const legacyConfiguration = document.sources.some((source) =>
+    source.scope.tags.includes("legacy"),
+  )
+    ? await readStoredStudyBuddyConfiguration(config, secrets)
+    : null;
+  // Reading each configured secret performs the one-time, verified migration
+  // from the legacy plaintext file format before any caller sees the inventory.
+  await Promise.all(
+    document.connections
+      .filter((connection) => connection.auth.mode !== "none")
+      .map(async (connection) => {
+        let secret = await getSecret(config, secrets, connection.id);
+        if (!secret && legacyConfiguration) {
+          const legacy = legacySecretFor(connection.id, legacyConfiguration.values);
+          if (legacy) {
+            await setSecret(config, secrets, connection.id, legacy);
+            secret = await getSecret(config, secrets, connection.id);
+            if (!secret || JSON.stringify(secret) !== JSON.stringify(legacy)) {
+              throw sourceError("internal", "Legacy source credential migration failed.");
+            }
+          }
+        }
+        if (secret?.type === "password" && connection.auth.emailAddress && !secret.emailAddress) {
+          await setSecret(config, secrets, connection.id, {
+            ...secret,
+            emailAddress: connection.auth.emailAddress,
+          });
+        }
+      }),
+  );
+  const sanitized = sanitizeStoredAuthMetadata(document);
+  if (sanitized !== document || legacyConfiguration) await writeDocument(registryPath, sanitized);
+  if (legacyConfiguration) {
+    await clearLegacyStudyBuddySourceCredentials(legacyConfiguration);
+  }
+  return sanitized;
 }
 
-async function projectLegacySources(config: ServerConfigShape): Promise<StoredSourceDocument> {
-  const stored = await readStoredStudyBuddyConfiguration(config);
+async function projectLegacySources(
+  config: ServerConfigShape,
+  secrets: ServerSecretStoreShape,
+): Promise<StoredSourceDocument> {
+  const stored = await readStoredStudyBuddyConfiguration(config, secrets);
   const connections: StudyBuddySourceConnection[] = [];
   const sources: StudyBuddySourceBlock[] = [];
   const add = (input: {
@@ -775,7 +796,6 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: string;
     capabilities: StudyBuddySourceCapability[];
     authMode: StudyBuddySourceConnection["auth"]["mode"];
-    accountLabel?: string;
   }) => {
     if (!input.configured) return;
     const parsed = publicLegacyUrl(input.url);
@@ -791,7 +811,6 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
       auth: {
         mode: input.authMode,
         state: input.configured ? "configured" : "not-configured",
-        ...(input.accountLabel ? { accountLabel: input.accountLabel } : {}),
       },
       revision: 0,
     });
@@ -829,7 +848,6 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: "legacy-moodle",
     capabilities: adapterForKind("moodle-course").defaultCapabilities.slice(),
     authMode: "password",
-    ...(stored.values.MOODLE_USERNAME ? { accountLabel: stored.values.MOODLE_USERNAME } : {}),
   });
   add({
     id: "legacy-cis",
@@ -840,9 +858,6 @@ async function projectLegacySources(config: ServerConfigShape): Promise<StoredSo
     adapterId: "legacy-cis",
     capabilities: ["content.search", "content.list", "content.read", "calendar.events.read"],
     authMode: "password",
-    ...(stored.values.CIS_USERNAME || stored.values.MOODLE_USERNAME
-      ? { accountLabel: stored.values.CIS_USERNAME || stored.values.MOODLE_USERNAME }
-      : {}),
   });
   add({
     id: "legacy-calendar",
@@ -891,18 +906,24 @@ function withoutUnconfiguredLegacyPlaceholders(
 }
 
 async function publicInventory(
+  config: ServerConfigShape,
   document: StoredSourceDocument,
   secrets: ServerSecretStoreShape,
 ): Promise<StudyBuddySourceInventory> {
   const connections = await Promise.all(
     document.connections.map(async (connection) => {
-      if (isLegacyConnection(connection.id) || connection.auth.mode === "none") return connection;
-      const configured = Boolean(await getSecret(secrets, connection.id));
+      if (connection.auth.mode === "none") return connection;
+      const configured = Boolean(await getSecret(config, secrets, connection.id));
+      const secret = configured ? await getSecret(config, secrets, connection.id) : null;
       return {
         ...connection,
         auth: {
           ...connection.auth,
           state: configured ? ("configured" as const) : connection.auth.state,
+          ...(secret?.type === "password" ? { accountLabel: secret.username } : {}),
+          ...(secret?.type === "password" && secret.emailAddress
+            ? { emailAddress: secret.emailAddress }
+            : {}),
         },
       };
     }),
@@ -1069,6 +1090,27 @@ function publicAuthForCreate(
   };
 }
 
+function storedAuth(auth: StudyBuddySourceConnection["auth"]): StudyBuddySourceConnection["auth"] {
+  return { mode: auth.mode, state: auth.state };
+}
+
+function sanitizeStoredAuthMetadata(document: StoredSourceDocument): StoredSourceDocument {
+  if (
+    !document.connections.some(
+      (connection) => connection.auth.accountLabel || connection.auth.emailAddress,
+    )
+  ) {
+    return document;
+  }
+  return {
+    ...document,
+    connections: document.connections.map((connection) => ({
+      ...connection,
+      auth: storedAuth(connection.auth),
+    })),
+  };
+}
+
 function secretFromCreate(auth: StudyBuddyCreateSourceInput["auth"]): SourceSecret | null {
   if (auth.operation === "set-password") {
     return {
@@ -1079,37 +1121,6 @@ function secretFromCreate(auth: StudyBuddyCreateSourceInput["auth"]): SourceSecr
     };
   }
   return auth.operation === "set-bearer-url" ? { type: "bearer-url", value: auth.value } : null;
-}
-
-async function setSecret(
-  secrets: ServerSecretStoreShape,
-  connectionId: string,
-  value: SourceSecret,
-): Promise<void> {
-  await Effect.runPromise(
-    secrets.set(secretName(connectionId), new TextEncoder().encode(JSON.stringify(value))),
-  );
-}
-
-async function getSecret(
-  secrets: ServerSecretStoreShape,
-  connectionId: string,
-): Promise<SourceSecret | null> {
-  const bytes = await Effect.runPromise(secrets.get(secretName(connectionId)));
-  if (!bytes) return null;
-  try {
-    return decodeSourceSecret(JSON.parse(new TextDecoder().decode(bytes)));
-  } catch {
-    return null;
-  }
-}
-
-async function removeSecret(secrets: ServerSecretStoreShape, connectionId: string): Promise<void> {
-  await Effect.runPromise(secrets.remove(secretName(connectionId)));
-}
-
-function secretName(connectionId: string): string {
-  return `study-source-auth-${createHash("sha256").update(connectionId).digest("hex")}`;
 }
 
 async function safeWebsiteProbe(value: string): Promise<void> {
@@ -1168,52 +1179,28 @@ function legacyTargetFor(sourceId: string): "moodle" | "cis" | "calendar" | null
   return null;
 }
 
-async function updateLegacySourceAuth(
-  config: ServerConfigShape,
-  target: "moodle" | "cis" | "calendar",
-  input: StudyBuddySetSourceAuthInput,
-): Promise<void> {
-  if (target === "calendar") {
-    if (input.operation === "set-password") {
-      throw sourceError("invalid", "Calendar sources use a private calendar link.");
-    }
-    await Effect.runPromise(
-      updateStudyBuddyConfiguration(config, {
-        calendarUrlSecret:
-          input.operation === "set-bearer-url"
-            ? { operation: "set", value: input.value }
-            : { operation: "clear" },
-      }),
-    );
-    return;
+function legacySecretFor(
+  connectionId: string,
+  values: Readonly<Record<string, string>>,
+): SourceSecret | null {
+  if (connectionId === "legacy-moodle-connection") {
+    return values.MOODLE_USERNAME && values.MOODLE_PASSWORD
+      ? {
+          type: "password",
+          username: values.MOODLE_USERNAME,
+          password: values.MOODLE_PASSWORD,
+        }
+      : null;
   }
-
-  if (input.operation === "set-bearer-url") {
-    throw sourceError("invalid", "This source uses username and password sign-in.");
+  if (connectionId === "legacy-cis-connection") {
+    const username = values.CIS_USERNAME || values.MOODLE_USERNAME;
+    const password = values.CIS_PASSWORD || values.MOODLE_PASSWORD;
+    return username && password ? { type: "password", username, password } : null;
   }
-  const password =
-    input.operation === "set-password"
-      ? ({ operation: "set", value: input.password } as const)
-      : ({ operation: "clear" } as const);
-  if (target === "moodle") {
-    await Effect.runPromise(
-      updateStudyBuddyConfiguration(config, {
-        ...(input.operation === "set-password" ? { moodleUsername: input.username } : {}),
-        moodlePassword: password,
-      }),
-    );
-    return;
+  if (connectionId === "legacy-calendar-connection" && values.CIS_CALENDAR_URL) {
+    return { type: "bearer-url", value: values.CIS_CALENDAR_URL };
   }
-  await Effect.runPromise(
-    updateStudyBuddyConfiguration(config, {
-      ...(input.operation === "set-password" ? { cisUsername: input.username } : {}),
-      cisPassword: password,
-    }),
-  );
-}
-
-function isLegacyConnection(connectionId: string): boolean {
-  return connectionId.startsWith("legacy-");
+  return null;
 }
 
 function defaultPriority(kind: StudyBuddySourceKind): number {

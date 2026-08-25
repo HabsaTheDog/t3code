@@ -6,10 +6,16 @@ import {
   StudyBuddyConfigurationError,
   type StudyBuddyConfiguration,
   type StudyBuddyConfigurationPatch,
-  type StudyBuddySecretPatch,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
+import {
+  getSourceSecret,
+  removeSourceSecret,
+  setSourceSecret,
+  type SourceSecret,
+} from "../sources/sourceSecretStorage.ts";
 
 const DEFAULT_MOODLE_URL = "https://moodle.technikum-wien.at/my/";
 const DEFAULT_CIS_URL = "https://cis.technikum-wien.at/cis.php/";
@@ -60,17 +66,54 @@ export function parseEnvDocument(contents: string): Record<string, string> {
 
 export async function readStoredStudyBuddyConfiguration(
   config: ServerConfigShape,
+  secrets: ServerSecretStoreShape,
 ): Promise<StoredStudyBuddyConfiguration> {
   const envPath = resolveStudyBuddyEnvPath(config);
+  let stored: StoredStudyBuddyConfiguration;
   try {
     const raw = await readFile(envPath, "utf8");
-    return { envPath, exists: true, raw, values: parseEnvDocument(raw) };
+    stored = { envPath, exists: true, raw, values: parseEnvDocument(raw) };
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
-      return { envPath, exists: false, raw: "", values: {} };
+      stored = { envPath, exists: false, raw: "", values: {} };
+    } else {
+      throw error;
     }
-    throw error;
   }
+
+  const values = { ...stored.values };
+  const legacySecrets = legacySecretsFromValues(values);
+  for (const [connectionId, secret] of legacySecrets) {
+    if (!(await getSourceSecret(config, secrets, connectionId))) {
+      await setSourceSecret(config, secrets, connectionId, secret);
+      const verified = await getSourceSecret(config, secrets, connectionId);
+      if (!verified || JSON.stringify(verified) !== JSON.stringify(secret)) {
+        throw new Error("Legacy Study Buddy credential migration verification failed.");
+      }
+    }
+  }
+  if (legacySecrets.length > 0) {
+    await clearLegacyStudyBuddySourceCredentials(stored);
+    const sanitizedRaw = await readFile(envPath, "utf8");
+    stored = { envPath, exists: true, raw: sanitizedRaw, values: parseEnvDocument(sanitizedRaw) };
+  }
+
+  const moodle = await getSourceSecret(config, secrets, "legacy-moodle-connection");
+  const cis = await getSourceSecret(config, secrets, "legacy-cis-connection");
+  const calendar = await getSourceSecret(config, secrets, "legacy-calendar-connection");
+  return {
+    ...stored,
+    values: {
+      ...stored.values,
+      ...(moodle?.type === "password"
+        ? { MOODLE_USERNAME: moodle.username, MOODLE_PASSWORD: moodle.password }
+        : {}),
+      ...(cis?.type === "password"
+        ? { CIS_USERNAME: cis.username, CIS_PASSWORD: cis.password }
+        : {}),
+      ...(calendar?.type === "bearer-url" ? { CIS_CALENDAR_URL: calendar.value } : {}),
+    },
+  };
 }
 
 export function publicStudyBuddyConfiguration(
@@ -98,9 +141,13 @@ export function publicStudyBuddyConfiguration(
   };
 }
 
-export const readStudyBuddyConfiguration = (config: ServerConfigShape) =>
+export const readStudyBuddyConfiguration = (
+  config: ServerConfigShape,
+  secrets: ServerSecretStoreShape,
+) =>
   Effect.tryPromise({
-    try: async () => publicStudyBuddyConfiguration(await readStoredStudyBuddyConfiguration(config)),
+    try: async () =>
+      publicStudyBuddyConfiguration(await readStoredStudyBuddyConfiguration(config, secrets)),
     catch: () =>
       new StudyBuddyConfigurationError({
         message: "Failed to read Study Buddy configuration.",
@@ -110,14 +157,18 @@ export const readStudyBuddyConfiguration = (config: ServerConfigShape) =>
 export const updateStudyBuddyConfiguration = (
   config: ServerConfigShape,
   patch: StudyBuddyConfigurationPatch,
+  secrets: ServerSecretStoreShape,
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const stored = await readStoredStudyBuddyConfiguration(config);
+      const stored = await readStoredStudyBuddyConfiguration(config, secrets);
+      await applyEncryptedSecretPatch(config, secrets, stored.values, patch);
       const updates = buildUpdates(patch);
       const nextRaw = patchEnvDocument(stored.raw, updates);
       await writeOwnerOnly(stored.envPath, nextRaw);
-      return publicStudyBuddyConfiguration(await readStoredStudyBuddyConfiguration(config));
+      return publicStudyBuddyConfiguration(
+        await readStoredStudyBuddyConfiguration(config, secrets),
+      );
     },
     catch: (cause) =>
       new StudyBuddyConfigurationError({
@@ -128,25 +179,39 @@ export const updateStudyBuddyConfiguration = (
       }),
   });
 
+/**
+ * Remove source credentials from the legacy dotenv document only after the
+ * caller has persisted and verified their encrypted replacements.
+ */
+export async function clearLegacyStudyBuddySourceCredentials(
+  stored: StoredStudyBuddyConfiguration,
+): Promise<void> {
+  if (!stored.exists) return;
+  const nextRaw = patchEnvDocument(stored.raw, {
+    [CONFIG_KEYS.moodleUsername]: "",
+    [CONFIG_KEYS.moodlePassword]: "",
+    [CONFIG_KEYS.cisUsername]: "",
+    [CONFIG_KEYS.cisPassword]: "",
+    [CONFIG_KEYS.calendarUrl]: "",
+  });
+  await writeOwnerOnly(stored.envPath, nextRaw);
+}
+
 function buildUpdates(patch: StudyBuddyConfigurationPatch): Readonly<Record<string, string>> {
   const updates: Record<string, string> = {};
-  if (patch.moodleUsername !== undefined)
-    updates[CONFIG_KEYS.moodleUsername] = patch.moodleUsername;
+  updates[CONFIG_KEYS.moodleUsername] = "";
+  updates[CONFIG_KEYS.moodlePassword] = "";
+  updates[CONFIG_KEYS.cisUsername] = "";
+  updates[CONFIG_KEYS.cisPassword] = "";
+  updates[CONFIG_KEYS.calendarUrl] = "";
   if (patch.moodleDashboardUrl !== undefined) {
     const url = validatePublicUrl("Moodle URL", patch.moodleDashboardUrl);
     updates[CONFIG_KEYS.moodleUrl] = url;
     updates[CONFIG_KEYS.moodleBaseUrl] = url ? new URL(url).origin : "";
   }
-  applySecretPatch(updates, CONFIG_KEYS.moodlePassword, patch.moodlePassword);
-  if (patch.cisUsername !== undefined) updates[CONFIG_KEYS.cisUsername] = patch.cisUsername;
   if (patch.cisUrl !== undefined) {
     updates[CONFIG_KEYS.cisUrl] = validatePublicUrl("CIS URL", patch.cisUrl);
   }
-  applySecretPatch(updates, CONFIG_KEYS.cisPassword, patch.cisPassword);
-  if (patch.calendarUrl !== undefined) {
-    updates[CONFIG_KEYS.calendarUrl] = validateCalendarUrl(patch.calendarUrl);
-  }
-  applySecretPatch(updates, CONFIG_KEYS.calendarUrl, patch.calendarUrlSecret, validateCalendarUrl);
   if (patch.quiz) {
     updates[CONFIG_KEYS.quizMode] = patch.quiz.accessMode;
     updates[CONFIG_KEYS.quizMinimumMinutes] = String(patch.quiz.minimumTimeLimitMinutes);
@@ -157,14 +222,100 @@ function buildUpdates(patch: StudyBuddyConfigurationPatch): Readonly<Record<stri
   return updates;
 }
 
-function applySecretPatch(
-  updates: Record<string, string>,
-  key: string,
-  patch: StudyBuddySecretPatch | undefined,
-  validate: (value: string) => string = (value) => value,
-): void {
-  if (!patch || patch.operation === "unchanged") return;
-  updates[key] = patch.operation === "clear" ? "" : validate(patch.value);
+function legacySecretsFromValues(
+  values: Readonly<Record<string, string>>,
+): ReadonlyArray<readonly [string, SourceSecret]> {
+  const secrets: Array<readonly [string, SourceSecret]> = [];
+  if (values.MOODLE_USERNAME || values.MOODLE_PASSWORD) {
+    secrets.push([
+      "legacy-moodle-connection",
+      {
+        type: "password",
+        username: values.MOODLE_USERNAME ?? "",
+        password: values.MOODLE_PASSWORD ?? "",
+      },
+    ]);
+  }
+  if (values.CIS_USERNAME || values.CIS_PASSWORD) {
+    secrets.push([
+      "legacy-cis-connection",
+      {
+        type: "password",
+        username: values.CIS_USERNAME ?? "",
+        password: values.CIS_PASSWORD ?? "",
+      },
+    ]);
+  }
+  if (values.CIS_CALENDAR_URL) {
+    secrets.push([
+      "legacy-calendar-connection",
+      { type: "bearer-url", value: validateCalendarUrl(values.CIS_CALENDAR_URL) },
+    ]);
+  }
+  return secrets;
+}
+
+async function applyEncryptedSecretPatch(
+  config: ServerConfigShape,
+  secrets: ServerSecretStoreShape,
+  current: Readonly<Record<string, string>>,
+  patch: StudyBuddyConfigurationPatch,
+): Promise<void> {
+  if (patch.moodleUsername !== undefined || patch.moodlePassword) {
+    const username = patch.moodleUsername ?? current.MOODLE_USERNAME ?? "";
+    const password =
+      !patch.moodlePassword || patch.moodlePassword.operation === "unchanged"
+        ? (current.MOODLE_PASSWORD ?? "")
+        : patch.moodlePassword.operation === "clear"
+          ? ""
+          : patch.moodlePassword.value;
+    if (!username && !password) {
+      await removeSourceSecret(secrets, "legacy-moodle-connection");
+    } else {
+      await setSourceSecret(config, secrets, "legacy-moodle-connection", {
+        type: "password",
+        username,
+        password,
+      });
+    }
+  }
+
+  if (patch.cisUsername !== undefined || patch.cisPassword) {
+    const username = patch.cisUsername ?? current.CIS_USERNAME ?? "";
+    const password =
+      !patch.cisPassword || patch.cisPassword.operation === "unchanged"
+        ? (current.CIS_PASSWORD ?? "")
+        : patch.cisPassword.operation === "clear"
+          ? ""
+          : patch.cisPassword.value;
+    if (!username && !password) {
+      await removeSourceSecret(secrets, "legacy-cis-connection");
+    } else {
+      await setSourceSecret(config, secrets, "legacy-cis-connection", {
+        type: "password",
+        username,
+        password,
+      });
+    }
+  }
+
+  const calendarPatch =
+    patch.calendarUrlSecret ??
+    (patch.calendarUrl !== undefined
+      ? patch.calendarUrl
+        ? ({ operation: "set", value: patch.calendarUrl } as const)
+        : ({ operation: "clear" } as const)
+      : undefined);
+  if (calendarPatch && calendarPatch.operation !== "unchanged") {
+    if (calendarPatch.operation === "clear") {
+      await removeSourceSecret(secrets, "legacy-calendar-connection");
+    } else {
+      await setSourceSecret(config, secrets, "legacy-calendar-connection", {
+        type: "bearer-url",
+        value: validateCalendarUrl(calendarPatch.value),
+      });
+    }
+  }
 }
 
 function validateCalendarUrl(value: string): string {

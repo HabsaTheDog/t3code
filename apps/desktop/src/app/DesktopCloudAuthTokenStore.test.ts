@@ -16,6 +16,7 @@ const textEncoder = new TextEncoder();
 function makeSafeStorageLayer(input: { readonly available: boolean }) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(input.available),
+    selectedStorageBackend: Effect.succeed("unknown"),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`enc:${value}`)),
     decryptString: (value) => {
       const decoded = textDecoder.decode(value);

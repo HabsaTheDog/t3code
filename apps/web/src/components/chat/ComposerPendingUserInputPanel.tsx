@@ -15,6 +15,10 @@ import {
   ShieldCheckIcon,
 } from "lucide-react";
 import { cn } from "~/lib/utils";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { captureFeatureExposureOnce } from "../../telemetry/featureExposure";
+import { telemetry } from "../../telemetry/runtime";
+import { telemetryCountBucket } from "../../telemetry/sourceTelemetry";
 import {
   emailPermissionOptionCopy,
   formatEmailAddress,
@@ -79,6 +83,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const emailPermission = activeQuestion
+    ? parseStudyBuddyEmailPermissionQuestion(activeQuestion)
+    : null;
+  const hasEmailPermission = emailPermission !== null;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
 
@@ -95,7 +103,38 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
   }, []);
 
+  useEffect(() => {
+    if (!hasEmailPermission) return;
+    void captureFeatureExposureOnce("email.send_approval", "chat");
+  }, [hasEmailPermission]);
+
   const handleOptionSelection = useEffectEvent((questionId: string, optionLabel: string) => {
+    if (emailPermission) {
+      const selectedOption = activeQuestion?.options.find((option) => option.label === optionLabel);
+      const intent = emailPermissionOptionCopy(
+        optionLabel,
+        selectedOption?.description ?? "",
+      ).intent;
+      if (intent === "approve" || intent === "decline") {
+        void telemetry.capture({
+          event: "email.send_approval.responded",
+          properties: {
+            decision: intent === "approve" ? "approved" : "declined",
+            recipient_count: telemetryCountBucket(
+              emailPermission.to.length + emailPermission.cc.length + emailPermission.bcc.length,
+            ),
+            attachment_count: telemetryCountBucket(emailPermission.attachments.length),
+          },
+        });
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("email.send_approval", {
+            surface: "chat",
+            decision: intent === "approve" ? "approved" : "declined",
+          }),
+        });
+      }
+    }
     onToggleOption(questionId, optionLabel);
     if (activeQuestion?.multiSelect) {
       return;
@@ -144,7 +183,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }
 
   const quizPermission = parseStudyBuddyQuizPermissionQuestion(activeQuestion);
-  const emailPermission = parseStudyBuddyEmailPermissionQuestion(activeQuestion);
   if (emailPermission) {
     return (
       <StudyBuddyEmailPermissionCard
@@ -332,6 +370,7 @@ function StudyBuddyEmailPermissionCard({
             <button
               key={`${question.id}:${option.label}`}
               type="button"
+              data-analytics-id={`email.send-approval.${copy.intent}`}
               disabled={isResponding}
               onClick={() => onSelect(question.id, option.label)}
               className={cn(

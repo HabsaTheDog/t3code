@@ -20,6 +20,9 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import { sourceTelemetryProperties } from "../../telemetry/sourceTelemetry";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
@@ -224,6 +227,62 @@ export function SourceDialog({
           senderEmail: senderEmail.trim() || (isEmailAddress(username) ? username.trim() : null),
         });
       }
+      const savedSource = createdSourceId
+        ? next.sources.find((candidate) => candidate.id === createdSourceId)
+        : undefined;
+      if (savedSource) {
+        void telemetry.capture({
+          event: "source.changed",
+          properties: {
+            ...sourceTelemetryProperties(savedSource, next),
+            action: source ? "updated" : "created",
+            outcome: "success",
+          },
+        });
+        void telemetry.capture({
+          event: "feature.used",
+          properties: featureProperties("sources.management", {
+            surface: "source_dialog",
+            action: source ? "updated" : "created",
+            source_kind: savedSource.kind,
+          }),
+        });
+        if (kind === "email") {
+          const previousPermissions = {
+            read: emailPermission(source, "read"),
+            draft: emailPermission(source, "draft"),
+            send: emailPermission(source, "send"),
+          };
+          for (const [permission, enabledNow] of Object.entries({
+            read: emailReadAllowed,
+            draft: emailDraftAllowed,
+            send: emailSendAllowed,
+          })) {
+            if (
+              previousPermissions[permission as keyof typeof previousPermissions] === enabledNow
+            ) {
+              continue;
+            }
+            void telemetry.capture({
+              event: "email.permission.changed",
+              properties: {
+                ...sourceTelemetryProperties(savedSource, next),
+                permission,
+                enabled: enabledNow,
+                sender_configured: Boolean(senderEmail.trim()),
+                surface: "source_dialog",
+                outcome: "success",
+              },
+            });
+          }
+          void telemetry.capture({
+            event: "feature.used",
+            properties: featureProperties("email.permissions", {
+              surface: "source_dialog",
+            }),
+          });
+        }
+      }
       onSaved(next, createdSourceId);
       onOpenChange(false);
       toastManager.add({
@@ -232,6 +291,14 @@ export function SourceDialog({
         description: `${trimmedLabel} can now be used by Study Buddy.`,
       });
     } catch (cause) {
+      void telemetry.capture({
+        event: "source.changed",
+        properties: {
+          source_kind: kind,
+          action: source ? "updated" : "created",
+          outcome: "failed",
+        },
+      });
       setError(cause instanceof Error ? cause.message : "We couldn’t save this source.");
     } finally {
       setSaving(false);
@@ -274,6 +341,7 @@ export function SourceDialog({
                   <button
                     key={candidate}
                     type="button"
+                    data-analytics-id={`sources.type.${candidate}`}
                     role="radio"
                     aria-checked="false"
                     className="group flex min-h-28 items-start gap-3 rounded-xl border bg-card p-4 text-left outline-none transition-colors hover:border-primary/45 hover:bg-primary/4 focus-visible:ring-2 focus-visible:ring-ring"
@@ -540,7 +608,7 @@ export function SourceDialog({
             <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
               Cancel
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button data-analytics-id="sources.save" onClick={() => void save()} disabled={saving}>
               {saving ? "Saving…" : source ? "Save changes" : "Add source"}
             </Button>
           </DialogFooter>

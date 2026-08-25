@@ -30,7 +30,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
-import { DEFAULT_THEME, useTheme } from "../../hooks/useTheme";
+import { DEFAULT_THEME, type Theme, useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -80,6 +80,8 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useServerObservability, useServerProviders } from "../../rpc/serverState";
 import { isProviderDriverAvailable } from "../../providerAvailability";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
 
 const THEME_OPTIONS = [
   {
@@ -503,6 +505,17 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const selectTheme = (nextTheme: Theme) => {
+    setTheme(nextTheme);
+    void telemetry.capture({
+      event: "theme.selected",
+      properties: { theme: nextTheme },
+    });
+    void telemetry.capture({
+      event: "feature.used",
+      properties: featureProperties("settings.theme", { theme: nextTheme }),
+    });
+  };
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
   const diagnosticsDescription = formatDiagnosticsDescription({
@@ -544,7 +557,7 @@ export function GeneralSettingsPanel() {
           description="Use the consistent Study Buddy look, or choose a device-based theme."
           resetAction={
             theme !== DEFAULT_THEME ? (
-              <SettingResetButton label="theme" onClick={() => setTheme(DEFAULT_THEME)} />
+              <SettingResetButton label="theme" onClick={() => selectTheme(DEFAULT_THEME)} />
             ) : null
           }
           control={
@@ -557,11 +570,15 @@ export function GeneralSettingsPanel() {
                   value === "light" ||
                   value === "dark"
                 ) {
-                  setTheme(value);
+                  selectTheme(value);
                 }
               }}
             >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
+              <SelectTrigger
+                className="w-full sm:w-40"
+                aria-label="Theme preference"
+                data-analytics-id="settings.theme"
+              >
                 <SelectValue>
                   {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "Study Buddy"}
                 </SelectValue>

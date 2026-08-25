@@ -21,6 +21,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 
 import { loadRepoEnv } from "./lib/public-config.ts";
+import { assertStudyBuddyRuntimeIsolation } from "./lib/study-buddy-runtime-isolation.ts";
 
 Object.assign(process.env, loadRepoEnv());
 
@@ -450,6 +451,20 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
+    });
+
+    yield* Effect.try({
+      try: () =>
+        assertStudyBuddyRuntimeIsolation({
+          t3Home: String(env.T3CODE_HOME),
+          serverPort: Number(env.T3CODE_PORT),
+          webPort: Number(env.PORT),
+        }),
+      catch: (cause) =>
+        new DevRunnerError({
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
     });
 
     const selectionSuffix =

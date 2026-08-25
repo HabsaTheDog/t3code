@@ -10,7 +10,12 @@ import * as PlatformError from "effect/PlatformError";
 
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { ServerEnvironment } from "../Services/ServerEnvironment.ts";
-import { ServerEnvironmentLive } from "./ServerEnvironment.ts";
+import { resolveServerVersion, ServerEnvironmentLive } from "./ServerEnvironment.ts";
+
+it("prefers the release version propagated by the desktop runtime", () => {
+  expect(resolveServerVersion(" 1.2.3-alpha.4 ", "0.0.24")).toBe("1.2.3-alpha.4");
+  expect(resolveServerVersion(undefined, "0.0.24")).toBe("0.0.24");
+});
 
 const makeServerEnvironmentLayer = (baseDir: string) =>
   ServerEnvironmentLive.pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));

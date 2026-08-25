@@ -5,7 +5,7 @@ is based on the MIT-licensed [T3 Code](https://github.com/pingdotgg/t3code) and
 is maintained as a pinned submodule of the main
 [Study Buddy repository](https://github.com/HabsaTheDog/StudyBuddy).
 
-> **Alpha status:** use the main Study Buddy repository for installation,
+> **Release source:** use the main Study Buddy repository for installation,
 > releases, issues, security reports, and project documentation. Upstream T3
 > Code packages and release links do not install Study Buddy.
 
