@@ -170,6 +170,7 @@ function inspectRunContract(runDir) {
     "interaction-result.json",
     "workflow-summary.json",
     "workflow-summary.md",
+    "cancellation.json",
     "error.log",
   ].map((name) => path.join(runDir, name));
   const invalidControls = controlPaths.filter(
@@ -196,6 +197,9 @@ function inspectRunContract(runDir) {
   const workflowMarkdown = readRunText(path.join(runDir, "workflow-summary.md"));
   const workflowMarkdownStatus =
     [...workflowMarkdown.matchAll(/^Run status:\s*(\S+)/gmu)].at(-1)?.[1] ?? "unknown";
+  const cancellationPath = path.join(runDir, "cancellation.json");
+  const cancellation = readRunJson(cancellationPath);
+  const hasCancellation = nonEmptyRunFile(cancellationPath);
 
   let terminalStatus = summaryStatus;
   let contract = "document";
@@ -204,7 +208,8 @@ function inspectRunContract(runDir) {
   let contradiction = "";
 
   if (hasWorkflowSummary) {
-    terminalStatus = typeof workflow.status === "string" ? workflow.status : "unknown";
+    const workflowStatus = typeof workflow.status === "string" ? workflow.status : "unknown";
+    terminalStatus = failureStatuses.has(summaryStatus) ? summaryStatus : workflowStatus;
     contract = "interactive_study_guide";
     expectedArtifacts = ["workflow-summary.json", "workflow-summary.md"];
     const root = path.resolve(runDir);
@@ -267,10 +272,10 @@ function inspectRunContract(runDir) {
     };
     if (workflow.schemaVersion !== 1) {
       contradiction = `Unsupported workflow summary schema (${workflow.schemaVersion ?? "unknown"})`;
-    } else if (!["queued", "running", "success", "failed"].includes(terminalStatus)) {
-      contradiction = `Workflow summary has no recognized status (${terminalStatus})`;
-    } else if (workflowMarkdownStatus !== terminalStatus) {
-      contradiction = `Workflow summary JSON status ${terminalStatus} contradicts Markdown status ${workflowMarkdownStatus}`;
+    } else if (!["queued", "running", "success", "failed"].includes(workflowStatus)) {
+      contradiction = `Workflow summary has no recognized status (${workflowStatus})`;
+    } else if (workflowMarkdownStatus !== workflowStatus) {
+      contradiction = `Workflow summary JSON status ${workflowStatus} contradicts Markdown status ${workflowMarkdownStatus}`;
     } else if (path.resolve(workflow.runDir ?? "") !== root) {
       contradiction = "Workflow summary run directory does not match the inspected directory";
     } else if (terminalStatus === "success") {
@@ -384,6 +389,13 @@ function inspectRunContract(runDir) {
         }
       }
     }
+  }
+
+  if (hasCancellation) {
+    if (cancellation.schemaVersion !== 1 || cancellation.status !== "canceled") {
+      contradiction = "Cancellation marker is invalid";
+    }
+    terminalStatus = "canceled";
   }
 
   if (invalidControls.length > 0) {
@@ -714,6 +726,44 @@ function cancelRun(runDir) {
   const pidData = readJson(resolvedPidFile);
   const pid = Number(pidData.process_group_id || pidData.child_pid);
   if (!Number.isInteger(pid) || pid <= 0) return fail(`No process id found in: ${pidFile}`);
+  const realRunDir = realpathSync(runDir);
+  const cancellationPath = path.join(realRunDir, "cancellation.json");
+  if (
+    lexicalExists(cancellationPath) &&
+    !resolveContainedRegularFile(realRunDir, cancellationPath)
+  ) {
+    return fail("cancellation.json is not a contained regular control file");
+  }
+  if (lexicalExists(cancellationPath)) {
+    const existingCancellation = readContainedJson(realRunDir, cancellationPath);
+    if (existingCancellation.schemaVersion !== 1 || existingCancellation.status !== "canceled") {
+      return fail("Existing cancellation.json is invalid");
+    }
+  } else {
+    const temporaryCancellationPath = path.join(
+      realRunDir,
+      `.cancellation.${process.pid}.${Date.now()}.tmp`,
+    );
+    try {
+      writeFileSync(
+        temporaryCancellationPath,
+        `${JSON.stringify(
+          { schemaVersion: 1, status: "canceled", canceled_at: utcTimestamp() },
+          null,
+          2,
+        )}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+      renameSync(temporaryCancellationPath, cancellationPath);
+    } catch (error) {
+      try {
+        unlinkSync(temporaryCancellationPath);
+      } catch {
+        // The temporary marker may not have been created.
+      }
+      return fail(`Could not persist cancellation marker: ${error.message}`);
+    }
+  }
   if (process.platform === "win32") {
     spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
   } else {
@@ -788,10 +838,13 @@ function checkpoint(runDir) {
         contract.contradiction,
       ));
   const completed = contract.completed && state.processState !== "running";
+  const liveTerminalStatus = ["unknown", "queued", "running"].includes(contract.terminalStatus);
   const blocked =
     Boolean(contract.error || (contract.contradiction && !transientWriteSkew)) ||
     ["failed", "timeout", "canceled"].includes(contract.terminalStatus) ||
-    (state.processState !== "running" && !completed);
+    ((state.processState === "stopped" ||
+      (state.processState === "unknown" && !liveTerminalStatus)) &&
+      !completed);
   const events = readContainedText(runDir, path.join(runDir, "run-events.jsonl"))
     .split("\n")
     .filter(Boolean)
@@ -850,7 +903,23 @@ async function waitRun(runDir, timeoutSeconds = 900) {
   while (true) {
     const state = runState(runDir);
     if (state.error) return fail(state.error);
-    if (state.processState !== "running") break;
+    const contract = inspectRunContract(runDir);
+    if (
+      state.processState === "stopped" ||
+      (state.processState === "unknown" && contract.completed)
+    )
+      break;
+    if (
+      contract.error ||
+      contract.contradiction ||
+      ["failed", "timeout", "canceled"].includes(contract.terminalStatus)
+    )
+      break;
+    if (
+      state.processState === "unknown" &&
+      !["unknown", "queued", "running"].includes(contract.terminalStatus)
+    )
+      break;
     if (Date.now() - startedAt >= timeoutSeconds * 1000) {
       checkpoint(runDir);
       return fail(`Timed out waiting for Study Buddy run: ${runDir}`, 124);

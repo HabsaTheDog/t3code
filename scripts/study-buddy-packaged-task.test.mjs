@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -52,6 +52,24 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
       error: "",
       contradiction: "",
     });
+    writeFileSync(
+      path.join(answerRun, "pid.json"),
+      `${JSON.stringify({ child_pid: process.pid })}\n`,
+    );
+    const liveCompletedWait = spawnSync(process.execPath, [adapterPath, "wait", answerRun, "0.1"], {
+      encoding: "utf8",
+    });
+    assert.equal(liveCompletedWait.status, 124, liveCompletedWait.stderr);
+    writeFileSync(
+      path.join(answerRun, "pid.json"),
+      `${JSON.stringify({ child_pid: 2_147_483_647 })}\n`,
+    );
+    const stoppedCompletedWait = spawnSync(
+      process.execPath,
+      [adapterPath, "wait", answerRun, "1"],
+      { encoding: "utf8" },
+    );
+    assert.equal(stoppedCompletedWait.status, 0, stoppedCompletedWait.stderr);
 
     const staleRun = path.join(temp, "stale");
     mkdirSync(staleRun);
@@ -128,6 +146,21 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
       error: "",
       contradiction: "",
     });
+    const initializingCheckpoint = spawnSync(
+      process.execPath,
+      [adapterPath, "checkpoint", activeRun],
+      { encoding: "utf8" },
+    );
+    assert.equal(initializingCheckpoint.status, 0, initializingCheckpoint.stderr);
+    assert.deepInclude(JSON.parse(initializingCheckpoint.stdout), {
+      report: "progress",
+      process_alive: false,
+      blocker: null,
+    });
+    const initializingWait = spawnSync(process.execPath, [adapterPath, "wait", activeRun, "0.1"], {
+      encoding: "utf8",
+    });
+    assert.equal(initializingWait.status, 124, initializingWait.stderr);
     writeFileSync(
       path.join(activeRun, "pid.json"),
       `${JSON.stringify({ child_pid: process.pid })}\n`,
@@ -448,6 +481,55 @@ it("validates packaged interactive Study Guide workflow-root completion", () => 
         encoding: "utf8",
       });
       assert.equal(waited.status, 1, waited.stderr);
+    }
+
+    const canceled = createGuide({ name: "canceled", status: "success", html: true });
+    const disposableChild = spawn(process.execPath, ["-e", "setInterval(() => undefined, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    assert.isNumber(disposableChild.pid);
+    try {
+      writeFileSync(
+        path.join(canceled, "pid.json"),
+        `${JSON.stringify({
+          child_pid: disposableChild.pid,
+          process_group_id: disposableChild.pid,
+        })}\n`,
+      );
+      const cancel = spawnSync(process.execPath, [adapterPath, "cancel", canceled], {
+        encoding: "utf8",
+      });
+      assert.equal(cancel.status, 0, cancel.stderr);
+      assert.deepInclude(
+        JSON.parse(readFileSync(path.join(canceled, "cancellation.json"), "utf8")),
+        { schemaVersion: 1, status: "canceled" },
+      );
+      assert.deepInclude(inspectRunContract(canceled), {
+        completed: false,
+        terminalStatus: "canceled",
+        workflowStatus: "canceled",
+        contradiction: "",
+      });
+      const canceledCheckpoint = spawnSync(
+        process.execPath,
+        [adapterPath, "checkpoint", canceled],
+        { encoding: "utf8" },
+      );
+      assert.deepInclude(JSON.parse(canceledCheckpoint.stdout), {
+        report: "blocked",
+        terminal_status: "canceled",
+      });
+      const canceledWait = spawnSync(process.execPath, [adapterPath, "wait", canceled, "3"], {
+        encoding: "utf8",
+      });
+      assert.equal(canceledWait.status, 1, canceledWait.stderr);
+    } finally {
+      try {
+        process.kill(disposableChild.pid, "SIGKILL");
+      } catch {
+        // The cancel command should already have terminated it.
+      }
     }
 
     const live = createGuide({ name: "live", status: "running" });
