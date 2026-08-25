@@ -5,6 +5,7 @@ import type { ServerConfigShape } from "../../../config.ts";
 import { testStudyBuddyConnection } from "../connectionTests.ts";
 import type { StoredStudyBuddyConfiguration } from "../studyBuddyConfig.ts";
 import type { BrowserLoginConfig } from "../browserAuth.ts";
+import { BrowserRuntimeMissingError } from "../browserRuntime.ts";
 
 const checkedAt = "2026-06-28T12:00:00.000Z";
 const config = { cwd: "/tmp/study-buddy" } as ServerConfigShape;
@@ -133,5 +134,25 @@ describe("Study Buddy connection tests", () => {
     expect(result.message).toContain("password=[redacted]");
     expect(result.message).not.toContain("hunter2");
     expect(result.message).not.toContain("token=secret");
+  });
+
+  it("reports a typed missing-browser runtime without exposing Playwright cache paths", async () => {
+    const result = await Effect.runPromise(
+      testStudyBuddyConnection(config, "moodle", {
+        readConfiguration: async () =>
+          stored({ MOODLE_USERNAME: "student", MOODLE_PASSWORD: "secret" }),
+        launchBrowser: async () => {
+          throw new BrowserRuntimeMissingError("win32");
+        },
+        now: () => checkedAt,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      target: "moodle",
+      status: "failure",
+      code: "browser-runtime-missing",
+    });
+    expect(result.message).not.toContain("ms-playwright");
   });
 });

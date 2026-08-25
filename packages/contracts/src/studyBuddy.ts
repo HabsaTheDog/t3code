@@ -71,6 +71,7 @@ export const StudyBuddyConnectionTestResult = Schema.Struct({
     "timeout",
     "authentication-failed",
     "invalid-calendar",
+    "browser-runtime-missing",
     "unreachable",
   ]),
   message: TrimmedNonEmptyString,

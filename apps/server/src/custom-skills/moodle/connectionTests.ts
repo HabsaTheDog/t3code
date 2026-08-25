@@ -10,6 +10,11 @@ import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "./browserAuth.ts";
 import {
+  BROWSER_RUNTIME_MISSING_CODE,
+  isBrowserRuntimeMissingError,
+  resolveSystemBrowserExecutable,
+} from "./browserRuntime.ts";
+import {
   fetchCalendarText,
   normalizeCalendarUrl,
   validateCalendarText,
@@ -46,7 +51,11 @@ const liveDependencies: ConnectionTestDependencies = {
   },
   fetchCalendar: fetchCalendarText,
   parseCalendar: validateCalendarText,
-  launchBrowser: () => chromium.launch({ headless: true }),
+  launchBrowser: async () =>
+    chromium.launch({
+      headless: true,
+      executablePath: await resolveSystemBrowserExecutable(),
+    }),
   ensureLogin: (page, config) => ensureLoggedIn(page as never, config),
   now: () => new Date().toISOString(),
 };
@@ -212,6 +221,7 @@ function failure(
 }
 
 function diagnosticCode(error: unknown): StudyBuddyConnectionTestResult["code"] {
+  if (isBrowserRuntimeMissingError(error)) return BROWSER_RUNTIME_MISSING_CODE;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timed out") || message.includes("timeout")) return "timeout";
   if (message.includes("invalid") || message.includes("login")) return "authentication-failed";

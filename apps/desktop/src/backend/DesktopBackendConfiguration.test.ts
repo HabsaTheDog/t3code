@@ -103,6 +103,19 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it("covers the clean Windows and Fedora system browser locations", () => {
+    assert.include(
+      DesktopBackendConfiguration.systemBrowserPathCandidates("win32", {
+        PROGRAMFILES: "C:\\Program Files",
+      }),
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+    );
+    assert.include(
+      DesktopBackendConfiguration.systemBrowserPathCandidates("linux", {}),
+      "/usr/bin/chromium",
+    );
+  });
+
   it.effect("resolves backend start config with a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -117,6 +130,11 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
+        assert.equal(first.env.APP_VERSION, "1.2.3");
+        assert.equal(first.env.STUDY_BUDDY_ROOT, environment.studyBuddyRoot);
+        assert.equal(first.env.STUDY_BUDDY_TASK_WRAPPER, environment.studyBuddyTaskWrapperPath);
+        assert.equal(first.env.STUDY_BUDDY_NODE_EXECUTABLE, process.execPath);
+        assert.include(first.env.PATH ?? "", environment.studyBuddyRuntimeBinPath);
         assert.isUndefined(first.env.T3CODE_PORT);
         assert.isUndefined(first.env.T3CODE_MODE);
         assert.isUndefined(first.env.T3CODE_DESKTOP_LAN_HOST);

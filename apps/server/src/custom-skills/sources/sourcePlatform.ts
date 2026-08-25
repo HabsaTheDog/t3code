@@ -31,6 +31,11 @@ import { chromium } from "playwright";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "../moodle/browserAuth.ts";
+import {
+  BROWSER_RUNTIME_MISSING_CODE,
+  isBrowserRuntimeMissingError,
+  resolveSystemBrowserExecutable,
+} from "../moodle/browserRuntime.ts";
 import { assertPublicHttpsUrl, assertPublicNetworkHostname } from "../moodle/browserSecurity.ts";
 import {
   fetchCalendarText,
@@ -601,7 +606,10 @@ export function createStudyBuddySourcePlatform(
           "Sign-in details are not configured.",
         );
       }
-      const browser = await chromium.launch({ headless: true });
+      const browser = await chromium.launch({
+        headless: true,
+        executablePath: await resolveSystemBrowserExecutable(),
+      });
       try {
         const page =
           legacyTarget === "cis"
@@ -626,6 +634,13 @@ export function createStudyBuddySourcePlatform(
       return success(source.id, "Sign-in worked. This source is connected.");
     } catch (error) {
       if (isStudyBuddySourceError(error)) throw error;
+      if (isBrowserRuntimeMissingError(error)) {
+        return failure(
+          input.sourceId,
+          BROWSER_RUNTIME_MISSING_CODE,
+          "Study Buddy could not find Microsoft Edge, Google Chrome, or Chromium on this device.",
+        );
+      }
       return failure(input.sourceId, "connection-failed", safeErrorMessage(error));
     }
   };

@@ -11,6 +11,13 @@ import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/Serv
 import packageJson from "../../../package.json" with { type: "json" };
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
+export function resolveServerVersion(
+  environmentVersion: string | undefined,
+  packageVersion: string,
+): string {
+  return environmentVersion?.trim() || packageVersion;
+}
+
 function platformOs(): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (process.platform) {
     case "darwin":
@@ -83,7 +90,7 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
       os: platformOs(),
       arch: platformArch(),
     },
-    serverVersion: packageJson.version,
+    serverVersion: resolveServerVersion(process.env.APP_VERSION, packageJson.version),
     capabilities: {
       repositoryIdentity: true,
     },
