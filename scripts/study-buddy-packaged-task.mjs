@@ -9,8 +9,10 @@ import {
   openSync,
   readFileSync,
   realpathSync,
-  rmSync,
+  renameSync,
+  rmdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -70,6 +72,8 @@ const threadDataRoot =
       : dataRoot;
 const outputRoot = path.join(threadDataRoot, "runs");
 const artifactLockDir = path.join(threadDataRoot, "locks", ".artifact-workflow.lock");
+let artifactLockHeld = false;
+let artifactLockToken = "";
 const defaultMoodleUrl =
   process.env.STUDY_BUDDY_MOODLE_URL ?? "https://moodle.technikum-wien.at/my/";
 const defaultCisUrl = process.env.STUDY_BUDDY_CIS_URL ?? "https://cis.technikum-wien.at/cis.php/";
@@ -107,6 +111,124 @@ function readJson(filePath) {
   } catch {
     return {};
   }
+}
+
+function inspectRunContract(runDir) {
+  const summary = readText(path.join(runDir, "run-summary.md"));
+  const summaryStatuses = [...summary.matchAll(/^Run status:\s*(\S+)/gmu)];
+  const summaryStatus = summaryStatuses.at(-1)?.[1] ?? "unknown";
+  const route = [...summary.matchAll(/^Route:\s*(\S+)/gmu)].at(-1)?.[1];
+  const config = readJson(path.join(runDir, "config.json"));
+  const progressPath = path.join(runDir, "run-progress.json");
+  const progress = readJson(progressPath);
+  const hasProgress = nonEmptyFile(progressPath);
+  const terminalStatuses = new Set(["success", "partial"]);
+  const failureStatuses = new Set(["failed", "timeout", "canceled"]);
+  const error = readText(path.join(runDir, "error.log")).trim();
+  const interactionResultPath = path.join(runDir, "interaction-result.json");
+  const interaction = readJson(interactionResultPath);
+  const hasInteractionResult = nonEmptyFile(interactionResultPath);
+
+  let terminalStatus = summaryStatus;
+  let contract = "document";
+  let expectedArtifacts = [];
+  let contradiction = "";
+
+  if (hasInteractionResult) {
+    terminalStatus = interaction.ok === true ? "success" : "failed";
+    contract = interaction.kind === "assignment" ? "interactive_assignment" : "interactive_quiz";
+    expectedArtifacts =
+      contract === "interactive_assignment"
+        ? ["assignment-report.md", "assignment-report.json"]
+        : ["quiz-review.typ", "quiz-review.json"];
+    if (interaction.workflowStatus === "permission_required") {
+      expectedArtifacts.push(
+        contract === "interactive_assignment"
+          ? "assignment-permission-request.json"
+          : "quiz-permission-request.json",
+      );
+    }
+    if (interaction.schemaVersion !== 1) {
+      contradiction = `Unsupported interaction result schema (${interaction.schemaVersion ?? "unknown"})`;
+    } else if (interaction.kind !== "quiz" && interaction.kind !== "assignment") {
+      contradiction = `Unknown interaction kind (${interaction.kind ?? "unknown"})`;
+    } else if (
+      interaction.workflowStatus !== "completed" &&
+      interaction.workflowStatus !== "permission_required"
+    ) {
+      contradiction = `Interactive workflow ended with ${interaction.workflowStatus ?? "unknown"}`;
+    } else if (summaryStatus !== terminalStatus) {
+      contradiction = `Interaction result status ${terminalStatus} contradicts run summary status ${summaryStatus}`;
+    } else if (
+      JSON.stringify(interaction.requiredArtifacts) !== JSON.stringify(expectedArtifacts)
+    ) {
+      contradiction = "Interaction result required-artifact contract is invalid";
+    }
+  } else {
+    const progressStatus = typeof progress.status === "string" ? progress.status : "unknown";
+    if (!terminalStatuses.has(summaryStatus) && !failureStatuses.has(summaryStatus)) {
+      contradiction = `Run summary has no recognized terminal status (${summaryStatus})`;
+    } else if (hasProgress && progressStatus !== summaryStatus) {
+      contradiction = `Run summary status ${summaryStatus} contradicts run-progress status ${progressStatus}`;
+    }
+
+    const stage = config.stage ?? "all";
+    const intent = config.intentDecision?.intent ?? route;
+    if (stage === "extract") {
+      contract = "extract";
+      expectedArtifacts = ["extracted-data.json"];
+    } else if (config.diagnosticOnly === true || intent === "diagnostic") {
+      contract = "diagnostic";
+      expectedArtifacts = ["moodle_raw.txt", "source_coverage.json"];
+    } else if (
+      config.intentDecision?.wantsQuickAnswer === true ||
+      intent === "quick_answer" ||
+      intent === "schedule_answer"
+    ) {
+      contract = "answer";
+      expectedArtifacts = ["answer.md", "answer.json"];
+    } else {
+      expectedArtifacts = ["document.typ", "document.pdf"];
+    }
+
+    if (hasProgress && progress.artifacts && typeof progress.artifacts === "object") {
+      const root = path.resolve(runDir);
+      for (const artifactPath of Object.values(progress.artifacts)) {
+        if (typeof artifactPath !== "string" || !artifactPath) continue;
+        const resolved = path.resolve(
+          path.isAbsolute(artifactPath) ? artifactPath : path.join(root, artifactPath),
+        );
+        const relative = path.relative(root, resolved);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          contradiction = `run-progress references an artifact outside the run directory: ${artifactPath}`;
+          break;
+        }
+      }
+    }
+  }
+
+  const missingArtifacts = expectedArtifacts.filter(
+    (artifact) => !nonEmptyFile(path.join(runDir, artifact)),
+  );
+  const completed =
+    terminalStatuses.has(terminalStatus) &&
+    !error &&
+    !contradiction &&
+    missingArtifacts.length === 0;
+  return {
+    completed,
+    terminalStatus,
+    stage: config.stage ?? (hasInteractionResult ? "interactive" : "all"),
+    route: hasInteractionResult
+      ? (interaction.kind ?? "interactive")
+      : (route ?? config.intentDecision?.intent ?? "unknown"),
+    contract,
+    workflowStatus: hasInteractionResult ? (interaction.workflowStatus ?? "unknown") : undefined,
+    expectedArtifacts,
+    missingArtifacts,
+    error,
+    contradiction,
+  };
 }
 
 function processAlive(pid) {
@@ -265,24 +387,65 @@ function acquireArtifactLock(workflowDir) {
   mkdirSync(path.dirname(artifactLockDir), { recursive: true });
   try {
     mkdirSync(artifactLockDir);
-  } catch {
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
     const owner = readJson(path.join(artifactLockDir, "owner.json"));
-    if (processAlive(owner.wrapper_pid)) {
-      throw Object.assign(new Error("Another Study Buddy artifact workflow is active."), {
-        code: 73,
-      });
-    }
-    rmSync(artifactLockDir, { recursive: true, force: true });
-    mkdirSync(artifactLockDir);
+    const detail = owner.wrapper_pid
+      ? ` Owner pid=${Number(owner.wrapper_pid) || "unknown"}, workflow=${JSON.stringify(owner.workflow_dir ?? "unknown")}, started=${JSON.stringify(owner.started_at ?? "unknown")}.`
+      : "";
+    throw Object.assign(
+      new Error(
+        `Another Study Buddy artifact workflow is active, initializing, or left a stale lock.${detail} Reuse or wait for it; only remove a stale lock after verifying that its owner process is no longer running.`,
+      ),
+      { code: 73 },
+    );
   }
-  writeFileSync(
-    path.join(artifactLockDir, "owner.json"),
-    `${JSON.stringify({ wrapper_pid: process.pid, workflow_dir: workflowDir, started_at: utcTimestamp() })}\n`,
-  );
+  artifactLockHeld = true;
+  artifactLockToken = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const ownerTempPath = path.join(artifactLockDir, `owner.${artifactLockToken}.tmp`);
+  try {
+    writeFileSync(
+      ownerTempPath,
+      `${JSON.stringify({
+        wrapper_pid: process.pid,
+        workflow_dir: workflowDir,
+        started_at: utcTimestamp(),
+        lock_token: artifactLockToken,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    renameSync(ownerTempPath, path.join(artifactLockDir, "owner.json"));
+  } catch (error) {
+    try {
+      unlinkSync(ownerTempPath);
+    } catch {
+      // The temporary owner file may not have been created.
+    }
+    try {
+      rmdirSync(artifactLockDir);
+    } catch {
+      // Preserve an unexpected non-empty lock directory for manual inspection.
+    }
+    artifactLockHeld = false;
+    artifactLockToken = "";
+    throw error;
+  }
 }
 
 function releaseArtifactLock() {
-  rmSync(artifactLockDir, { recursive: true, force: true });
+  if (!artifactLockHeld) return;
+  const ownerPath = path.join(artifactLockDir, "owner.json");
+  const owner = readJson(ownerPath);
+  if (artifactLockToken && owner.lock_token === artifactLockToken) {
+    try {
+      unlinkSync(ownerPath);
+      rmdirSync(artifactLockDir);
+    } catch {
+      // Preserve an unexpected lock directory instead of deleting another owner's state.
+    }
+  }
+  artifactLockHeld = false;
+  artifactLockToken = "";
 }
 
 function isValidExtractionHandoff(runDir) {
@@ -403,22 +566,11 @@ function printStatus(runDir) {
 function checkpoint(runDir) {
   const state = runState(runDir);
   if (state.error) return fail(state.error);
-  const summary = readText(path.join(runDir, "run-summary.md"));
-  const statuses = [...summary.matchAll(/^Run status:\s*(\S+)/gmu)];
-  const terminalStatus = statuses.at(-1)?.[1] ?? "unknown";
-  const config = readJson(path.join(runDir, "config.json"));
-  const stage = config.stage ?? "all";
-  const error = readText(path.join(runDir, "error.log")).trim();
-  const completed =
-    terminalStatus === "success" &&
-    (stage === "extract"
-      ? nonEmptyFile(path.join(runDir, "extracted-data.json"))
-      : nonEmptyFile(path.join(runDir, "document.typ")) &&
-        nonEmptyFile(path.join(runDir, "document.pdf"))) &&
-    !error;
+  const contract = inspectRunContract(runDir);
+  const completed = contract.completed;
   const blocked =
-    Boolean(error) ||
-    ["failed", "timeout", "canceled"].includes(terminalStatus) ||
+    Boolean(contract.error || contract.contradiction) ||
+    ["failed", "timeout", "canceled"].includes(contract.terminalStatus) ||
     (state.processState === "stopped" && !completed);
   const events = readText(path.join(runDir, "run-events.jsonl"))
     .split("\n")
@@ -438,18 +590,32 @@ function checkpoint(runDir) {
       {
         report: completed ? "completed" : blocked ? "blocked" : "progress",
         process_alive: state.processState === "running",
-        terminal_status: terminalStatus,
-        stage,
+        terminal_status: contract.terminalStatus,
+        stage: contract.stage,
+        route: contract.route,
+        contract: contract.contract,
+        workflow_status: contract.workflowStatus ?? null,
         phase: lastSemanticEvent?.phase ?? "starting",
         current_action: lastSemanticEvent?.message ?? "Run initialized",
         heartbeat_at: lastEvent?.timestamp ?? null,
         semantic_progress_at: lastSemanticEvent?.timestamp ?? null,
         next_action: completed
-          ? "Validate and deliver artifacts"
+          ? contract.workflowStatus === "permission_required"
+            ? "Deliver the permission request and wait for explicit approval"
+            : "Validate and deliver artifacts"
           : blocked
             ? "Inspect blocker before retrying"
             : "Continue the same worker lease",
-        blocker: error || (blocked ? `Process stopped with status ${terminalStatus}` : null),
+        blocker:
+          contract.error ||
+          contract.contradiction ||
+          (contract.missingArtifacts.length
+            ? `Missing required artifacts: ${contract.missingArtifacts.join(", ")}`
+            : blocked
+              ? `Process stopped with status ${contract.terminalStatus}`
+              : null),
+        expected_artifacts: contract.expectedArtifacts,
+        missing_artifacts: contract.missingArtifacts,
       },
       null,
       2,
@@ -468,18 +634,7 @@ async function waitRun(runDir, timeoutSeconds = 900) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   printStatus(runDir);
-  const stage = readJson(path.join(runDir, "config.json")).stage ?? "all";
-  if (stage === "extract") {
-    return nonEmptyFile(path.join(runDir, "extracted-data.json")) &&
-      !nonEmptyFile(path.join(runDir, "error.log"))
-      ? 0
-      : 1;
-  }
-  return nonEmptyFile(path.join(runDir, "document.typ")) &&
-    nonEmptyFile(path.join(runDir, "document.pdf")) &&
-    !nonEmptyFile(path.join(runDir, "error.log"))
-    ? 0
-    : 1;
+  return inspectRunContract(runDir).completed ? 0 : 1;
 }
 
 function requirePrompt(args) {
@@ -589,4 +744,4 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   }
 }
 
-export { extractSourceArgsFor, main, watchdogArguments };
+export { extractSourceArgsFor, inspectRunContract, main, watchdogArguments };
