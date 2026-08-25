@@ -58,6 +58,58 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
     writeFileSync(path.join(staleRun, "document.typ"), "stale\n");
     writeFileSync(path.join(staleRun, "document.pdf"), "stale\n");
     assert.isFalse(inspectRunContract(staleRun).completed);
+
+    const activeRun = path.join(temp, "active");
+    mkdirSync(activeRun);
+    writeFileSync(path.join(activeRun, "run-summary.md"), "Run status: running\n");
+    writeFileSync(path.join(activeRun, "error.log"), "");
+    writeFileSync(
+      path.join(activeRun, "config.json"),
+      JSON.stringify({
+        stage: "all",
+        intentDecision: { intent: "quick_answer", wantsQuickAnswer: true },
+      }),
+    );
+    writeFileSync(
+      path.join(activeRun, "run-progress.json"),
+      JSON.stringify({ status: "running", artifacts: {} }),
+    );
+    assert.deepStrictEqual(inspectRunContract(activeRun), {
+      completed: false,
+      terminalStatus: "running",
+      stage: "all",
+      route: "quick_answer",
+      contract: "answer",
+      workflowStatus: undefined,
+      expectedArtifacts: ["answer.md", "answer.json"],
+      missingArtifacts: ["answer.md", "answer.json"],
+      error: "",
+      contradiction: "",
+    });
+
+    const canceledInteraction = path.join(temp, "canceled-interaction");
+    mkdirSync(canceledInteraction);
+    writeFileSync(
+      path.join(canceledInteraction, "run-summary.md"),
+      "Route: interactive_quiz\nRun status: canceled\n",
+    );
+    writeFileSync(path.join(canceledInteraction, "error.log"), "");
+    writeFileSync(path.join(canceledInteraction, "quiz-review.typ"), "review\n");
+    writeFileSync(path.join(canceledInteraction, "quiz-review.json"), "{}\n");
+    writeFileSync(
+      path.join(canceledInteraction, "interaction-result.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        ok: true,
+        workflowStatus: "completed",
+        kind: "quiz",
+        requiredArtifacts: ["quiz-review.typ", "quiz-review.json"],
+      }),
+    );
+    assert.include(
+      inspectRunContract(canceledInteraction).contradiction,
+      "contradicts run summary status canceled",
+    );
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

@@ -124,6 +124,7 @@ function inspectRunContract(runDir) {
   const hasProgress = nonEmptyFile(progressPath);
   const terminalStatuses = new Set(["success", "partial"]);
   const failureStatuses = new Set(["failed", "timeout", "canceled"]);
+  const liveStatuses = new Set(["unknown", "queued", "running"]);
   const error = readText(path.join(runDir, "error.log")).trim();
   const interactionResultPath = path.join(runDir, "interaction-result.json");
   const interaction = readJson(interactionResultPath);
@@ -166,9 +167,17 @@ function inspectRunContract(runDir) {
     }
   } else {
     const progressStatus = typeof progress.status === "string" ? progress.status : "unknown";
-    if (!terminalStatuses.has(summaryStatus) && !failureStatuses.has(summaryStatus)) {
+    if (
+      !terminalStatuses.has(summaryStatus) &&
+      !failureStatuses.has(summaryStatus) &&
+      !liveStatuses.has(summaryStatus)
+    ) {
       contradiction = `Run summary has no recognized terminal status (${summaryStatus})`;
-    } else if (hasProgress && progressStatus !== summaryStatus) {
+    } else if (
+      hasProgress &&
+      progressStatus !== summaryStatus &&
+      !(summaryStatus === "unknown" && liveStatuses.has(progressStatus))
+    ) {
       contradiction = `Run summary status ${summaryStatus} contradicts run-progress status ${progressStatus}`;
     }
 
