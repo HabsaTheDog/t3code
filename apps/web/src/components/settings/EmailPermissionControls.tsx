@@ -8,6 +8,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import { sourceTelemetryProperties } from "../../telemetry/sourceTelemetry";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
@@ -83,8 +86,42 @@ export function EmailPermissionControls({
         senderEmail: senderEmail || null,
       });
       onInventoryChange(updated);
+      const updatedSource =
+        updated.sources.find((candidate) => candidate.id === source.id) ?? source;
+      for (const permission of ["read", "draft", "send"] as const) {
+        if (
+          next[permission] ===
+          emailPermissionState(source, connections.get(source.connectionId))[permission]
+        ) {
+          continue;
+        }
+        void telemetry.capture({
+          event: "email.permission.changed",
+          properties: {
+            ...sourceTelemetryProperties(updatedSource, updated),
+            permission,
+            enabled: next[permission],
+            sender_configured: Boolean(senderEmail),
+            surface,
+            outcome: "success",
+          },
+        });
+      }
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("email.permissions", { surface }),
+      });
     } catch (cause) {
       onInventoryChange(previous);
+      void telemetry.capture({
+        event: "email.permission.changed",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          permission: "configuration",
+          surface,
+          outcome: "failed",
+        },
+      });
       const message =
         cause instanceof Error ? cause.message : "Study Buddy couldn’t save this email permission.";
       setErrors((current) => ({ ...current, [source.id]: message }));
@@ -180,6 +217,7 @@ function EmailPermissionAccount({
           checked={permissions.read}
           disabled={busy}
           ariaLabel={permissionLabel("Read email")}
+          analyticsId="email.permission.read"
           onCheckedChange={(read) => onChange({ ...permissions, read })}
         />
         <PermissionToggle
@@ -189,6 +227,7 @@ function EmailPermissionAccount({
           checked={permissions.draft}
           disabled={busy}
           ariaLabel={permissionLabel("Prepare drafts")}
+          analyticsId="email.permission.draft"
           onCheckedChange={(draft) =>
             onChange({ ...permissions, draft, send: draft ? permissions.send : false })
           }
@@ -200,6 +239,7 @@ function EmailPermissionAccount({
           checked={permissions.send}
           disabled={busy || !permissions.sendingSupported}
           ariaLabel={permissionLabel("Ask to send")}
+          analyticsId="email.permission.send"
           onCheckedChange={(send) =>
             onChange({
               ...permissions,
@@ -274,6 +314,7 @@ function PermissionToggle({
   checked,
   disabled,
   ariaLabel,
+  analyticsId,
   onCheckedChange,
 }: {
   icon: typeof MailOpenIcon;
@@ -282,6 +323,7 @@ function PermissionToggle({
   checked: boolean;
   disabled: boolean;
   ariaLabel: string;
+  analyticsId: string;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
@@ -292,6 +334,7 @@ function PermissionToggle({
         <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{description}</p>
       </div>
       <Switch
+        data-analytics-id={analyticsId}
         checked={checked}
         disabled={disabled}
         onCheckedChange={onCheckedChange}

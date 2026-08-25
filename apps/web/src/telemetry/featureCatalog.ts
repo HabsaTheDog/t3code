@@ -12,12 +12,18 @@ export const FEATURE_CATALOG = [
   { id: "chat.voice", area: "Chat", label: "Use voice input" },
   { id: "voice.setup", area: "Voice", label: "Install local voice input" },
   { id: "chat.terminal_context", area: "Chat", label: "Attach terminal context" },
+  { id: "sources.management", area: "Sources", label: "Configure a learning source" },
+  { id: "sources.connection", area: "Sources", label: "Check a source connection" },
+  { id: "email.permissions", area: "Email", label: "Configure email access" },
+  { id: "email.inbox", area: "Email", label: "Read email safely" },
+  { id: "email.send_approval", area: "Email", label: "Approve or decline an email" },
   { id: "plan.sidebar", area: "Planning", label: "Open the plan sidebar" },
   { id: "orchestration.delegation", area: "Orchestration", label: "Run delegated tasks" },
   { id: "outputs.artifacts", area: "Outputs", label: "Generate a linked artifact" },
   { id: "response.feedback", area: "Feedback", label: "Rate an assistant response" },
   { id: "settings.privacy", area: "Settings", label: "Open privacy settings" },
   { id: "settings.study_buddy", area: "Settings", label: "Configure Study Buddy" },
+  { id: "settings.theme", area: "Settings", label: "Choose an app theme" },
 ] as const;
 
 export type FeatureId = (typeof FEATURE_CATALOG)[number]["id"];
@@ -48,12 +54,22 @@ export function featuresExposedOnRoute(route: string): ReadonlyArray<FeatureId> 
       "chat.runtime_mode",
       "chat.interaction_mode",
       "chat.image_attachment",
+      "email.permissions",
       "chat.terminal_context",
       "plan.sidebar",
     ];
   }
   if (route === "/settings/privacy") return ["settings.privacy"];
-  if (route === "/settings/study-buddy") return ["settings.study_buddy"];
+  if (route === "/settings/study-buddy") {
+    return [
+      "settings.study_buddy",
+      "sources.management",
+      "sources.connection",
+      "email.permissions",
+      "email.inbox",
+    ];
+  }
+  if (route === "/settings/general") return ["settings.theme"];
   return route === "/pair" ? ["setup.onboarding"] : [];
 }
 

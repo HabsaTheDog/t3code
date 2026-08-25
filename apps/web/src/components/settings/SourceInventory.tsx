@@ -17,6 +17,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { featureProperties } from "../../telemetry/featureCatalog";
+import { telemetry } from "../../telemetry/runtime";
+import { sourceTelemetryProperties } from "../../telemetry/sourceTelemetry";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -78,6 +81,20 @@ export function SourceInventory({
     try {
       const result = await ensureLocalApi().server.testStudyBuddySource({ sourceId: source.id });
       setTestResults((current) => ({ ...current, [source.id]: result }));
+      void telemetry.capture({
+        event: "source.connection.tested",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          outcome: result.status,
+        },
+      });
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("sources.connection", {
+          surface: "settings",
+          source_kind: source.kind,
+        }),
+      });
       onInventoryChange(await ensureLocalApi().server.getStudyBuddySourceInventory());
       toastManager.add({
         type:
@@ -97,6 +114,13 @@ export function SourceInventory({
         description: sourceTestDescription(result),
       });
     } catch (cause) {
+      void telemetry.capture({
+        event: "source.connection.tested",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          outcome: "failed",
+        },
+      });
       toastManager.add({
         type: "error",
         title: "Connection check failed",
@@ -123,8 +147,32 @@ export function SourceInventory({
         enabled,
       });
       onInventoryChange(next);
+      void telemetry.capture({
+        event: "source.changed",
+        properties: {
+          ...sourceTelemetryProperties({ ...source, enabled }, inventory),
+          action: enabled ? "enabled" : "disabled",
+          outcome: "success",
+        },
+      });
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("sources.management", {
+          surface: "settings",
+          action: enabled ? "enabled" : "disabled",
+          source_kind: source.kind,
+        }),
+      });
     } catch (cause) {
       onInventoryChange(previous);
+      void telemetry.capture({
+        event: "source.changed",
+        properties: {
+          ...sourceTelemetryProperties(source, inventory),
+          action: enabled ? "enabled" : "disabled",
+          outcome: "failed",
+        },
+      });
       toastManager.add({
         type: "error",
         title: "Source wasn’t changed",
@@ -144,6 +192,22 @@ export function SourceInventory({
         sourceId: removingSource.id,
       });
       onInventoryChange(next);
+      void telemetry.capture({
+        event: "source.changed",
+        properties: {
+          ...sourceTelemetryProperties(removingSource, inventory),
+          action: "deleted",
+          outcome: "success",
+        },
+      });
+      void telemetry.capture({
+        event: "feature.used",
+        properties: featureProperties("sources.management", {
+          surface: "settings",
+          action: "deleted",
+          source_kind: removingSource.kind,
+        }),
+      });
       setRemovingSourceId(null);
       toastManager.add({
         type: "success",
@@ -151,6 +215,14 @@ export function SourceInventory({
         description: `${removingSource.label} is no longer available to Study Buddy.`,
       });
     } catch (cause) {
+      void telemetry.capture({
+        event: "source.changed",
+        properties: {
+          ...sourceTelemetryProperties(removingSource, inventory),
+          action: "deleted",
+          outcome: "failed",
+        },
+      });
       toastManager.add({
         type: "error",
         title: "Source wasn’t removed",
@@ -194,6 +266,7 @@ export function SourceInventory({
           <Button
             className="mt-6 min-w-48"
             size="xl"
+            data-analytics-id="sources.add"
             onClick={() => {
               setEditingSourceId(null);
               setDialogOpen(true);
@@ -272,6 +345,7 @@ export function SourceInventory({
 
       <EmailInboxDialog
         source={emailSource}
+        inventory={inventory}
         open={Boolean(emailSource)}
         onOpenChange={(nextOpen) => {
           if (!nextOpen) setEmailSourceId(null);
@@ -396,12 +470,14 @@ function SourceRow({
         </div>
         <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
           <Switch
+            data-analytics-id="sources.toggle"
             checked={source.enabled}
             disabled={busy}
             onCheckedChange={onToggle}
             aria-label={`Use ${source.label}`}
           />
           <Button
+            data-analytics-id="sources.check"
             size="sm"
             variant="outline"
             disabled={busy || !source.enabled}
@@ -413,6 +489,7 @@ function SourceRow({
           </Button>
           {source.kind === "email" ? (
             <Button
+              data-analytics-id="email.inbox.open"
               size="sm"
               variant="outline"
               disabled={busy || !source.enabled || !emailReadReady || !emailReadAllowed}
@@ -431,6 +508,7 @@ function SourceRow({
             </Button>
           ) : null}
           <Button
+            data-analytics-id="sources.edit"
             size="icon-sm"
             variant="ghost"
             onClick={onEdit}
@@ -439,6 +517,7 @@ function SourceRow({
             <PencilIcon className="size-3.5" />
           </Button>
           <Button
+            data-analytics-id="sources.remove"
             size="icon-sm"
             variant="ghost"
             onClick={onRemove}
