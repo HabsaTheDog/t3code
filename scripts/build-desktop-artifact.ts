@@ -362,19 +362,16 @@ export function resolveWorkflowRuntimeDependencies(
 export function assertWorkflowReleaseIdentity(
   packageJson: WorkflowPackageJson,
   packageLock: WorkflowPackageLock,
-  appVersion: string,
 ): void {
-  const workflowVersion = appVersion.split("-", 1)[0];
-  if (packageJson.version !== workflowVersion) {
-    throw new Error(
-      `Canonical workflow version '${packageJson.version ?? "missing"}' does not match desktop release line '${workflowVersion}'.`,
-    );
+  const workflowVersion = packageJson.version;
+  if (!workflowVersion) {
+    throw new Error("Canonical workflow package.json version is missing.");
   }
   if (
     packageLock.version !== workflowVersion ||
     packageLock.packages?.[""]?.version !== workflowVersion
   ) {
-    throw new Error("Canonical workflow package-lock version does not match the desktop release line.");
+    throw new Error("Canonical workflow package-lock version does not match package.json.");
   }
   const packageDependencies = packageJson.dependencies ?? {};
   const lockedRootDependencies = packageLock.packages?.[""]?.dependencies ?? {};
@@ -490,7 +487,6 @@ const readJsonFile = Effect.fn("readJsonFile")(function* <A>(filePath: string) {
 
 const resolveWorkflowRuntime = Effect.fn("resolveWorkflowRuntime")(function* (
   workflowRoot: string | undefined,
-  appVersion: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -513,7 +509,7 @@ const resolveWorkflowRuntime = Effect.fn("resolveWorkflowRuntime")(function* (
     path.join(root, "package-lock.json"),
   );
   yield* Effect.try({
-    try: () => assertWorkflowReleaseIdentity(packageJson, packageLock, appVersion),
+    try: () => assertWorkflowReleaseIdentity(packageJson, packageLock),
     catch: (cause) =>
       new BuildScriptError({
         message: "Canonical Study Buddy workflow dependencies are not fully locked.",
@@ -1341,7 +1337,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     catch: (cause) =>
       new BuildScriptError({ message: "Release public configuration is incomplete.", cause }),
   });
-  const workflow = yield* resolveWorkflowRuntime(options.workflowRoot, appVersion);
+  const workflow = yield* resolveWorkflowRuntime(options.workflowRoot);
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
