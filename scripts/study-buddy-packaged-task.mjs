@@ -819,12 +819,9 @@ function printStatus(runDir) {
   return 0;
 }
 
-function checkpoint(runDir) {
-  const state = runState(runDir);
-  if (state.error) return fail(state.error);
-  const contract = inspectRunContract(runDir);
-  const transientWriteSkew =
-    state.processState === "running" &&
+function isTransientWriteSkew(contract, processState) {
+  return (
+    processState === "running" &&
     (/^Run summary status (?:success|partial) contradicts run-progress status (?:unknown|queued|running)$/.test(
       contract.contradiction,
     ) ||
@@ -836,7 +833,15 @@ function checkpoint(runDir) {
       ) ||
       /^Workflow summary JSON status (?:queued|running) contradicts Markdown status (?:success|failed)$/.test(
         contract.contradiction,
-      ));
+      ))
+  );
+}
+
+function checkpoint(runDir) {
+  const state = runState(runDir);
+  if (state.error) return fail(state.error);
+  const contract = inspectRunContract(runDir);
+  const transientWriteSkew = isTransientWriteSkew(contract, state.processState);
   const completed = contract.completed && state.processState !== "running";
   const liveTerminalStatus = ["unknown", "queued", "running"].includes(contract.terminalStatus);
   const blocked =
@@ -904,6 +909,7 @@ async function waitRun(runDir, timeoutSeconds = 900) {
     const state = runState(runDir);
     if (state.error) return fail(state.error);
     const contract = inspectRunContract(runDir);
+    const transientWriteSkew = isTransientWriteSkew(contract, state.processState);
     if (
       state.processState === "stopped" ||
       (state.processState === "unknown" && contract.completed)
@@ -911,7 +917,7 @@ async function waitRun(runDir, timeoutSeconds = 900) {
       break;
     if (
       contract.error ||
-      contract.contradiction ||
+      (contract.contradiction && !transientWriteSkew) ||
       ["failed", "timeout", "canceled"].includes(contract.terminalStatus)
     )
       break;

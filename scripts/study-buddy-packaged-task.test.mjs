@@ -238,6 +238,12 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
       process_alive: true,
       blocker: null,
     });
+    const liveSkewWait = spawnSync(
+      process.execPath,
+      [adapterPath, "wait", terminalWriteSkew, "0.1"],
+      { encoding: "utf8" },
+    );
+    assert.equal(liveSkewWait.status, 124, liveSkewWait.stderr);
     writeFileSync(
       path.join(terminalWriteSkew, "pid.json"),
       `${JSON.stringify({ child_pid: 2_147_483_647 })}\n`,
