@@ -313,6 +313,7 @@ describe("resolveKnownWindowsCliDirs", () => {
       }),
     ).toEqual([
       "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+      "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
       "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\pnpm",
@@ -370,6 +371,7 @@ describe("resolveWindowsEnvironment", () => {
     ).toEqual({
       PATH: [
         "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
         "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\pnpm",
@@ -420,6 +422,7 @@ describe("resolveWindowsEnvironment", () => {
         "C:\\Profile\\Node",
         "C:\\Windows\\System32",
         "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
         "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\pnpm",

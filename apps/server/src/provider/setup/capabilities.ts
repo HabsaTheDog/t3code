@@ -37,22 +37,18 @@ export function resolveProviderSetupCommand(input: {
   readonly configuredCodexBinary: string;
 }): string {
   if (input.action.provider === "codex" && input.action.kind !== "install") {
-    if (input.platform.platform === "win32" && input.configuredCodexBinary === "codex") {
-      return "codex.cmd";
-    }
     return input.configuredCodexBinary;
-  }
-  if (
-    input.platform.platform === "win32" &&
-    input.action.kind === "install" &&
-    input.action.executable === "npm"
-  ) {
-    return "npm.cmd";
   }
   return input.action.executable;
 }
 
 const supportedEverywhere = () => null;
+
+const WINDOWS_CODEX_INSTALL_SCRIPT = [
+  "$ProgressPreference = 'SilentlyContinue'",
+  "$env:CODEX_NON_INTERACTIVE = '1'",
+  "Invoke-RestMethod 'https://chatgpt.com/codex/install.ps1' | Invoke-Expression",
+].join("; ");
 
 const supportsCursor = (platform: ProviderSetupPlatform): string | null => {
   if (platform.platform === "darwin" || platform.platform === "linux") {
@@ -260,12 +256,24 @@ export function resolveProviderSetupAction(
   if (!definition || definition.provider !== "codex") {
     return null;
   }
+  const windowsStandaloneInstall =
+    definition.id === "codex.install" && platform.platform === "win32";
   return {
     id: definition.id,
     provider: definition.provider,
     kind: definition.kind,
-    executable: definition.executable,
-    args: [...definition.args],
+    executable: windowsStandaloneInstall ? "powershell.exe" : definition.executable,
+    args: windowsStandaloneInstall
+      ? [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          WINDOWS_CODEX_INSTALL_SCRIPT,
+        ]
+      : [...definition.args],
     requiresConfirmation: definition.requiresConfirmation,
     secretInput: definition.secretInput,
     interaction: definition.interaction,

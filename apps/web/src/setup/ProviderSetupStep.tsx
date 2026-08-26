@@ -219,8 +219,13 @@ export function summarizeProvider(
 export function visibleProviderActions(
   capability: ProviderSetupCapability | undefined,
   installed: boolean,
+  updateRequired = false,
 ): ReadonlyArray<ProviderSetupAction> {
-  return capability?.actions.filter((action) => !installed || action.kind === "authenticate") ?? [];
+  return (
+    capability?.actions.filter(
+      (action) => !installed || updateRequired || action.kind === "authenticate",
+    ) ?? []
+  );
 }
 
 export function providerIsDefault(
@@ -544,7 +549,12 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
             const status = summarizeProvider(providers, providerName);
             const job = jobs[providerName];
             const running = job?.status === "starting" || job?.status === "running";
-            const actions = visibleProviderActions(capability, status.installed);
+            const updateRequired =
+              providerName === "codex" &&
+              status.installed &&
+              (status.version === null ||
+                compareSemverVersions(status.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) < 0);
+            const actions = visibleProviderActions(capability, status.installed, updateRequired);
             const retryAction = actionForRetry(job);
             const unsupported = actions.length > 0 && actions.every((action) => !action.supported);
             const providerLabel =
@@ -635,7 +645,11 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                             <ActionIcon className="size-4 shrink-0" />
                             <span className="flex flex-1 items-center justify-between gap-3">
                               <span className="flex flex-col items-start">
-                                <span>{action.label}</span>
+                                <span>
+                                  {action.kind === "install" && updateRequired
+                                    ? "Install the latest Codex"
+                                    : action.label}
+                                </span>
                                 {!status.installed && action.kind === "authenticate" ? (
                                   <span className="text-xs text-current/70">
                                     Available after installation
