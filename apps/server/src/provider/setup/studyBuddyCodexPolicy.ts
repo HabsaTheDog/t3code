@@ -18,6 +18,9 @@ export interface StudyBuddyCodexPolicyPaths {
 }
 
 function legacyCredentialRoot(config: ServerConfigShape): string {
+  if (process.env.STUDY_BUDDY_CONFIG_ROOT) {
+    return path.resolve(process.env.STUDY_BUDDY_CONFIG_ROOT);
+  }
   if (process.env.STUDY_BUDDY_ROOT) return path.resolve(process.env.STUDY_BUDDY_ROOT);
   if (process.env.STUDY_BUDDY_T3_ROOT) {
     return path.resolve(process.env.STUDY_BUDDY_T3_ROOT, "..");

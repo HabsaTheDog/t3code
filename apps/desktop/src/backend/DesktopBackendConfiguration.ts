@@ -165,6 +165,9 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         APP_VERSION: environment.appVersion,
         STUDY_BUDDY_ROOT: environment.studyBuddyRoot,
         STUDY_BUDDY_T3_ROOT: environment.appRoot,
+        STUDY_BUDDY_CONFIG_ROOT: environment.isPackaged
+          ? environment.stateDir
+          : environment.studyBuddyRoot,
         STUDY_BUDDY_TASK_WRAPPER: environment.studyBuddyTaskWrapperPath,
         STUDY_BUDDY_NODE_EXECUTABLE: process.execPath,
         PATH: `${environment.studyBuddyRuntimeBinPath}${pathSeparator}${process.env.PATH ?? ""}`,

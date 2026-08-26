@@ -132,6 +132,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.env.ELECTRON_RUN_AS_NODE, "1");
         assert.equal(first.env.APP_VERSION, "1.2.3");
         assert.equal(first.env.STUDY_BUDDY_ROOT, environment.studyBuddyRoot);
+        assert.equal(first.env.STUDY_BUDDY_CONFIG_ROOT, environment.stateDir);
         assert.equal(first.env.STUDY_BUDDY_TASK_WRAPPER, environment.studyBuddyTaskWrapperPath);
         assert.equal(first.env.STUDY_BUDDY_NODE_EXECUTABLE, process.execPath);
         assert.include(first.env.PATH ?? "", environment.studyBuddyRuntimeBinPath);
@@ -206,6 +207,8 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolve;
         assert.equal(config.captureOutput, true);
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        assert.equal(config.env.STUDY_BUDDY_CONFIG_ROOT, environment.studyBuddyRoot);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
