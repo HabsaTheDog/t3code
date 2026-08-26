@@ -50,6 +50,12 @@ const WINDOWS_CODEX_INSTALL_SCRIPT = [
   "Invoke-RestMethod 'https://chatgpt.com/codex/install.ps1' | Invoke-Expression",
 ].join("; ");
 
+// The desktop app must be able to bootstrap Codex on a clean machine. The
+// official standalone installer does not require a pre-existing Node/npm
+// toolchain and verifies the downloaded Codex release before installing it.
+const POSIX_CODEX_INSTALL_SCRIPT =
+  "curl -fsSL --proto '=https' --tlsv1.2 https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh";
+
 const supportsCursor = (platform: ProviderSetupPlatform): string | null => {
   if (platform.platform === "darwin" || platform.platform === "linux") {
     return null;
@@ -66,8 +72,8 @@ const ACTIONS: ReadonlyArray<ProviderSetupActionDefinition> = [
     provider: "codex",
     kind: "install",
     label: "Install Codex",
-    executable: "npm",
-    args: ["install", "-g", "@openai/codex"],
+    executable: "sh",
+    args: ["-lc", POSIX_CODEX_INSTALL_SCRIPT],
     requiresConfirmation: true,
     secretInput: null,
     interaction: "background",

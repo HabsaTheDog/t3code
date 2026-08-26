@@ -29,10 +29,13 @@ describe("provider setup capability registry", () => {
 
   it("resolves only fixed commands owned by the backend registry", () => {
     expect(resolveProviderSetupAction("codex.install", linux)).toMatchObject({
-      executable: "npm",
-      args: ["install", "-g", "@openai/codex"],
+      executable: "sh",
+      args: ["-lc", expect.stringContaining("https://chatgpt.com/codex/install.sh")],
       requiresConfirmation: true,
     });
+    expect(resolveProviderSetupAction("codex.install", linux)?.args.at(-1)).toContain(
+      "CODEX_NON_INTERACTIVE=1",
+    );
     expect(resolveProviderSetupAction("codex.auth.browser", linux)).toMatchObject({
       executable: "codex",
       args: ["login"],
@@ -80,12 +83,7 @@ describe("provider setup capability registry", () => {
     expect(login).not.toBeNull();
     expect(install).toMatchObject({
       executable: "powershell.exe",
-      args: expect.arrayContaining([
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-      ]),
+      args: expect.arrayContaining(["-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]),
     });
     expect(install?.args.at(-1)).toContain("https://chatgpt.com/codex/install.ps1");
     expect(
