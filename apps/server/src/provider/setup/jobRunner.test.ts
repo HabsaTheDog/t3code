@@ -94,8 +94,8 @@ describe("ProviderSetupJobRunner", () => {
 
     expect(spawned).toEqual([
       {
-        command: "npm",
-        args: ["install", "-g", "@openai/codex"],
+        command: "sh",
+        args: ["-lc", expect.stringContaining("https://chatgpt.com/codex/install.sh")],
         cwd: undefined,
         env: undefined,
         pty: false,

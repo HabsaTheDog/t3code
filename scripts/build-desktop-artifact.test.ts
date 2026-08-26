@@ -116,7 +116,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
-  it("requires canonical workflow package and lock identity to match the desktop release", () => {
+  it("requires canonical workflow package and lock identity to match each other", () => {
     const packageJson = { version: "1.0.0", dependencies: { tsx: "^4.23.12" } };
     const packageLock = {
       version: "1.0.0",
@@ -125,20 +125,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "node_modules/tsx": { version: "4.23.12" },
       },
     };
-    assert.doesNotThrow(() => assertWorkflowReleaseIdentity(packageJson, packageLock, "1.0.0"));
-    assert.throws(() => assertWorkflowReleaseIdentity(packageJson, packageLock, "1.0.1"));
+    assert.doesNotThrow(() => assertWorkflowReleaseIdentity(packageJson, packageLock));
     assert.throws(() =>
-      assertWorkflowReleaseIdentity(
-        packageJson,
-        {
-          ...packageLock,
-          packages: {
-            ...packageLock.packages,
-            "": { version: "1.0.0", dependencies: { tsx: "4.0.0" } },
-          },
+      assertWorkflowReleaseIdentity({ dependencies: packageJson.dependencies }, packageLock),
+    );
+    assert.throws(() =>
+      assertWorkflowReleaseIdentity(packageJson, {
+        ...packageLock,
+        packages: {
+          ...packageLock.packages,
+          "": { version: "1.0.0", dependencies: { tsx: "4.0.0" } },
         },
-        "1.0.0",
-      ),
+      }),
     );
   });
 

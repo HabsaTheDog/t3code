@@ -40,6 +40,7 @@ describe("provider setup view model", () => {
   it("offers explicit installation and authentication before probing, then hides reinstall", () => {
     expect(visibleProviderActions(capability, false)).toEqual([installAction, authAction]);
     expect(visibleProviderActions(capability, true)).toEqual([authAction]);
+    expect(visibleProviderActions(capability, true, true)).toEqual([installAction, authAction]);
   });
 
   it("combines status across configured instances of the same driver", () => {

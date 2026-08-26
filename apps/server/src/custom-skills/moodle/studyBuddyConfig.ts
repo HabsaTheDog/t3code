@@ -44,13 +44,15 @@ export interface StoredStudyBuddyConfiguration {
 }
 
 export function resolveStudyBuddyEnvPath(config: ServerConfigShape): string {
-  const root = process.env.STUDY_BUDDY_ROOT
-    ? path.resolve(process.env.STUDY_BUDDY_ROOT)
-    : process.env.STUDY_BUDDY_T3_ROOT
-      ? path.resolve(process.env.STUDY_BUDDY_T3_ROOT, "..")
-      : path.basename(config.cwd) === "t3code-fork"
-        ? path.resolve(config.cwd, "..")
-        : path.resolve(config.cwd);
+  const root = process.env.STUDY_BUDDY_CONFIG_ROOT
+    ? path.resolve(process.env.STUDY_BUDDY_CONFIG_ROOT)
+    : process.env.STUDY_BUDDY_ROOT
+      ? path.resolve(process.env.STUDY_BUDDY_ROOT)
+      : process.env.STUDY_BUDDY_T3_ROOT
+        ? path.resolve(process.env.STUDY_BUDDY_T3_ROOT, "..")
+        : path.basename(config.cwd) === "t3code-fork"
+          ? path.resolve(config.cwd, "..")
+          : path.resolve(config.cwd);
   return path.join(root, ".env.local");
 }
 

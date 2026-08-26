@@ -35,3 +35,14 @@ node_modules/
 *.log
 .env*
 !.env.example
+.npmrc
+.netrc
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*storage-state*.json
+*storage_state*.json
+*cookies*.json

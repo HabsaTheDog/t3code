@@ -24,6 +24,7 @@ import { MINIMUM_STUDY_BUDDY_CODEX_VERSION, ServerSettingsError } from "@t3tools
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { isCommandAvailable } from "@t3tools/shared/shell";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
@@ -453,6 +454,33 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "warning",
         auth: { status: "unknown" },
         message: "Codex is disabled in T3 Code settings.",
+      },
+    });
+  }
+
+  // On native Windows, launching a missing command through a shell exits with
+  // a generic process error instead of the ENOENT-shaped spawn error emitted
+  // on POSIX. Check the configured binary before starting the real probe so a
+  // clean machine is reported as "not installed", not as an unknown version.
+  if (
+    probe === probeCodexAppServerProvider &&
+    !isCommandAvailable(codexSettings.binaryPath, {
+      platform: process.platform,
+      env: environment,
+    })
+  ) {
+    return buildServerProvider({
+      presentation: CODEX_PRESENTATION,
+      enabled: codexSettings.enabled,
+      checkedAt,
+      models: emptyModels,
+      skills: [],
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Codex CLI (`codex`) is not installed or not on PATH.",
       },
     });
   }

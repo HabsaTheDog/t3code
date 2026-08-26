@@ -5,12 +5,15 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
-  rmSync,
+  renameSync,
+  rmdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -70,6 +73,8 @@ const threadDataRoot =
       : dataRoot;
 const outputRoot = path.join(threadDataRoot, "runs");
 const artifactLockDir = path.join(threadDataRoot, "locks", ".artifact-workflow.lock");
+let artifactLockHeld = false;
+let artifactLockToken = "";
 const defaultMoodleUrl =
   process.env.STUDY_BUDDY_MOODLE_URL ?? "https://moodle.technikum-wien.at/my/";
 const defaultCisUrl = process.env.STUDY_BUDDY_CIS_URL ?? "https://cis.technikum-wien.at/cis.php/";
@@ -87,7 +92,9 @@ function fail(message, code = 1) {
 
 function nonEmptyFile(filePath) {
   try {
-    return statSync(filePath).size > 0;
+    const linkStats = lstatSync(filePath);
+    const stats = statSync(filePath);
+    return linkStats.isFile() && stats.isFile() && stats.size > 0;
   } catch {
     return false;
   }
@@ -107,6 +114,324 @@ function readJson(filePath) {
   } catch {
     return {};
   }
+}
+
+function lexicalExists(filePath) {
+  try {
+    lstatSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveContainedRegularFile(rootDir, filePath) {
+  try {
+    const realRoot = realpathSync(rootDir);
+    const linkStats = lstatSync(filePath);
+    const realFile = realpathSync(filePath);
+    const relative = path.relative(realRoot, realFile);
+    if (!linkStats.isFile() || relative.startsWith("..") || path.isAbsolute(relative)) {
+      return undefined;
+    }
+    return realFile;
+  } catch {
+    return undefined;
+  }
+}
+
+function readContainedText(rootDir, filePath) {
+  const resolved = resolveContainedRegularFile(rootDir, filePath);
+  return resolved ? readText(resolved) : "";
+}
+
+function readContainedJson(rootDir, filePath) {
+  try {
+    return JSON.parse(readContainedText(rootDir, filePath));
+  } catch {
+    return {};
+  }
+}
+
+function nonEmptyContainedFile(rootDir, filePath) {
+  const resolved = resolveContainedRegularFile(rootDir, filePath);
+  return resolved ? nonEmptyFile(resolved) : false;
+}
+
+function inspectRunContract(runDir) {
+  const realRunDir = realpathSync(runDir);
+  const nonEmptyRunFile = (filePath) => nonEmptyContainedFile(realRunDir, filePath);
+  const readRunText = (filePath) => readContainedText(realRunDir, filePath);
+  const readRunJson = (filePath) => readContainedJson(realRunDir, filePath);
+  const controlPaths = [
+    "run-summary.md",
+    "config.json",
+    "run-progress.json",
+    "interaction-result.json",
+    "workflow-summary.json",
+    "workflow-summary.md",
+    "cancellation.json",
+    "error.log",
+  ].map((name) => path.join(runDir, name));
+  const invalidControls = controlPaths.filter(
+    (filePath) => lexicalExists(filePath) && !resolveContainedRegularFile(realRunDir, filePath),
+  );
+  const summary = readRunText(path.join(runDir, "run-summary.md"));
+  const summaryStatuses = [...summary.matchAll(/^Run status:\s*(\S+)/gmu)];
+  const summaryStatus = summaryStatuses.at(-1)?.[1] ?? "unknown";
+  const route = [...summary.matchAll(/^Route:\s*(\S+)/gmu)].at(-1)?.[1];
+  const config = readRunJson(path.join(runDir, "config.json"));
+  const progressPath = path.join(runDir, "run-progress.json");
+  const progress = readRunJson(progressPath);
+  const hasProgress = nonEmptyRunFile(progressPath);
+  const terminalStatuses = new Set(["success", "partial"]);
+  const failureStatuses = new Set(["failed", "timeout", "canceled"]);
+  const liveStatuses = new Set(["unknown", "queued", "running"]);
+  const error = readRunText(path.join(runDir, "error.log")).trim();
+  const interactionResultPath = path.join(runDir, "interaction-result.json");
+  const interaction = readRunJson(interactionResultPath);
+  const hasInteractionResult = nonEmptyRunFile(interactionResultPath);
+  const workflowSummaryPath = path.join(runDir, "workflow-summary.json");
+  const workflow = readRunJson(workflowSummaryPath);
+  const hasWorkflowSummary = nonEmptyRunFile(workflowSummaryPath);
+  const workflowMarkdown = readRunText(path.join(runDir, "workflow-summary.md"));
+  const workflowMarkdownStatus =
+    [...workflowMarkdown.matchAll(/^Run status:\s*(\S+)/gmu)].at(-1)?.[1] ?? "unknown";
+  const cancellationPath = path.join(runDir, "cancellation.json");
+  const cancellation = readRunJson(cancellationPath);
+  const hasCancellation = nonEmptyRunFile(cancellationPath);
+
+  let terminalStatus = summaryStatus;
+  let contract = "document";
+  let expectedArtifacts = [];
+  let extraMissingArtifacts = [];
+  let contradiction = "";
+
+  if (hasWorkflowSummary) {
+    const workflowStatus = typeof workflow.status === "string" ? workflow.status : "unknown";
+    terminalStatus = failureStatuses.has(summaryStatus) ? summaryStatus : workflowStatus;
+    contract = "interactive_study_guide";
+    expectedArtifacts = ["workflow-summary.json", "workflow-summary.md"];
+    const root = path.resolve(runDir);
+    const insideRoot = (raw, label, parentRaw, kind = "file") => {
+      if (typeof raw !== "string" || !raw) {
+        extraMissingArtifacts.push(label);
+        return;
+      }
+      const resolved = path.resolve(path.isAbsolute(raw) ? raw : path.join(root, raw));
+      const relative = path.relative(root, resolved);
+      if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        contradiction = `${label} is outside the workflow directory`;
+        return;
+      }
+      if (parentRaw) {
+        const parent = path.resolve(
+          path.isAbsolute(parentRaw) ? parentRaw : path.join(root, parentRaw),
+        );
+        const parentRelative = path.relative(parent, resolved);
+        if (!parentRelative || parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) {
+          contradiction = `${label} is inconsistent with its workflow branch directory`;
+          return;
+        }
+      }
+      try {
+        const linkStats = lstatSync(resolved);
+        const realResolved = realpathSync(resolved);
+        const realRelative = path.relative(realRunDir, realResolved);
+        if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+          contradiction = `${label} resolves outside the workflow directory`;
+          return;
+        }
+        if (parentRaw) {
+          const parent = path.resolve(
+            path.isAbsolute(parentRaw) ? parentRaw : path.join(root, parentRaw),
+          );
+          const realParent = realpathSync(parent);
+          const realParentRelative = path.relative(realParent, realResolved);
+          if (
+            !realParentRelative ||
+            realParentRelative.startsWith("..") ||
+            path.isAbsolute(realParentRelative)
+          ) {
+            contradiction = `${label} resolves outside its workflow branch directory`;
+            return;
+          }
+        }
+        if (kind === "directory") {
+          if (!linkStats.isDirectory() || !statSync(realResolved).isDirectory()) {
+            extraMissingArtifacts.push(label);
+          }
+        } else if (!linkStats.isFile() || !statSync(realResolved).isFile()) {
+          extraMissingArtifacts.push(label);
+        } else {
+          expectedArtifacts.push(relative);
+        }
+      } catch {
+        extraMissingArtifacts.push(label);
+      }
+    };
+    if (workflow.schemaVersion !== 1) {
+      contradiction = `Unsupported workflow summary schema (${workflow.schemaVersion ?? "unknown"})`;
+    } else if (!["queued", "running", "success", "failed"].includes(workflowStatus)) {
+      contradiction = `Workflow summary has no recognized status (${workflowStatus})`;
+    } else if (workflowMarkdownStatus !== workflowStatus) {
+      contradiction = `Workflow summary JSON status ${workflowStatus} contradicts Markdown status ${workflowMarkdownStatus}`;
+    } else if (path.resolve(workflow.runDir ?? "") !== root) {
+      contradiction = "Workflow summary run directory does not match the inspected directory";
+    } else if (terminalStatus === "success") {
+      if (workflow.ok !== true || workflow.error) {
+        contradiction = "Successful workflow summary has inconsistent ok/error fields";
+      } else if (typeof workflow.webLayoutRunDir !== "string" || !workflow.webLayoutRunDir) {
+        extraMissingArtifacts.push("webLayoutRunDir");
+      } else {
+        insideRoot(workflow.webLayoutRunDir, "webLayoutRunDir", undefined, "directory");
+        insideRoot(workflow.outputPath, "outputPath", workflow.webLayoutRunDir);
+        if (workflow.pdfRenderRunDir) {
+          insideRoot(workflow.pdfRenderRunDir, "pdfRenderRunDir", undefined, "directory");
+          insideRoot(workflow.pdfPath, "pdfPath", workflow.pdfRenderRunDir);
+        } else if (workflow.pdfPath) {
+          contradiction = "Workflow summary has a PDF path without a PDF branch directory";
+        }
+      }
+    } else if (
+      terminalStatus === "failed" &&
+      (workflow.ok !== false || typeof workflow.error !== "string" || !workflow.error.trim())
+    ) {
+      contradiction = "Failed workflow summary has inconsistent ok/error fields";
+    }
+  } else if (hasInteractionResult) {
+    const interactionStatus = interaction.ok === true ? "success" : "failed";
+    terminalStatus = summaryStatus;
+    contract = interaction.kind === "assignment" ? "interactive_assignment" : "interactive_quiz";
+    expectedArtifacts =
+      contract === "interactive_assignment"
+        ? ["assignment-report.md", "assignment-report.json"]
+        : ["quiz-review.typ", "quiz-review.json"];
+    if (interaction.workflowStatus === "permission_required") {
+      expectedArtifacts.push(
+        contract === "interactive_assignment"
+          ? "assignment-permission-request.json"
+          : "quiz-permission-request.json",
+      );
+    }
+    if (interaction.schemaVersion !== 1) {
+      contradiction = `Unsupported interaction result schema (${interaction.schemaVersion ?? "unknown"})`;
+    } else if (interaction.kind !== "quiz" && interaction.kind !== "assignment") {
+      contradiction = `Unknown interaction kind (${interaction.kind ?? "unknown"})`;
+    } else if (
+      interaction.workflowStatus !== "completed" &&
+      interaction.workflowStatus !== "permission_required"
+    ) {
+      contradiction = `Interactive workflow ended with ${interaction.workflowStatus ?? "unknown"}`;
+    } else if (summaryStatus !== interactionStatus) {
+      contradiction = `Interaction result status ${interactionStatus} contradicts run summary status ${summaryStatus}`;
+    } else if (
+      JSON.stringify(interaction.requiredArtifacts) !== JSON.stringify(expectedArtifacts)
+    ) {
+      contradiction = "Interaction result required-artifact contract is invalid";
+    }
+  } else {
+    const progressStatus = typeof progress.status === "string" ? progress.status : "unknown";
+    if (
+      !terminalStatuses.has(summaryStatus) &&
+      !failureStatuses.has(summaryStatus) &&
+      !liveStatuses.has(summaryStatus)
+    ) {
+      contradiction = `Run summary has no recognized terminal status (${summaryStatus})`;
+    } else if (
+      hasProgress &&
+      progressStatus !== summaryStatus &&
+      !(liveStatuses.has(summaryStatus) && liveStatuses.has(progressStatus))
+    ) {
+      contradiction = `Run summary status ${summaryStatus} contradicts run-progress status ${progressStatus}`;
+    }
+
+    const stage = config.stage ?? "all";
+    const intent = config.intentDecision?.intent ?? route;
+    if (stage === "extract") {
+      contract = "extract";
+      expectedArtifacts = ["extracted-data.json"];
+    } else if (config.diagnosticOnly === true || intent === "diagnostic") {
+      contract = "diagnostic";
+      expectedArtifacts = ["moodle_raw.txt", "source_coverage.json"];
+    } else if (
+      config.intentDecision?.wantsQuickAnswer === true ||
+      intent === "quick_answer" ||
+      intent === "schedule_answer"
+    ) {
+      contract = "answer";
+      expectedArtifacts = ["answer.md", "answer.json"];
+    } else {
+      expectedArtifacts = ["document.typ", "document.pdf"];
+    }
+
+    if (hasProgress && progress.artifacts && typeof progress.artifacts === "object") {
+      const root = path.resolve(runDir);
+      for (const artifactPath of Object.values(progress.artifacts)) {
+        if (typeof artifactPath !== "string" || !artifactPath) continue;
+        const resolved = path.resolve(
+          path.isAbsolute(artifactPath) ? artifactPath : path.join(root, artifactPath),
+        );
+        const relative = path.relative(root, resolved);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          contradiction = `run-progress references an artifact outside the run directory: ${artifactPath}`;
+          break;
+        }
+        try {
+          const realArtifact = realpathSync(resolved);
+          const realRelative = path.relative(realRunDir, realArtifact);
+          if (realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+            contradiction = `run-progress references an artifact resolving outside the run directory: ${artifactPath}`;
+            break;
+          }
+        } catch {
+          // Missing paths are handled by the route-specific artifact contract.
+        }
+      }
+    }
+  }
+
+  if (hasCancellation) {
+    if (cancellation.schemaVersion !== 1 || cancellation.status !== "canceled") {
+      contradiction = "Cancellation marker is invalid";
+    }
+    terminalStatus = "canceled";
+  }
+
+  if (invalidControls.length > 0) {
+    contradiction = `Run control file is not a contained regular file: ${path.basename(invalidControls[0])}`;
+  }
+
+  const missingArtifacts = [
+    ...expectedArtifacts.filter((artifact) => !nonEmptyRunFile(path.join(runDir, artifact))),
+    ...extraMissingArtifacts,
+  ];
+  const completed =
+    (terminalStatus === "success" ||
+      (terminalStatus === "partial" && ["extract", "diagnostic"].includes(contract))) &&
+    !error &&
+    !contradiction &&
+    missingArtifacts.length === 0;
+  return {
+    completed,
+    terminalStatus,
+    stage: config.stage ?? (hasWorkflowSummary || hasInteractionResult ? "interactive" : "all"),
+    route: hasWorkflowSummary
+      ? "interactive_study_guide"
+      : hasInteractionResult
+        ? (interaction.kind ?? "interactive")
+        : (route ?? config.intentDecision?.intent ?? "unknown"),
+    contract,
+    workflowStatus: hasWorkflowSummary
+      ? terminalStatus
+      : hasInteractionResult
+        ? (interaction.workflowStatus ?? "unknown")
+        : undefined,
+    expectedArtifacts,
+    missingArtifacts,
+    error,
+    contradiction,
+  };
 }
 
 function processAlive(pid) {
@@ -265,32 +590,78 @@ function acquireArtifactLock(workflowDir) {
   mkdirSync(path.dirname(artifactLockDir), { recursive: true });
   try {
     mkdirSync(artifactLockDir);
-  } catch {
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
     const owner = readJson(path.join(artifactLockDir, "owner.json"));
-    if (processAlive(owner.wrapper_pid)) {
-      throw Object.assign(new Error("Another Study Buddy artifact workflow is active."), {
-        code: 73,
-      });
-    }
-    rmSync(artifactLockDir, { recursive: true, force: true });
-    mkdirSync(artifactLockDir);
+    const detail = owner.wrapper_pid
+      ? ` Owner pid=${Number(owner.wrapper_pid) || "unknown"}, workflow=${JSON.stringify(owner.workflow_dir ?? "unknown")}, started=${JSON.stringify(owner.started_at ?? "unknown")}.`
+      : "";
+    throw Object.assign(
+      new Error(
+        `Another Study Buddy artifact workflow is active, initializing, or left a stale lock.${detail} Reuse or wait for it; only remove a stale lock after verifying that its owner process is no longer running.`,
+      ),
+      { code: 73 },
+    );
   }
-  writeFileSync(
-    path.join(artifactLockDir, "owner.json"),
-    `${JSON.stringify({ wrapper_pid: process.pid, workflow_dir: workflowDir, started_at: utcTimestamp() })}\n`,
-  );
+  artifactLockHeld = true;
+  artifactLockToken = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const ownerTempPath = path.join(artifactLockDir, `owner.${artifactLockToken}.tmp`);
+  try {
+    writeFileSync(
+      ownerTempPath,
+      `${JSON.stringify({
+        wrapper_pid: process.pid,
+        workflow_dir: workflowDir,
+        started_at: utcTimestamp(),
+        lock_token: artifactLockToken,
+      })}\n`,
+      { mode: 0o600 },
+    );
+    renameSync(ownerTempPath, path.join(artifactLockDir, "owner.json"));
+  } catch (error) {
+    try {
+      unlinkSync(ownerTempPath);
+    } catch {
+      // The temporary owner file may not have been created.
+    }
+    try {
+      rmdirSync(artifactLockDir);
+    } catch {
+      // Preserve an unexpected non-empty lock directory for manual inspection.
+    }
+    artifactLockHeld = false;
+    artifactLockToken = "";
+    throw error;
+  }
 }
 
 function releaseArtifactLock() {
-  rmSync(artifactLockDir, { recursive: true, force: true });
+  if (!artifactLockHeld) return;
+  const ownerPath = path.join(artifactLockDir, "owner.json");
+  const owner = readJson(ownerPath);
+  if (artifactLockToken && owner.lock_token === artifactLockToken) {
+    try {
+      unlinkSync(ownerPath);
+      rmdirSync(artifactLockDir);
+    } catch {
+      // Preserve an unexpected lock directory instead of deleting another owner's state.
+    }
+  }
+  artifactLockHeld = false;
+  artifactLockToken = "";
 }
 
 function isValidExtractionHandoff(runDir) {
-  const summary = readText(path.join(runDir, "run-summary.md"));
+  const summaryPath = path.join(runDir, "run-summary.md");
+  const errorPath = path.join(runDir, "error.log");
+  const extractionPath = path.join(runDir, "extracted-data.json");
+  const summary = readContainedText(runDir, summaryPath);
   return (
     existsSync(runDir) &&
-    nonEmptyFile(path.join(runDir, "extracted-data.json")) &&
-    !nonEmptyFile(path.join(runDir, "error.log")) &&
+    nonEmptyContainedFile(runDir, extractionPath) &&
+    !nonEmptyContainedFile(runDir, errorPath) &&
+    (!lexicalExists(errorPath) || Boolean(resolveContainedRegularFile(runDir, errorPath))) &&
+    Boolean(resolveContainedRegularFile(runDir, summaryPath)) &&
     /^Route: extraction$/mu.test(summary) &&
     /^Run status: (success|partial)$/mu.test(summary)
   );
@@ -350,9 +721,49 @@ async function runStagedDocument(prompt, args) {
 
 function cancelRun(runDir) {
   const pidFile = path.join(runDir, "pid.json");
-  if (!existsSync(pidFile)) return fail(`No pid.json found at: ${pidFile}`);
-  const pid = Number(readJson(pidFile).process_group_id || readJson(pidFile).child_pid);
+  const resolvedPidFile = resolveContainedRegularFile(runDir, pidFile);
+  if (!resolvedPidFile) return fail(`No valid contained pid.json found at: ${pidFile}`);
+  const pidData = readJson(resolvedPidFile);
+  const pid = Number(pidData.process_group_id || pidData.child_pid);
   if (!Number.isInteger(pid) || pid <= 0) return fail(`No process id found in: ${pidFile}`);
+  const realRunDir = realpathSync(runDir);
+  const cancellationPath = path.join(realRunDir, "cancellation.json");
+  if (
+    lexicalExists(cancellationPath) &&
+    !resolveContainedRegularFile(realRunDir, cancellationPath)
+  ) {
+    return fail("cancellation.json is not a contained regular control file");
+  }
+  if (lexicalExists(cancellationPath)) {
+    const existingCancellation = readContainedJson(realRunDir, cancellationPath);
+    if (existingCancellation.schemaVersion !== 1 || existingCancellation.status !== "canceled") {
+      return fail("Existing cancellation.json is invalid");
+    }
+  } else {
+    const temporaryCancellationPath = path.join(
+      realRunDir,
+      `.cancellation.${process.pid}.${Date.now()}.tmp`,
+    );
+    try {
+      writeFileSync(
+        temporaryCancellationPath,
+        `${JSON.stringify(
+          { schemaVersion: 1, status: "canceled", canceled_at: utcTimestamp() },
+          null,
+          2,
+        )}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+      renameSync(temporaryCancellationPath, cancellationPath);
+    } catch (error) {
+      try {
+        unlinkSync(temporaryCancellationPath);
+      } catch {
+        // The temporary marker may not have been created.
+      }
+      return fail(`Could not persist cancellation marker: ${error.message}`);
+    }
+  }
   if (process.platform === "win32") {
     spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
   } else {
@@ -367,15 +778,23 @@ function cancelRun(runDir) {
     }
   }
   const summaryPath = path.join(runDir, "run-summary.md");
-  if (existsSync(summaryPath)) {
-    appendFileSync(summaryPath, `\nRun status: canceled\nCanceled at: ${utcTimestamp()}\n`);
+  const resolvedSummaryPath = resolveContainedRegularFile(runDir, summaryPath);
+  if (resolvedSummaryPath) {
+    appendFileSync(resolvedSummaryPath, `\nRun status: canceled\nCanceled at: ${utcTimestamp()}\n`);
   }
   return 0;
 }
 
 function runState(runDir) {
   if (!existsSync(runDir)) return { error: `Run directory not found: ${runDir}` };
-  const pid = readJson(path.join(runDir, "pid.json")).child_pid;
+  const pidPath = path.join(runDir, "pid.json");
+  if (!lexicalExists(pidPath)) return { processState: "unknown" };
+  const resolvedPidPath = resolveContainedRegularFile(runDir, pidPath);
+  if (!resolvedPidPath) return { error: "pid.json is not a contained regular control file" };
+  const pid = readJson(resolvedPidPath).child_pid;
+  if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) {
+    return { error: "pid.json has no valid child process id" };
+  }
   return { processState: pid ? (processAlive(pid) ? "running" : "stopped") : "unknown" };
 }
 
@@ -383,7 +802,7 @@ function printStatus(runDir) {
   const state = runState(runDir);
   if (state.error) return fail(state.error);
   console.log(`Process: ${state.processState}`);
-  const summary = readText(path.join(runDir, "run-summary.md"));
+  const summary = readContainedText(runDir, path.join(runDir, "run-summary.md"));
   console.log(summary || "Run summary: missing");
   for (const artifact of [
     "document.typ",
@@ -400,27 +819,38 @@ function printStatus(runDir) {
   return 0;
 }
 
+function isTransientWriteSkew(contract, processState) {
+  return (
+    processState === "running" &&
+    (/^Run summary status (?:success|partial) contradicts run-progress status (?:unknown|queued|running)$/.test(
+      contract.contradiction,
+    ) ||
+      /^Interaction result status (?:success|failed) contradicts run summary status (?:unknown|queued|running)$/.test(
+        contract.contradiction,
+      ) ||
+      /^Workflow summary JSON status (?:success|failed) contradicts Markdown status (?:queued|running)$/.test(
+        contract.contradiction,
+      ) ||
+      /^Workflow summary JSON status (?:queued|running) contradicts Markdown status (?:success|failed)$/.test(
+        contract.contradiction,
+      ))
+  );
+}
+
 function checkpoint(runDir) {
   const state = runState(runDir);
   if (state.error) return fail(state.error);
-  const summary = readText(path.join(runDir, "run-summary.md"));
-  const statuses = [...summary.matchAll(/^Run status:\s*(\S+)/gmu)];
-  const terminalStatus = statuses.at(-1)?.[1] ?? "unknown";
-  const config = readJson(path.join(runDir, "config.json"));
-  const stage = config.stage ?? "all";
-  const error = readText(path.join(runDir, "error.log")).trim();
-  const completed =
-    terminalStatus === "success" &&
-    (stage === "extract"
-      ? nonEmptyFile(path.join(runDir, "extracted-data.json"))
-      : nonEmptyFile(path.join(runDir, "document.typ")) &&
-        nonEmptyFile(path.join(runDir, "document.pdf"))) &&
-    !error;
+  const contract = inspectRunContract(runDir);
+  const transientWriteSkew = isTransientWriteSkew(contract, state.processState);
+  const completed = contract.completed && state.processState !== "running";
+  const liveTerminalStatus = ["unknown", "queued", "running"].includes(contract.terminalStatus);
   const blocked =
-    Boolean(error) ||
-    ["failed", "timeout", "canceled"].includes(terminalStatus) ||
-    (state.processState === "stopped" && !completed);
-  const events = readText(path.join(runDir, "run-events.jsonl"))
+    Boolean(contract.error || (contract.contradiction && !transientWriteSkew)) ||
+    ["failed", "timeout", "canceled"].includes(contract.terminalStatus) ||
+    ((state.processState === "stopped" ||
+      (state.processState === "unknown" && !liveTerminalStatus)) &&
+      !completed);
+  const events = readContainedText(runDir, path.join(runDir, "run-events.jsonl"))
     .split("\n")
     .filter(Boolean)
     .flatMap((line) => {
@@ -438,18 +868,33 @@ function checkpoint(runDir) {
       {
         report: completed ? "completed" : blocked ? "blocked" : "progress",
         process_alive: state.processState === "running",
-        terminal_status: terminalStatus,
-        stage,
+        terminal_status: contract.terminalStatus,
+        stage: contract.stage,
+        route: contract.route,
+        contract: contract.contract,
+        workflow_status: contract.workflowStatus ?? null,
         phase: lastSemanticEvent?.phase ?? "starting",
         current_action: lastSemanticEvent?.message ?? "Run initialized",
         heartbeat_at: lastEvent?.timestamp ?? null,
         semantic_progress_at: lastSemanticEvent?.timestamp ?? null,
         next_action: completed
-          ? "Validate and deliver artifacts"
+          ? contract.workflowStatus === "permission_required"
+            ? "Deliver the permission request and wait for explicit approval"
+            : "Validate and deliver artifacts"
           : blocked
             ? "Inspect blocker before retrying"
-            : "Continue the same worker lease",
-        blocker: error || (blocked ? `Process stopped with status ${terminalStatus}` : null),
+            : transientWriteSkew || contract.completed
+              ? "Wait for worker exit and final status flush"
+              : "Continue the same worker lease",
+        blocker: blocked
+          ? contract.error ||
+            contract.contradiction ||
+            (contract.missingArtifacts.length
+              ? `Missing required artifacts: ${contract.missingArtifacts.join(", ")}`
+              : `Process stopped with status ${contract.terminalStatus}`)
+          : null,
+        expected_artifacts: contract.expectedArtifacts,
+        missing_artifacts: contract.missingArtifacts,
       },
       null,
       2,
@@ -460,7 +905,27 @@ function checkpoint(runDir) {
 
 async function waitRun(runDir, timeoutSeconds = 900) {
   const startedAt = Date.now();
-  while (runState(runDir).processState === "running") {
+  while (true) {
+    const state = runState(runDir);
+    if (state.error) return fail(state.error);
+    const contract = inspectRunContract(runDir);
+    const transientWriteSkew = isTransientWriteSkew(contract, state.processState);
+    if (
+      state.processState === "stopped" ||
+      (state.processState === "unknown" && contract.completed)
+    )
+      break;
+    if (
+      contract.error ||
+      (contract.contradiction && !transientWriteSkew) ||
+      ["failed", "timeout", "canceled"].includes(contract.terminalStatus)
+    )
+      break;
+    if (
+      state.processState === "unknown" &&
+      !["unknown", "queued", "running"].includes(contract.terminalStatus)
+    )
+      break;
     if (Date.now() - startedAt >= timeoutSeconds * 1000) {
       checkpoint(runDir);
       return fail(`Timed out waiting for Study Buddy run: ${runDir}`, 124);
@@ -468,18 +933,7 @@ async function waitRun(runDir, timeoutSeconds = 900) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   printStatus(runDir);
-  const stage = readJson(path.join(runDir, "config.json")).stage ?? "all";
-  if (stage === "extract") {
-    return nonEmptyFile(path.join(runDir, "extracted-data.json")) &&
-      !nonEmptyFile(path.join(runDir, "error.log"))
-      ? 0
-      : 1;
-  }
-  return nonEmptyFile(path.join(runDir, "document.typ")) &&
-    nonEmptyFile(path.join(runDir, "document.pdf")) &&
-    !nonEmptyFile(path.join(runDir, "error.log"))
-    ? 0
-    : 1;
+  return inspectRunContract(runDir).completed ? 0 : 1;
 }
 
 function requirePrompt(args) {
@@ -589,4 +1043,4 @@ if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   }
 }
 
-export { extractSourceArgsFor, main, watchdogArguments };
+export { extractSourceArgsFor, inspectRunContract, main, watchdogArguments };
