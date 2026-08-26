@@ -126,7 +126,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     };
     assert.doesNotThrow(() => assertWorkflowReleaseIdentity(packageJson, packageLock, "1.0.0"));
+    assert.doesNotThrow(() =>
+      assertWorkflowReleaseIdentity(packageJson, packageLock, "1.0.0-alpha.3"),
+    );
     assert.throws(() => assertWorkflowReleaseIdentity(packageJson, packageLock, "1.0.1"));
+    assert.throws(() =>
+      assertWorkflowReleaseIdentity(packageJson, packageLock, "0.1.0-alpha.3"),
+    );
     assert.throws(() =>
       assertWorkflowReleaseIdentity(
         packageJson,

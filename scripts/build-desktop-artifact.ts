@@ -364,13 +364,17 @@ export function assertWorkflowReleaseIdentity(
   packageLock: WorkflowPackageLock,
   appVersion: string,
 ): void {
-  if (packageJson.version !== appVersion) {
+  const workflowVersion = appVersion.split("-", 1)[0];
+  if (packageJson.version !== workflowVersion) {
     throw new Error(
-      `Canonical workflow version '${packageJson.version ?? "missing"}' does not match desktop version '${appVersion}'.`,
+      `Canonical workflow version '${packageJson.version ?? "missing"}' does not match desktop release line '${workflowVersion}'.`,
     );
   }
-  if (packageLock.version !== appVersion || packageLock.packages?.[""]?.version !== appVersion) {
-    throw new Error("Canonical workflow package-lock version does not match the desktop version.");
+  if (
+    packageLock.version !== workflowVersion ||
+    packageLock.packages?.[""]?.version !== workflowVersion
+  ) {
+    throw new Error("Canonical workflow package-lock version does not match the desktop release line.");
   }
   const packageDependencies = packageJson.dependencies ?? {};
   const lockedRootDependencies = packageLock.packages?.[""]?.dependencies ?? {};
