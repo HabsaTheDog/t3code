@@ -126,18 +126,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       },
     };
     assert.doesNotThrow(() => assertWorkflowReleaseIdentity(packageJson, packageLock));
-    assert.throws(() => assertWorkflowReleaseIdentity({ dependencies: packageJson.dependencies }, packageLock));
     assert.throws(() =>
-      assertWorkflowReleaseIdentity(
-        packageJson,
-        {
-          ...packageLock,
-          packages: {
-            ...packageLock.packages,
-            "": { version: "1.0.0", dependencies: { tsx: "4.0.0" } },
-          },
+      assertWorkflowReleaseIdentity({ dependencies: packageJson.dependencies }, packageLock),
+    );
+    assert.throws(() =>
+      assertWorkflowReleaseIdentity(packageJson, {
+        ...packageLock,
+        packages: {
+          ...packageLock.packages,
+          "": { version: "1.0.0", dependencies: { tsx: "4.0.0" } },
         },
-      ),
+      }),
     );
   });
 
