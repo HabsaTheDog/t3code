@@ -748,14 +748,18 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                   placeholder="Paste it here"
                   className="ph-no-capture"
                   data-ph-no-capture
-                  onChange={(event) =>
-                    apiKeyDialog
-                      ? setSecretValues((current) => ({
-                          ...current,
-                          [apiKeyDialog.provider]: event.currentTarget.value,
-                        }))
-                      : undefined
-                  }
+                  onChange={(event) => {
+                    if (!apiKeyDialog) return;
+                    // React may evaluate the state updater after the change
+                    // event has been released, at which point currentTarget is
+                    // null. Capture the write-only value synchronously and do
+                    // not retain the event object.
+                    const value = event.currentTarget.value;
+                    setSecretValues((current) => ({
+                      ...current,
+                      [apiKeyDialog.provider]: value,
+                    }));
+                  }}
                 />
               </label>
             </DialogPanel>
