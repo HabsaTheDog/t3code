@@ -7,8 +7,17 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  sanitizeBranchFragment,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
+
+describe("sanitizeBranchFragment", () => {
+  it("normalizes long untrusted separators without pathological matching", () => {
+    expect(
+      sanitizeBranchFragment(`${"/".repeat(50_000)}Release candidate${"-".repeat(50_000)}`),
+    ).toBe("release-candidate");
+  });
+});
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {

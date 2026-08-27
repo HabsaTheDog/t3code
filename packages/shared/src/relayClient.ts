@@ -148,8 +148,15 @@ export function resolveManagedCloudflaredPath(input: {
   readonly arch: string;
 }): string {
   const separator = input.platform === "win32" ? "\\" : "/";
+  let baseEnd = input.baseDir.length;
+  while (
+    baseEnd > 0 &&
+    (input.baseDir[baseEnd - 1] === "/" || input.baseDir[baseEnd - 1] === "\\")
+  ) {
+    baseEnd -= 1;
+  }
   return [
-    input.baseDir.replace(/[\\/]+$/u, ""),
+    input.baseDir.slice(0, baseEnd),
     "tools",
     "cloudflared",
     CLOUDFLARED_VERSION,

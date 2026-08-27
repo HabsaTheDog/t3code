@@ -15,7 +15,10 @@ export class RelayJwtError extends Data.TaggedError("RelayJwtError")<{
 }> {}
 
 export function normalizeRelayIssuer(value: string): string {
-  return value.trim().replace(/\/+$/gu, "");
+  const trimmed = value.trim();
+  let end = trimmed.length;
+  while (end > 0 && trimmed[end - 1] === "/") end -= 1;
+  return trimmed.slice(0, end);
 }
 
 export function decodeRelayJwt(token: string): JWTPayload {
