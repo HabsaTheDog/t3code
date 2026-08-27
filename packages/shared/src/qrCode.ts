@@ -343,8 +343,8 @@ export class QrCode {
   // Sets the color of a module and marks it as a function module.
   // Only used by the constructor. Coordinates must be in bounds.
   private setFunctionModule(x: int, y: int, isDark: boolean): void {
-    this.modules[y]![x] = isDark;
-    this.isFunction[y]![x] = true;
+    this.modules[y]!.splice(x, 1, isDark);
+    this.isFunction[y]!.splice(x, 1, true);
   }
 
   /*-- Private helper methods for constructor: Codewords and masking --*/

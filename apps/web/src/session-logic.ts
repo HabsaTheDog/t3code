@@ -834,7 +834,22 @@ function unwrapKnownShellCommandWrapper(value: string): string {
 }
 
 function formatCommandArrayPart(value: string): string {
-  return /[\s"'`]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+  if (!/[\s"'`]/.test(value)) return value;
+  let formatted = '"';
+  let backslashes = 0;
+  for (const character of value) {
+    if (character === "\\") {
+      backslashes += 1;
+      continue;
+    }
+    if (character === '"') {
+      formatted += "\\".repeat(backslashes * 2 + 1) + '"';
+    } else {
+      formatted += "\\".repeat(backslashes) + character;
+    }
+    backslashes = 0;
+  }
+  return formatted + "\\".repeat(backslashes * 2) + '"';
 }
 
 function formatCommandValue(value: unknown): string | null {

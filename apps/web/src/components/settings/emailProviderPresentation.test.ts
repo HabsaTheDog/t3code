@@ -21,6 +21,18 @@ describe("email provider presentation", () => {
     });
   });
 
+  it("does not recognize lookalike hosts that only contain a provider domain", () => {
+    expect(
+      recognizeEmailProvider("auto-detect", "https://gmail.com.attacker.example/login"),
+    ).toMatchObject({ status: "manual" });
+    expect(
+      recognizeEmailProvider("auto-detect", "https://attacker.example/office.com/login"),
+    ).toMatchObject({ status: "manual" });
+    expect(
+      recognizeEmailProvider("auto-detect", "https://mail.google.com/a/example.edu"),
+    ).toMatchObject({ status: "recognized", label: "Google Workspace / Gmail" });
+  });
+
   it("explains that an unknown email website will be checked after saving", () => {
     expect(recognizeEmailProvider("other-webmail", "https://mail.example.edu/login")).toMatchObject(
       { status: "manual", detail: "Study Buddy will check this address after you save." },

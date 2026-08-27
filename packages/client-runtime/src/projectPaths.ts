@@ -27,10 +27,14 @@ function trimTrailingPathSeparators(value: string): string {
   if (value.length === 0 || isRootPath(value)) {
     return value;
   }
-  const trimmed =
-    getAbsolutePathKind(value) === "unix"
-      ? value.replace(/\/+$/g, "")
-      : value.replace(/[\\/]+$/g, "");
+  const unixOnly = getAbsolutePathKind(value) === "unix";
+  let end = value.length;
+  while (end > 0) {
+    const character = value[end - 1];
+    if (character !== "/" && (unixOnly || character !== "\\")) break;
+    end -= 1;
+  }
+  const trimmed = value.slice(0, end);
   if (trimmed.length === 0) {
     return value;
   }

@@ -21,6 +21,7 @@ describe("projectPaths", () => {
   it("normalizes trailing separators for dispatch and comparison", () => {
     expect(normalizeProjectPathForDispatch(" /repo/app/ ")).toBe("/repo/app");
     expect(normalizeProjectPathForComparison("/repo/app/")).toBe("/repo/app");
+    expect(normalizeProjectPathForDispatch(`/repo/app${"/".repeat(50_000)}`)).toBe("/repo/app");
   });
 
   it("normalizes windows-style paths for comparison", () => {

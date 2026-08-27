@@ -177,6 +177,14 @@ describe("official-provider response adapters", () => {
     ]);
   });
 
+  it("decodes each Roundcube entity layer only once", () => {
+    const exec =
+      'this.add_message_row("42",{"subject":"Lab &amp;nbsp; Exam","from":"office@example.edu"},{"seen":1},false);';
+
+    const [record] = parseRoundcubeRows(exec, "INBOX", '{"page":1}');
+    expect(record?.subject).toBe("Lab &nbsp; Exam");
+  });
+
   it("uses only SOGo headers/export and explicit read-state remediation endpoints", async () => {
     const requests: Array<{ url: URL; method: string; headers: Headers }> = [];
     const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {

@@ -25,6 +25,10 @@ describe("ssh auth", () => {
       assert.equal(isSshAuthFailure(new Error("Permission denied (publickey).")), true);
       assert.equal(isSshAuthFailure(new Error("Connection timed out")), false);
       assert.equal(isSshAuthFailure(new Error("mkdir: Permission denied")), false);
+      assert.equal(
+        isSshAuthFailure(new Error(`Permission denied (${"password,".repeat(50_000)}publickey).`)),
+        true,
+      );
     }),
   );
 
