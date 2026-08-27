@@ -29,6 +29,14 @@ describe("ssh auth", () => {
         isSshAuthFailure(new Error(`Permission denied (${"password,".repeat(50_000)}publickey).`)),
         true,
       );
+      assert.equal(
+        isSshAuthFailure(
+          new Error(
+            "Server banner: Permission denied (policy).\nPermission denied (publickey,password).",
+          ),
+        ),
+        true,
+      );
     }),
   );
 

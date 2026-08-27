@@ -201,10 +201,17 @@ export function isSshAuthFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
   const permissionPrefix = "permission denied (";
-  const permissionStart = normalized.indexOf(permissionPrefix);
-  if (permissionStart >= 0) {
+  let searchStart = 0;
+  while (searchStart < normalized.length) {
+    const permissionStart = normalized.indexOf(permissionPrefix, searchStart);
+    if (permissionStart < 0) break;
     const methodsStart = permissionStart + permissionPrefix.length;
+    const nextPermissionStart = normalized.indexOf(permissionPrefix, methodsStart);
     const methodsEnd = normalized.indexOf(")", methodsStart);
+    if (nextPermissionStart >= 0 && (methodsEnd < 0 || nextPermissionStart < methodsEnd)) {
+      searchStart = nextPermissionStart;
+      continue;
+    }
     if (methodsEnd >= methodsStart) {
       const supportedMethods = new Set([
         "publickey",
@@ -218,6 +225,7 @@ export function isSshAuthFailure(error: unknown): boolean {
         return true;
       }
     }
+    searchStart = methodsEnd >= methodsStart ? methodsEnd + 1 : methodsStart;
   }
   return (
     normalized.includes("authentication failed") ||
