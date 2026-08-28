@@ -143,6 +143,7 @@ function makeTestLayer(input: {
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly openedExternalUrls?: unknown[];
   readonly packaged?: boolean;
+  readonly revealCount?: Ref.Ref<number>;
 }) {
   const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Ref.update(input.createCount, (count) => count + 1).pipe(Effect.as(input.window)),
@@ -151,7 +152,8 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: () =>
+      input.revealCount ? Ref.update(input.revealCount, (count) => count + 1) : Effect.void,
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -237,12 +239,14 @@ describe("DesktopWindow", () => {
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
+      const revealCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const layer = makeTestLayer({
         window: fakeWindow.window,
         createCount,
         mainWindow,
         packaged: true,
+        revealCount,
       });
 
       yield* Effect.gen(function* () {
@@ -250,6 +254,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.createStartupMain;
 
         assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(yield* Ref.get(revealCount), 1);
         const startupUrl = fakeWindow.loadURL.mock.calls[0]?.[0];
         if (typeof startupUrl !== "string") {
           return yield* Effect.die("startup window URL was not loaded");
