@@ -257,6 +257,7 @@ const make = Effect.gen(function* () {
     initialUrl: string,
     applicationUrl: string | undefined,
     openDevTools: boolean,
+    revealImmediately: boolean,
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
@@ -390,18 +391,25 @@ const make = Effect.gen(function* () {
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (process.platform === "linux") {
-      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+    if (!revealImmediately) {
+      const revealSubscribers: RevealSubscription[] = [
+        (fire) => window.once("ready-to-show", fire),
+      ];
+      if (process.platform === "linux") {
+        revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+      }
+      bindFirstRevealTrigger(revealSubscribers, () => {
+        void runPromise(electronWindow.reveal(window));
+      });
     }
-    bindFirstRevealTrigger(revealSubscribers, () => {
-      void runPromise(electronWindow.reveal(window));
-    });
 
     if (applicationUrl !== undefined) {
       applicationUrls.set(window, applicationUrl);
     }
     void window.loadURL(initialUrl);
+    if (revealImmediately) {
+      yield* electronWindow.reveal(window);
+    }
     if (openDevTools) {
       window.webContents.openDevTools({ mode: "detach" });
     }
@@ -436,7 +444,12 @@ const make = Effect.gen(function* () {
 
   const createMain = Effect.gen(function* () {
     const applicationUrl = yield* resolveApplicationUrl;
-    const window = yield* createWindow(applicationUrl, applicationUrl, environment.isDevelopment);
+    const window = yield* createWindow(
+      applicationUrl,
+      applicationUrl,
+      environment.isDevelopment,
+      false,
+    );
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -478,7 +491,7 @@ const make = Effect.gen(function* () {
       }
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       const startupUrl = getStartupDocumentUrl(environment.displayName, shouldUseDarkColors);
-      const window = yield* createWindow(startupUrl, undefined, false);
+      const window = yield* createWindow(startupUrl, undefined, false, true);
       startupWindows.add(window);
       yield* electronWindow.setMain(window);
       yield* logWindowInfo("startup window created");
