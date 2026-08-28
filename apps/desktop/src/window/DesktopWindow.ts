@@ -51,6 +51,7 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError;
 
 export interface DesktopWindowShape {
+  readonly createStartupMain: Effect.Effect<void, DesktopWindowError>;
   readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
@@ -90,6 +91,85 @@ function getIconOption(
 
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+}
+
+function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean): string {
+  const background = shouldUseDarkColors ? "#0b1020" : "#f6f7fb";
+  const foreground = shouldUseDarkColors ? "#f8fafc" : "#111827";
+  const muted = shouldUseDarkColors ? "#a8b0c4" : "#667085";
+  const surface = shouldUseDarkColors ? "#151c31" : "#ffffff";
+  const document = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+    <meta name="color-scheme" content="${shouldUseDarkColors ? "dark" : "light"}">
+    <title>${displayName}</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body {
+        display: grid;
+        place-items: center;
+        color: ${foreground};
+        background: ${background};
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .drag-region {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: ${TITLEBAR_HEIGHT}px;
+        -webkit-app-region: drag;
+      }
+      main {
+        min-width: 280px;
+        padding: 34px 42px;
+        text-align: center;
+        border: 1px solid color-mix(in srgb, ${muted} 24%, transparent);
+        border-radius: 22px;
+        background: ${surface};
+        box-shadow: 0 24px 70px rgb(0 0 0 / 18%);
+      }
+      svg { width: 66px; height: 66px; margin-bottom: 16px; }
+      h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+      p { margin: 9px 0 0; color: ${muted}; font-size: 14px; }
+      .pulse {
+        width: 34px;
+        height: 3px;
+        margin: 22px auto 0;
+        overflow: hidden;
+        border-radius: 999px;
+        background: color-mix(in srgb, ${muted} 22%, transparent);
+      }
+      .pulse::after {
+        content: "";
+        display: block;
+        width: 45%;
+        height: 100%;
+        border-radius: inherit;
+        background: #c89b3c;
+        animation: loading 1.1s ease-in-out infinite alternate;
+      }
+      @keyframes loading { to { transform: translateX(122%); } }
+      @media (prefers-reduced-motion: reduce) { .pulse::after { animation: none; width: 100%; } }
+    </style>
+  </head>
+  <body>
+    <div class="drag-region" aria-hidden="true"></div>
+    <main aria-label="${displayName} is starting">
+      <svg viewBox="0 0 64 64" role="img" aria-label="Study Buddy">
+        <path fill="#c89b3c" d="M4 23 32 9l28 14-28 14L4 23Zm10 9 18 9 18-9v12c-5 5-11 8-18 8s-13-3-18-8V32Z"/>
+        <path fill="#e8c76c" d="M57 25h3v17h-3zM55 42h7v5h-7z"/>
+      </svg>
+      <h1>${displayName}</h1>
+      <p>Preparing your workspace…</p>
+      <div class="pulse" aria-hidden="true"></div>
+    </main>
+  </body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(document)}`;
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -170,13 +250,14 @@ const make = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
+  const startupWindows = new WeakSet<Electron.BrowserWindow>();
+  const applicationUrls = new WeakMap<Electron.BrowserWindow, string>();
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
+    initialUrl: string,
+    applicationUrl: string | undefined,
+    openDevTools: boolean,
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
-    const applicationUrl = environment.isDevelopment
-      ? yield* resolveDesktopDevServerUrl(environment)
-      : backendHttpUrl.href;
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -261,9 +342,11 @@ const make = Effect.gen(function* () {
       return { action: "deny" };
     });
     window.webContents.on("will-navigate", (event, url) => {
+      const allowedApplicationUrl = applicationUrls.get(window);
       if (
+        allowedApplicationUrl !== undefined &&
         isSameOriginRendererNavigation({
-          applicationUrl,
+          applicationUrl: allowedApplicationUrl,
           navigationUrl: url,
         })
       ) {
@@ -315,11 +398,12 @@ const make = Effect.gen(function* () {
       void runPromise(electronWindow.reveal(window));
     });
 
-    if (environment.isDevelopment) {
-      void window.loadURL(applicationUrl);
+    if (applicationUrl !== undefined) {
+      applicationUrls.set(window, applicationUrl);
+    }
+    void window.loadURL(initialUrl);
+    if (openDevTools) {
       window.webContents.openDevTools({ mode: "detach" });
-    } else {
-      void window.loadURL(applicationUrl);
     }
 
     window.on("closed", () => {
@@ -329,9 +413,30 @@ const make = Effect.gen(function* () {
     return window;
   });
 
-  const createMain = Effect.gen(function* () {
+  const resolveApplicationUrl = Effect.gen(function* () {
+    if (environment.isDevelopment) {
+      return yield* resolveDesktopDevServerUrl(environment);
+    }
     const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    return backendConfig.httpBaseUrl.href;
+  });
+
+  const loadApplication = Effect.fn("desktop.window.loadApplication")(function* (
+    window: Electron.BrowserWindow,
+  ) {
+    if (!startupWindows.has(window) || window.isDestroyed()) {
+      return;
+    }
+    const applicationUrl = yield* resolveApplicationUrl;
+    startupWindows.delete(window);
+    applicationUrls.set(window, applicationUrl);
+    void window.loadURL(applicationUrl);
+    yield* logWindowInfo("startup window loading main application");
+  });
+
+  const createMain = Effect.gen(function* () {
+    const applicationUrl = yield* resolveApplicationUrl;
+    const window = yield* createWindow(applicationUrl, applicationUrl, environment.isDevelopment);
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -354,12 +459,30 @@ const make = Effect.gen(function* () {
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(state.backendReady);
     if (!backendReady) return;
-    const existingWindow = yield* electronWindow.currentMainOrFirst;
-    if (Option.isSome(existingWindow)) return;
+    const existingWindow = yield* electronWindow.main;
+    if (Option.isSome(existingWindow)) {
+      yield* loadApplication(existingWindow.value);
+      return;
+    }
     yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   return DesktopWindow.of({
+    createStartupMain: Effect.gen(function* () {
+      if (environment.isDevelopment) {
+        return;
+      }
+      const existingWindow = yield* electronWindow.main;
+      if (Option.isSome(existingWindow)) {
+        return;
+      }
+      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const startupUrl = getStartupDocumentUrl(environment.displayName, shouldUseDarkColors);
+      const window = yield* createWindow(startupUrl, undefined, false);
+      startupWindows.add(window);
+      yield* electronWindow.setMain(window);
+      yield* logWindowInfo("startup window created");
+    }).pipe(Effect.withSpan("desktop.window.createStartupMain")),
     createMain,
     ensureMain,
     revealOrCreateMain,
