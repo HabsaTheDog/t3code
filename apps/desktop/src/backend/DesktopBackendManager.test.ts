@@ -134,6 +134,7 @@ function makeManagerLayer(input: {
           ...input.backendOutputLog,
         } satisfies DesktopObservability.DesktopBackendOutputLogShape),
         Layer.succeed(DesktopWindow.DesktopWindow, {
+          createStartupMain: Effect.void,
           createMain: Effect.die("unexpected createMain"),
           ensureMain: Effect.die("unexpected ensureMain"),
           revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
