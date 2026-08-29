@@ -281,6 +281,39 @@ describe("Study Buddy source inventory", () => {
     expect(persisted).toContain('"algorithm":"aes-256-gcm"');
   });
 
+  it("resolves encrypted Moodle credentials only inside the server workflow boundary", async () => {
+    const { directory, platform, secretValues } = await harness();
+    const username = "workflow-user-canary";
+    const password = "workflow-password-canary";
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Deterministic Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [inventory.sources[0]!.id],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: username,
+      MOODLE_PASSWORD: password,
+      MOODLE_DASHBOARD_URL: "https://moodle.example.edu/my/",
+      MOODLE_BASE_URL: "https://moodle.example.edu",
+      MOODLE_LOGIN_ALLOWED_ORIGINS: "https://moodle.example.edu",
+    });
+    const publicAndPersisted = [
+      JSON.stringify(await platform.getInventory()),
+      await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
+      ...Array.from(secretValues.values(), (value) => new TextDecoder().decode(value)),
+    ].join("\n");
+    expect(publicAndPersisted).not.toContain(username);
+    expect(publicAndPersisted).not.toContain(password);
+  });
+
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {
     const { platform, secretValues } = await harness();
     const username = "legacy-user-canary";

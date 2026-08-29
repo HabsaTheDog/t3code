@@ -231,9 +231,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const windowsTaskWrapper = yield* fs.readFileString(
         path.join(stage, "bin/study_buddy_task.cmd"),
       );
+      const posixTaskWrapper = yield* fs.readFileString(path.join(stage, "bin/study_buddy_task"));
       assert.notInclude(windowsTaskWrapper.toLowerCase(), "bash");
       assert.notInclude(windowsTaskWrapper.toLowerCase(), "wsl");
       assert.include(windowsTaskWrapper, "study_buddy_task.mjs");
+      assert.notInclude(windowsTaskWrapper, "STUDY_BUDDY_NODE_EXECUTABLE is required");
+      assert.notInclude(windowsTaskWrapper, "STUDY_BUDDY_ROOT is required");
+      assert.include(windowsTaskWrapper, "%~dp0");
+      assert.notInclude(posixTaskWrapper, "STUDY_BUDDY_NODE_EXECUTABLE is required");
+      assert.notInclude(posixTaskWrapper, "STUDY_BUDDY_ROOT is required");
+      assert.include(posixTaskWrapper, 'SCRIPT_DIR=');
       assert.include(
         yield* fs.readFileString(path.join(stage, "bin/study_buddy_task.mjs")),
         'from "node:child_process"',
