@@ -352,7 +352,7 @@ describe("Study Buddy source inventory", () => {
       expectedRevision: inventory.revision,
       kind: "website",
       label: "CIS student portal",
-      url: "https://cis.example.edu/cis.php/",
+      url: "https://portal.example.edu/admin/",
       enabled: true,
       auth: { operation: "set-password", username: "cis-user", password: "cis-password" },
     });
@@ -370,7 +370,8 @@ describe("Study Buddy source inventory", () => {
       STUDY_BUDDY_MOODLE_URL: "https://selected-moodle.example.edu/my/",
       CIS_USERNAME: "cis-user",
       CIS_PASSWORD: "cis-password",
-      CIS_DASHBOARD_URL: "https://cis.example.edu/cis.php/",
+      CIS_DASHBOARD_URL: "https://portal.example.edu/admin/",
+      STUDY_BUDDY_CIS_URL: "https://portal.example.edu/admin/",
     });
     expect(JSON.stringify(environment)).not.toContain("first-password");
   });

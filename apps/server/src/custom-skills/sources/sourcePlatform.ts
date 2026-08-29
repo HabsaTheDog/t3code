@@ -253,6 +253,7 @@ export function createStudyBuddySourcePlatform(
         }
         const hostname = new URL(connection.displayOrigin).hostname.toLowerCase();
         return (
+          selectedIds?.has(source.id) === true ||
           source.id === "legacy-cis" ||
           connection.adapterId === "legacy-cis" ||
           hostname.split(".").includes("cis")
@@ -267,6 +268,7 @@ export function createStudyBuddySourcePlatform(
         environment.CIS_PASSWORD = secret.password;
         environment.CIS_URLS = target;
         environment.CIS_DASHBOARD_URL = target;
+        environment.STUDY_BUDDY_CIS_URL = target;
         environment.CIS_BASE_URL = cis.connection.displayOrigin;
         environment.CIS_LOGIN_ALLOWED_ORIGINS = cis.connection.allowedOrigins.join(",");
       }
