@@ -53,6 +53,7 @@ function makeSafeStorageLayer(input: {
               cause: input.availabilityError,
             }),
           ),
+    selectedStorageBackend: Effect.succeed("unknown"),
     encryptString: (value) =>
       input.encryptError === undefined
         ? Effect.succeed(textEncoder.encode(`enc:${value}`))

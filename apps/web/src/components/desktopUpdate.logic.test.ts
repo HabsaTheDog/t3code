@@ -7,6 +7,7 @@ import {
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getDesktopUpdateNotificationKey,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -213,7 +214,7 @@ describe("desktop update UI helpers", () => {
         availableVersion: "1.1.0",
         downloadedVersion: "1.1.1",
       }),
-    ).toContain("Install update 1.1.1 and restart T3 Code?");
+    ).toContain("Install update 1.1.1 and restart Study Buddy?");
   });
 
   it("falls back to generic install confirmation copy when no version is available", () => {
@@ -222,7 +223,27 @@ describe("desktop update UI helpers", () => {
         availableVersion: null,
         downloadedVersion: null,
       }),
-    ).toContain("Install update and restart T3 Code?");
+    ).toContain("Install update and restart Study Buddy?");
+  });
+
+  it("keys launch notifications by track and available version", () => {
+    expect(
+      getDesktopUpdateNotificationKey({
+        ...baseState,
+        status: "available",
+        channel: "alpha",
+        availableVersion: "1.1.0-alpha.2",
+      }),
+    ).toBe("alpha:1.1.0-alpha.2");
+    expect(getDesktopUpdateNotificationKey(baseState)).toBeNull();
+    expect(
+      getDesktopUpdateNotificationKey({
+        ...baseState,
+        enabled: false,
+        status: "disabled",
+        availableVersion: "1.1.0",
+      }),
+    ).toBeNull();
   });
 });
 

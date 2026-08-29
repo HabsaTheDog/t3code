@@ -55,6 +55,9 @@ const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTING
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({ enabled: true });
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
+const codexSettingsWithExistingBinary: CodexSettings = Schema.decodeSync(CodexSettings)({
+  binaryPath: process.execPath,
+});
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
   enabled: false,
 });
@@ -451,7 +454,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
       it.effect("closes the app-server probe scope when provider status times out", () =>
         Effect.gen(function* () {
           const killCalls = yield* Ref.make(0);
-          const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+          const statusFiber = yield* checkCodexProviderStatus(codexSettingsWithExistingBinary).pipe(
             Effect.provide(hangingScopedSpawnerLayer(killCalls)),
             Effect.forkChild,
           );

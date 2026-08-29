@@ -6,8 +6,14 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { chromium } from "playwright";
+import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createBrowserLoginConfig, ensureLoggedIn } from "./browserAuth.ts";
+import {
+  BROWSER_RUNTIME_MISSING_CODE,
+  isBrowserRuntimeMissingError,
+  resolveSystemBrowserExecutable,
+} from "./browserRuntime.ts";
 import {
   fetchCalendarText,
   normalizeCalendarUrl,
@@ -40,10 +46,16 @@ interface ConnectionTestDependencies {
 }
 
 const liveDependencies: ConnectionTestDependencies = {
-  readConfiguration: readStoredStudyBuddyConfiguration,
+  readConfiguration: async () => {
+    throw new Error("Secure source storage was not provided.");
+  },
   fetchCalendar: fetchCalendarText,
   parseCalendar: validateCalendarText,
-  launchBrowser: () => chromium.launch({ headless: true }),
+  launchBrowser: async () =>
+    chromium.launch({
+      headless: true,
+      executablePath: await resolveSystemBrowserExecutable(),
+    }),
   ensureLogin: (page, config) => ensureLoggedIn(page as never, config),
   now: () => new Date().toISOString(),
 };
@@ -52,10 +64,20 @@ export const testStudyBuddyConnection = (
   config: ServerConfigShape,
   target: StudyBuddyConnectionTarget,
   dependencyOverrides: Partial<ConnectionTestDependencies> = {},
+  secrets?: ServerSecretStoreShape,
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const dependencies = { ...liveDependencies, ...dependencyOverrides };
+      const dependencies = {
+        ...liveDependencies,
+        ...(secrets
+          ? {
+              readConfiguration: (serverConfig: ServerConfigShape) =>
+                readStoredStudyBuddyConfiguration(serverConfig, secrets),
+            }
+          : {}),
+        ...dependencyOverrides,
+      };
       const stored = await dependencies.readConfiguration(config);
       const checkedAt = dependencies.now();
       try {
@@ -199,6 +221,7 @@ function failure(
 }
 
 function diagnosticCode(error: unknown): StudyBuddyConnectionTestResult["code"] {
+  if (isBrowserRuntimeMissingError(error)) return BROWSER_RUNTIME_MISSING_CODE;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (message.includes("timed out") || message.includes("timeout")) return "timeout";
   if (message.includes("invalid") || message.includes("login")) return "authentication-failed";

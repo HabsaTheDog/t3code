@@ -7,7 +7,6 @@
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
-    "dev:marketing": "vp run --filter @t3tools/marketing dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "desktop:backup": "node scripts/desktop-installation-state.ts backup",
     "desktop:restore": "node scripts/desktop-installation-state.ts restore",
@@ -16,14 +15,12 @@
     "study-buddy:dev": "node scripts/study-buddy-runner.ts dev",
     "study-buddy:dev:no-browser": "node scripts/study-buddy-runner.ts dev:no-browser",
     "study-buddy:app": "node scripts/study-buddy-runner.ts app",
-    "study-buddy:audit": "node scripts/study-buddy-audit.ts",
+    "study-buddy:audit": "node --experimental-strip-types scripts/study-buddy-audit.ts",
     "moodle:agent": "node scripts/study-buddy-runner.ts moodle",
     "start": "vp run --filter t3 start",
     "start:desktop": "vp run --filter @t3tools/desktop start",
-    "start:marketing": "vp run --filter @t3tools/marketing preview",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "build": "vp run --filter './apps/*' --filter './packages/*' --filter './oxlint-plugin-t3code' --filter './scripts' build",
-    "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter t3 build",
     "typecheck": "vp run -r --concurrency-limit 2 typecheck",
     "tc": "vp run -r --concurrency-limit 2 typecheck",
@@ -44,8 +41,7 @@
     "dist:desktop:win:x64": "node --experimental-strip-types scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64",
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
-    "sync:repos": "node scripts/sync-reference-repos.ts"
+    "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
     "@babel/plugin-transform-react-jsx": "7.28.6",

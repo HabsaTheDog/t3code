@@ -13,24 +13,57 @@ import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 export const WORKTREE_BRANCH_PREFIX = "t3code";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
+function isAsciiLowercaseLetterOrDigit(character: string): boolean {
+  return (character >= "a" && character <= "z") || (character >= "0" && character <= "9");
+}
+
+function isBranchEdgeCharacter(character: string): boolean {
+  return (
+    character === "." ||
+    character === "/" ||
+    character === "_" ||
+    character === "-" ||
+    /\s/u.test(character)
+  );
+}
+
+function trimBranchEdges(value: string): string {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isBranchEdgeCharacter(value[start]!)) start += 1;
+  while (end > start && isBranchEdgeCharacter(value[end - 1]!)) end -= 1;
+  return value.slice(start, end);
+}
+
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+}
+
 /**
  * Sanitize an arbitrary string into a valid, lowercase git refName fragment.
  * Strips quotes, collapses separators, limits to 64 chars.
  */
 export function sanitizeBranchFragment(raw: string): string {
-  const normalized = raw
-    .trim()
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/^[./\s_-]+|[./\s_-]+$/g, "");
-
-  const branchFragment = normalized
-    .replace(/[^a-z0-9/_-]+/g, "-")
-    .replace(/\/+/g, "/")
-    .replace(/-+/g, "-")
-    .replace(/^[./_-]+|[./_-]+$/g, "")
-    .slice(0, 64)
-    .replace(/[./_-]+$/g, "");
+  const normalized = trimBranchEdges(
+    Array.from(raw.trim().toLowerCase())
+      .filter((character) => character !== "'" && character !== '"' && character !== "`")
+      .join(""),
+  );
+  const result: string[] = [];
+  for (const character of normalized) {
+    const replacement =
+      isAsciiLowercaseLetterOrDigit(character) || character === "/" || character === "_"
+        ? character
+        : "-";
+    const previous = result.at(-1);
+    if ((replacement === "/" && previous === "/") || (replacement === "-" && previous === "-")) {
+      continue;
+    }
+    result.push(replacement);
+  }
+  const branchFragment = trimBranchEdges(result.join("").slice(0, 64));
 
   return branchFragment.length > 0 ? branchFragment : "update";
 }
@@ -101,11 +134,12 @@ export function isTemporaryWorktreeBranch(refName: string): boolean {
  * Normalize a git remote URL into a stable comparison key.
  */
 export function normalizeGitRemoteUrl(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/\/+$/g, "")
-    .replace(/\.git$/i, "")
-    .toLowerCase();
+  const withoutTrailingSlash = stripTrailingSlashes(value.trim());
+  const normalized = (
+    withoutTrailingSlash.toLowerCase().endsWith(".git")
+      ? withoutTrailingSlash.slice(0, -4)
+      : withoutTrailingSlash
+  ).toLowerCase();
 
   if (/^(?:ssh|https?|git):\/\//i.test(normalized)) {
     try {

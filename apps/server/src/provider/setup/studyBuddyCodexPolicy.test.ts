@@ -37,13 +37,28 @@ describe("Study Buddy Codex policy", () => {
   it("binds the exact Codex process to the generated home and profile", () => {
     const paths = resolveStudyBuddyCodexPolicyPaths(config);
     expect(
-      studyBuddyCodexEnvironment(paths, {
-        PATH: "/bin",
-        MOODLE_PASSWORD: "must-not-reach-codex",
-        CIS_CALENDAR_URL: "https://calendar.example.test/private",
-      }),
+      studyBuddyCodexEnvironment(
+        paths,
+        {
+          PATH: "/bin",
+          MOODLE_PASSWORD: "must-not-reach-codex",
+          CIS_CALENDAR_URL: "https://calendar.example.test/private",
+        },
+        "linux",
+      ),
     ).toEqual({
-      PATH: "/bin",
+      PATH: `${path.join(paths.codexHome, "bin")}${path.delimiter}/bin`,
+      CODEX_INSTALL_DIR: path.join(paths.codexHome, "bin"),
+      CODEX_HOME: paths.codexHome,
+      STUDY_BUDDY_CODEX_HOME: paths.codexHome,
+      STUDY_BUDDY_CODEX_PERMISSION_PROFILE: "study_buddy",
+    });
+  });
+
+  it("does not alter the Windows installer location or PATH contract", () => {
+    const paths = resolveStudyBuddyCodexPolicyPaths(config);
+    expect(studyBuddyCodexEnvironment(paths, { PATH: "C:\\Windows" }, "win32")).toEqual({
+      PATH: "C:\\Windows",
       CODEX_HOME: paths.codexHome,
       STUDY_BUDDY_CODEX_HOME: paths.codexHome,
       STUDY_BUDDY_CODEX_PERMISSION_PROFILE: "study_buddy",

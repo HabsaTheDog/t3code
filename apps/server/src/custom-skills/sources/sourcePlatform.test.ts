@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated filesystem fixtures for source persistence.
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as Effect from "effect/Effect";
@@ -23,6 +23,7 @@ afterEach(async () => {
 async function harness(
   options: {
     webmailRuntime?: StudyBuddyWebmailRuntime;
+    sourceSecretKey?: string | null;
     loginCandidateClassifier?: LoginCandidateClassifier;
     connectPasswordPortal?: (input: PasswordPortalConnectionInput) => Promise<void>;
   } = {},
@@ -46,9 +47,15 @@ async function harness(
     cwd: directory,
     stateDir: path.join(directory, "state"),
     secretsDir: path.join(directory, "secrets"),
+    ...(options.sourceSecretKey === null
+      ? {}
+      : { sourceSecretKey: options.sourceSecretKey ?? Buffer.alloc(32, 7).toString("base64") }),
   } as ServerConfigShape;
   return {
+    config,
     directory,
+    secretStore: secrets,
+    secretValues: values,
     platform: createStudyBuddySourcePlatform(config, secrets, {
       discoverWebmailProvider: async (url) => ({
         profile: {
@@ -79,6 +86,7 @@ async function harness(
           bodyFingerprint: "fixture",
         },
       }),
+      assertPublicNetworkHost: async () => undefined,
       ...(options.webmailRuntime
         ? { emailBrokerDependencies: { webmailRuntime: options.webmailRuntime } }
         : {}),
@@ -91,6 +99,284 @@ async function harness(
     }),
   };
 }
+
+describe("Study Buddy source inventory", () => {
+  it("starts fresh installations without preselected sources", async () => {
+    const { platform } = await harness();
+
+    await expect(platform.getInventory()).resolves.toMatchObject({
+      revision: 0,
+      connections: [],
+      sources: [],
+    });
+  });
+
+  it("removes untouched unconfigured placeholders left by the first alpha", async () => {
+    const { directory, platform } = await harness();
+    const stateDirectory = path.join(directory, "state");
+    await mkdir(stateDirectory, { recursive: true });
+    await writeFile(
+      path.join(stateDirectory, "study-buddy-sources.json"),
+      `${JSON.stringify({
+        version: 1,
+        revision: 3,
+        connections: [
+          {
+            id: "legacy-calendar-connection",
+            adapterId: "legacy-calendar",
+            adapterVersion: "legacy-v1",
+            label: "Personal calendar",
+            displayOrigin: "https://calendar.invalid",
+            entryPath: "",
+            allowedOrigins: ["https://calendar.invalid"],
+            auth: { mode: "bearer-url", state: "not-configured" },
+            revision: 0,
+          },
+        ],
+        sources: [
+          {
+            id: "legacy-calendar",
+            label: "Personal calendar",
+            kind: "calendar",
+            enabled: true,
+            connectionId: "legacy-calendar-connection",
+            priority: 10,
+            scope: {
+              allowedOrigins: ["https://calendar.invalid"],
+              pathPrefixes: [],
+              courseIds: [],
+              mailFolders: [],
+              tags: ["legacy"],
+            },
+            capabilities: ["calendar.events.read"],
+            policy: {
+              authenticatedReads: "allowed",
+              downloads: "allowed",
+              remoteDrafts: "denied",
+              emailSend: "denied",
+            },
+            health: { status: "unknown" },
+            revision: 0,
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+
+    await expect(platform.getInventory()).resolves.toMatchObject({
+      revision: 3,
+      connections: [],
+      sources: [],
+    });
+  });
+
+  it("allows users to keep adding sources without a fixed three-source limit", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.getInventory();
+
+    for (let index = 1; index <= 12; index += 1) {
+      inventory = await platform.createSource({
+        expectedRevision: inventory.revision,
+        kind: "website",
+        label: `Study website ${index}`,
+        url: `https://source-${index}.example.edu/resources/`,
+        enabled: true,
+        auth: { operation: "set-none" },
+      });
+    }
+
+    expect(inventory.sources).toHaveLength(12);
+    expect(inventory.connections).toHaveLength(12);
+    expect(inventory.revision).toBe(12);
+  });
+
+  it("replaces private calendar links without persisting their bearer path", async () => {
+    const { directory, platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "calendar",
+      label: "University calendar",
+      url: "https://calendar.example.edu/old-private-token.ics",
+      enabled: true,
+      auth: {
+        operation: "set-bearer-url",
+        value: "https://calendar.example.edu/old-private-token.ics",
+      },
+    });
+    const calendar = inventory.sources[0]!;
+
+    inventory = await platform.setSourceAuth({
+      operation: "set-bearer-url",
+      expectedRevision: inventory.revision,
+      sourceId: calendar.id,
+      value: "https://new-calendar.example.edu/new-private-token.ics",
+    });
+
+    expect(inventory.connections[0]?.displayOrigin).toBe("https://new-calendar.example.edu");
+    expect(inventory.sources[0]?.scope.allowedOrigins).toEqual([
+      "https://new-calendar.example.edu",
+    ]);
+    const registry = await readFile(
+      path.join(directory, "state", "study-buddy-sources.json"),
+      "utf8",
+    );
+    expect(registry).not.toContain("old-private-token");
+    expect(registry).not.toContain("new-private-token");
+  });
+
+  it("keeps configured legacy sources editable during the alpha migration", async () => {
+    const { directory, platform } = await harness();
+    await writeFile(
+      path.join(directory, ".env.local"),
+      "MOODLE_USERNAME=old-user\nMOODLE_PASSWORD=old-password\n",
+      "utf8",
+    );
+    let inventory = await platform.getInventory();
+    const moodle = inventory.sources.find((source) => source.id === "legacy-moodle")!;
+
+    inventory = await platform.updateSource({
+      expectedRevision: inventory.revision,
+      sourceId: moodle.id,
+      label: "My Moodle",
+      url: "https://learn.example.edu/my/",
+    });
+    inventory = await platform.setSourceAuth({
+      operation: "set-password",
+      expectedRevision: inventory.revision,
+      sourceId: moodle.id,
+      username: "new-user",
+      password: "new-password",
+    });
+
+    expect(inventory.sources.find((source) => source.id === moodle.id)?.label).toBe("My Moodle");
+    const raw = await readFile(path.join(directory, ".env.local"), "utf8");
+    expect(raw).not.toContain("old-user");
+    expect(raw).not.toContain("old-password");
+    expect(raw).not.toContain("new-user");
+    expect(raw).not.toContain("new-password");
+    expect(raw).toContain("MOODLE_DASHBOARD_URL=https://learn.example.edu/my/\n");
+  });
+
+  it("encrypts source usernames, passwords, and private calendar URLs at rest", async () => {
+    const { directory, platform, secretValues } = await harness();
+    const username = "source-user-canary@example.edu";
+    const password = "source-password-canary";
+    const calendarUrl = "https://calendar.example.edu/private-calendar-canary.ics";
+
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "calendar",
+      label: "Calendar",
+      url: "https://calendar.example.edu",
+      enabled: true,
+      auth: { operation: "set-bearer-url", value: calendarUrl },
+    });
+
+    expect(inventory.connections.some((entry) => entry.auth.accountLabel === username)).toBe(true);
+    const persisted = [
+      await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
+      ...Array.from(secretValues.values(), (value) => new TextDecoder().decode(value)),
+    ].join("\n");
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+    expect(persisted).not.toContain(calendarUrl);
+    expect(persisted).toContain('"algorithm":"aes-256-gcm"');
+  });
+
+  it("migrates a legacy plaintext source secret only after verified encryption", async () => {
+    const { platform, secretValues } = await harness();
+    const username = "legacy-user-canary";
+    const password = "legacy-password-canary";
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+    const [encryptedSecretName] = secretValues.keys();
+    expect(encryptedSecretName).toMatch(/-v2$/);
+    const secretName = encryptedSecretName!.replace(/-v2$/, "");
+    secretValues.delete(encryptedSecretName!);
+    secretValues.set(
+      secretName!,
+      new TextEncoder().encode(JSON.stringify({ type: "password", username, password })),
+    );
+
+    const migrated = await platform.getInventory();
+    expect(migrated.connections[0]?.auth.accountLabel).toBe(username);
+    expect(secretValues.has(secretName)).toBe(false);
+    const persisted = new TextDecoder().decode(secretValues.get(encryptedSecretName!)!);
+    expect(persisted).toContain('"version":2');
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+
+    // A crash between verified encryption and legacy deletion is retry-safe.
+    secretValues.set(
+      secretName!,
+      new TextEncoder().encode(JSON.stringify({ type: "password", username, password })),
+    );
+    await platform.getInventory();
+    expect(secretValues.has(secretName)).toBe(false);
+    expect(inventory.sources).toHaveLength(1);
+  });
+
+  it("fails closed when the desktop source-secret key is missing or malformed", async () => {
+    const missing = await harness({ sourceSecretKey: null });
+    const malformed = await harness({ sourceSecretKey: "not-a-valid-key" });
+    const input = {
+      expectedRevision: 0,
+      kind: "moodle-course" as const,
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password" as const,
+        username: "student",
+        password: "secret",
+      },
+    };
+
+    await expect(missing.platform.createSource(input)).rejects.toThrow(
+      "Secure source storage is unavailable",
+    );
+    await expect(malformed.platform.createSource(input)).rejects.toThrow("invalid key");
+    expect(missing.secretValues.size).toBe(0);
+    expect(malformed.secretValues.size).toBe(0);
+  });
+
+  it("allows only the current OS-backed key to decrypt persisted source credentials", async () => {
+    const { config, platform, secretStore } = await harness();
+    await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "current-user-canary",
+        password: "current-user-password-canary",
+      },
+    });
+    const wrongUserPlatform = createStudyBuddySourcePlatform(
+      { ...config, sourceSecretKey: Buffer.alloc(32, 8).toString("base64") },
+      secretStore,
+      { assertPublicNetworkHost: async () => undefined },
+    );
+
+    await expect(wrongUserPlatform.getInventory()).rejects.toThrow("could not be unlocked");
+  });
+});
 
 describe("Study Buddy IMAP source configuration", () => {
   it("persists only a sanitized IMAPS origin while keeping credentials in the secret store", async () => {
@@ -123,6 +409,42 @@ describe("Study Buddy IMAP source configuration", () => {
       "utf8",
     );
     expect(registry).not.toContain("app-password");
+  });
+
+  it("rejects IMAPS endpoints that fail the public-network policy", async () => {
+    const { platform } = await harness();
+    const guardedPlatform = createStudyBuddySourcePlatform(
+      {
+        cwd: "/tmp",
+        stateDir: path.join(temporaryDirectories.at(-1)!, "guarded-state"),
+        secretsDir: path.join(temporaryDirectories.at(-1)!, "guarded-secrets"),
+        sourceSecretKey: Buffer.alloc(32, 7).toString("base64"),
+      } as ServerConfigShape,
+      {
+        get: () => Effect.succeed(null),
+        set: () => Effect.void,
+        create: () => Effect.void,
+        getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+        remove: () => Effect.void,
+      },
+      {
+        assertPublicNetworkHost: async () => {
+          throw new Error("URL resolves to a local or private network address.");
+        },
+      },
+    );
+    void platform;
+
+    await expect(
+      guardedPlatform.createSource({
+        expectedRevision: 0,
+        kind: "email",
+        label: "Unsafe IMAP",
+        url: "imaps://127.0.0.1:993",
+        enabled: true,
+        auth: { operation: "set-password", username: "student", password: "secret" },
+      }),
+    ).rejects.toThrow("local or private network address");
   });
 
   it("profiles an HTTPS webmail URL without putting credentials in the registry", async () => {

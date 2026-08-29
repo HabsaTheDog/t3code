@@ -1,90 +1,69 @@
-# T3 Code
+# Study Buddy interface
 
-T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, Cursor, and OpenCode, more coming soon).
+This repository contains the Study Buddy-owned interface and desktop shell. It
+is based on the MIT-licensed [T3 Code](https://github.com/pingdotgg/t3code) and
+is maintained as a pinned submodule of the main
+[Study Buddy repository](https://github.com/HabsaTheDog/StudyBuddy).
 
-## Installation
+> **Release source:** use the main Study Buddy repository for installation,
+> releases, issues, security reports, and project documentation. Upstream T3
+> Code packages and release links do not install Study Buddy.
 
-> [!WARNING]
-> T3 Code currently supports Codex, Claude, Cursor, and OpenCode.
-> Install and authenticate at least one provider before use:
->
-> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
-> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
-> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `cursor-agent login`
-> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
+## What lives here
 
-### Run without installing
+- the Electron desktop application for Linux and Windows;
+- the local React interface and server process;
+- desktop update checks backed by Study Buddy GitHub Releases;
+- Study Buddy source, permission, privacy, and workflow integrations;
+- the retained upstream coding-agent runtime used by the application.
 
-```bash
-npx t3@latest
-```
+Study Buddy keeps its application ID, local state, protocol handlers, launchers,
+and release artifacts separate from upstream T3 Code.
 
-Tip: Use `npx t3@latest --help` for the full CLI reference.
+## Development
 
-### Desktop app
-
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
-
-#### Windows (`winget`)
+Clone the parent repository recursively so it supplies the reviewed root
+pipeline and exact interface revision:
 
 ```bash
-winget install T3Tools.T3Code
+git clone --recurse-submodules https://github.com/HabsaTheDog/StudyBuddy.git
+cd StudyBuddy/t3code-fork
+corepack enable
+corepack prepare pnpm@10.24.0 --activate
+pnpm install --frozen-lockfile
+pnpm study-buddy:ports
+pnpm study-buddy:dev
 ```
 
-#### macOS (Homebrew)
+Run the desktop shell with:
 
 ```bash
-brew install --cask t3-code
+pnpm study-buddy:app
 ```
 
-#### Arch Linux (AUR)
+Before opening a pull request, run:
 
 ```bash
-yay -S t3code-bin
+pnpm exec vp check
+pnpm exec vp run typecheck
+pnpm exec vp run test
+node scripts/study-buddy-audit.ts
 ```
 
-## Some notes
+See [CONTRIBUTING.md](CONTRIBUTING.md) for scope and review requirements. The
+main project documentation covers [security](https://github.com/HabsaTheDog/StudyBuddy/blob/master/SECURITY.md),
+[privacy](https://github.com/HabsaTheDog/StudyBuddy/blob/master/PRIVACY.md), and
+[release operations](https://github.com/HabsaTheDog/StudyBuddy/blob/master/docs/releasing.md).
 
-We are very very early in this project. Expect bugs.
+## Releases and updates
 
-We are not accepting contributions yet.
+The parent repository is the only release authority. Stable users follow full
+GitHub releases; Alpha, Beta, and Nightly tracks are explicit opt-ins. Update
+metadata and installers are produced together, checksummed, and published from
+the same release. macOS packaging is currently deferred.
 
-There's no public docs site yet, checkout the miscellaneous markdown files in [docs](./docs).
+## License and attribution
 
-## Documentation
-
-- [Getting started](./docs/getting-started/quick-start.md)
-- [Architecture overview](./docs/architecture/overview.md)
-- [Provider guides](./docs/providers/codex.md)
-- [Operations](./docs/operations/ci.md)
-- [Reference](./docs/reference/encyclopedia.md)
-
-## If you REALLY want to contribute still.... read this first
-
-### Install `vp`
-
-T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
-
-#### macOS / Linux
-
-```bash
-curl -fsSL https://vite.plus | bash
-```
-
-#### Windows
-
-```bash
-irm https://vite.plus/ps1 | iex
-```
-
-Checkout their getting started guide for more information: https://viteplus.dev/guide/
-
-### Install dependencies
-
-```bash
-vp i
-```
-
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
-
-Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
+The code in this repository remains available under the [MIT License](LICENSE).
+The original T3 Code copyright and license are preserved. Study Buddy-specific
+changes are maintained by Alvaro Schroll and contributors; see [NOTICE.md](NOTICE.md).

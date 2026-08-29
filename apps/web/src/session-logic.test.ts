@@ -805,6 +805,27 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
+  it("quotes argv backslashes safely without changing ordinary Windows paths", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-quoted-windows-path",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: ["tool", 'C:\\Program Files\\folder\\"quoted"\\'],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.command).toBe('tool "C:\\Program Files\\folder\\\\\\"quoted\\"\\\\"');
+  });
+
   it("unwraps PowerShell command wrappers for displayed command text", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

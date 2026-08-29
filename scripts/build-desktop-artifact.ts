@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @effect-diagnostics nodeBuiltinImport:off preferSchemaOverJson:off
 
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 import rootPackageJson from "../package.json" with { type: "json" };
@@ -23,13 +24,49 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import {
+  readFile as nodeReadFile,
+  readdir as nodeReadDirectory,
+  realpath as nodeRealpath,
+} from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const STUDY_BUDDY_APP_ID = "com.studybuddy.t3code";
 const STUDY_BUDDY_EXECUTABLE_NAME = "study-buddy-t3code";
+const STUDY_BUDDY_UPDATE_REPOSITORY = "HabsaTheDog/StudyBuddy";
+const STUDY_BUDDY_SPEECH_VERSION = "0.1.0";
+type DesktopUpdateChannel = "latest" | "alpha" | "beta" | "nightly";
+
+const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-(?:alpha|beta|nightly)(?:\.[0-9A-Za-z-]+)*)?$/;
+const POSTHOG_PUBLIC_TOKEN_PATTERN = /^phc_[A-Za-z0-9_-]{10,}$/;
+const POSTHOG_ADMIN_TOKEN_PATTERN = /\bphx_[A-Za-z0-9_-]{10,}\b/;
+const REQUIRED_WORKFLOW_PATHS = [
+  "package.json",
+  "package-lock.json",
+  "src/custom-skills/moodle/cli.ts",
+  "src/custom-skills/web-layout/cli.ts",
+  "src/custom-skills/interactive-study-guide/cli.ts",
+  "src/shared/htmlSource.ts",
+  "CI/logo.png",
+  "scripts/study_buddy_task.sh",
+] as const;
+const RELEASE_ARTIFACT_DENYLIST = new Set(["builder-debug.yml", "builder-effective-config.yaml"]);
+
+export function isDirectExecution(moduleUrl: string, entryPath: string | undefined): boolean {
+  return entryPath !== undefined && pathToFileURL(entryPath).href === moduleUrl;
+}
+
+export function normalizeBuildCliArgv(argv: readonly string[]): string[] {
+  const normalized = [...argv];
+  if (normalized[2] === "--") normalized.splice(2, 1);
+  return normalized;
+}
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
+const DesktopUpdateChannelSchema = Schema.Literals(["latest", "alpha", "beta", "nightly"]);
 
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -94,6 +131,9 @@ interface BuildCliInput {
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
+  readonly workflowRoot: Option.Option<string>;
+  readonly updateRepository: Option.Option<string>;
+  readonly updateChannel: Option.Option<DesktopUpdateChannel>;
 }
 
 function detectHostBuildPlatform(hostPlatform: string): typeof BuildPlatform.Type | undefined {
@@ -251,10 +291,14 @@ interface ResolvedBuildOptions {
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
+  readonly workflowRoot: string | undefined;
+  readonly updateRepository: string | undefined;
+  readonly updateChannel: DesktopUpdateChannel | undefined;
 }
 
 interface StagePackageJson {
   readonly name: string;
+  readonly desktopName: string;
   readonly version: string;
   readonly buildVersion: string;
   readonly t3codeCommitHash: string;
@@ -272,6 +316,415 @@ interface StagePackageJson {
   readonly pnpm?: {
     readonly patchedDependencies?: Record<string, string>;
   };
+}
+
+interface WorkflowPackageJson {
+  readonly version?: string;
+  readonly dependencies?: Record<string, string>;
+  readonly devDependencies?: Record<string, string>;
+}
+
+interface WorkflowPackageLock {
+  readonly version?: string;
+  readonly packages?: Record<
+    string,
+    { readonly version?: string; readonly dependencies?: Record<string, string> }
+  >;
+}
+
+interface InstalledPackage {
+  readonly name: string;
+  readonly version: string;
+  readonly license?: string;
+}
+
+export function resolveWorkflowRuntimeDependencies(
+  packageJson: WorkflowPackageJson,
+  packageLock: WorkflowPackageLock,
+): Record<string, string> {
+  const requested = packageJson.dependencies ?? {};
+  if (!requested.tsx) {
+    throw new Error("Canonical workflow must declare tsx as a production dependency.");
+  }
+  return Object.fromEntries(
+    Object.keys(requested)
+      .sort()
+      .map((name) => {
+        const lockedVersion = packageLock.packages?.[`node_modules/${name}`]?.version;
+        if (!lockedVersion) {
+          throw new Error(`Canonical workflow lockfile is missing ${name}.`);
+        }
+        return [name, lockedVersion];
+      }),
+  );
+}
+
+export function assertWorkflowReleaseIdentity(
+  packageJson: WorkflowPackageJson,
+  packageLock: WorkflowPackageLock,
+): void {
+  const workflowVersion = packageJson.version;
+  if (!workflowVersion) {
+    throw new Error("Canonical workflow package.json version is missing.");
+  }
+  if (
+    packageLock.version !== workflowVersion ||
+    packageLock.packages?.[""]?.version !== workflowVersion
+  ) {
+    throw new Error("Canonical workflow package-lock version does not match package.json.");
+  }
+  const packageDependencies = packageJson.dependencies ?? {};
+  const lockedRootDependencies = packageLock.packages?.[""]?.dependencies ?? {};
+  const sortedEntries = (value: Record<string, string>) =>
+    Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+  if (
+    JSON.stringify(sortedEntries(packageDependencies)) !==
+    JSON.stringify(sortedEntries(lockedRootDependencies))
+  ) {
+    throw new Error("Canonical workflow package.json and package-lock root dependencies differ.");
+  }
+  resolveWorkflowRuntimeDependencies(packageJson, packageLock);
+}
+
+export function assertReleasePublicConfiguration(input: {
+  readonly mockUpdates: boolean;
+  readonly environment: NodeJS.ProcessEnv;
+}): string | undefined {
+  if (input.mockUpdates) return undefined;
+  const token = input.environment.VITE_POSTHOG_PROJECT_TOKEN?.trim();
+  if (!token || !POSTHOG_PUBLIC_TOKEN_PATTERN.test(token)) {
+    throw new Error("Release builds require a valid public VITE_POSTHOG_PROJECT_TOKEN (phc_...).");
+  }
+  return token;
+}
+
+export function sanitizeReleaseBuildEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized = { ...environment };
+  for (const key of Object.keys(sanitized)) {
+    if (
+      /POSTHOG/i.test(key) &&
+      (/(?:PERSONAL|ADMIN)/i.test(key) || /API_KEY/i.test(key) || key === "POSTHOG_TOKEN")
+    ) {
+      delete sanitized[key];
+    }
+  }
+  return sanitized;
+}
+
+export function createDesktopCycloneDxSbom(input: {
+  readonly appVersion: string;
+  readonly packages: readonly InstalledPackage[];
+}): Record<string, unknown> {
+  const npmPurl = (name: string, version: string) => {
+    const encodedName = name.startsWith("@")
+      ? `%40${encodeURIComponent(name.slice(1).split("/")[0] ?? "")}/${encodeURIComponent(name.split("/")[1] ?? "")}`
+      : encodeURIComponent(name);
+    return `pkg:npm/${encodedName}@${encodeURIComponent(version)}`;
+  };
+  const npmComponents = [...input.packages]
+    .sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`))
+    .map((entry) => ({
+      type: "library",
+      "bom-ref": npmPurl(entry.name, entry.version),
+      name: entry.name,
+      version: entry.version,
+      purl: npmPurl(entry.name, entry.version),
+      ...(entry.license ? { licenses: [{ license: { name: entry.license } }] } : {}),
+    }));
+  return {
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    version: 1,
+    metadata: {
+      component: {
+        type: "application",
+        "bom-ref": `pkg:generic/study-buddy-desktop@${encodeURIComponent(input.appVersion)}`,
+        name: "Study Buddy Desktop",
+        version: input.appVersion,
+      },
+      properties: [
+        { name: "study-buddy:browser-runtime", value: "system Edge, Chrome, or Chromium" },
+      ],
+    },
+    components: [
+      ...npmComponents,
+      {
+        type: "application",
+        "bom-ref": `pkg:generic/study-buddy-workflow@${encodeURIComponent(input.appVersion)}`,
+        name: "Study Buddy workflow runtime",
+        version: input.appVersion,
+        licenses: [{ license: { id: "MIT" } }],
+      },
+      {
+        type: "framework",
+        "bom-ref": `pkg:npm/electron@${encodeURIComponent(desktopPackageJson.dependencies.electron)}`,
+        name: "Electron",
+        version: desktopPackageJson.dependencies.electron,
+        purl: `pkg:npm/electron@${encodeURIComponent(desktopPackageJson.dependencies.electron)}`,
+        licenses: [{ license: { id: "MIT" } }],
+      },
+      {
+        type: "application",
+        "bom-ref": `pkg:cargo/study-buddy-speech@${STUDY_BUDDY_SPEECH_VERSION}`,
+        name: "Study Buddy speech sidecar",
+        version: STUDY_BUDDY_SPEECH_VERSION,
+        purl: `pkg:cargo/study-buddy-speech@${STUDY_BUDDY_SPEECH_VERSION}`,
+        licenses: [{ license: { id: "MIT" } }],
+      },
+    ],
+  };
+}
+
+const readJsonFile = Effect.fn("readJsonFile")(function* <A>(filePath: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const raw = yield* fs.readFileString(filePath);
+  return yield* Effect.try({
+    try: () => JSON.parse(raw) as A,
+    catch: (cause) =>
+      new BuildScriptError({ message: `Could not parse JSON at ${filePath}.`, cause }),
+  });
+});
+
+const resolveWorkflowRuntime = Effect.fn("resolveWorkflowRuntime")(function* (
+  workflowRoot: string | undefined,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (!workflowRoot) {
+    return yield* new BuildScriptError({
+      message: "Canonical Study Buddy workflow root was not configured.",
+    });
+  }
+  const root = path.resolve(workflowRoot);
+  for (const relativePath of REQUIRED_WORKFLOW_PATHS) {
+    const absolutePath = path.join(root, relativePath);
+    if (!(yield* fs.exists(absolutePath))) {
+      return yield* new BuildScriptError({
+        message: `Canonical Study Buddy workflow is incomplete: missing ${relativePath}.`,
+      });
+    }
+  }
+  const packageJson = yield* readJsonFile<WorkflowPackageJson>(path.join(root, "package.json"));
+  const packageLock = yield* readJsonFile<WorkflowPackageLock>(
+    path.join(root, "package-lock.json"),
+  );
+  yield* Effect.try({
+    try: () => assertWorkflowReleaseIdentity(packageJson, packageLock),
+    catch: (cause) =>
+      new BuildScriptError({
+        message: "Canonical Study Buddy workflow dependencies are not fully locked.",
+        cause,
+      }),
+  });
+  return { root } as const;
+});
+
+const PACKAGED_NPM_RUNNER = `import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+const root = process.env.STUDY_BUDDY_ROOT;
+if (!root) throw new Error("STUDY_BUDDY_ROOT is required.");
+const args = process.argv.slice(2);
+if (args[0] !== "run" || !args[1]) throw new Error("Only npm run <script> is supported.");
+const scriptName = args[1];
+const forwarded = args.slice(args[2] === "--" ? 3 : 2);
+const pkg = JSON.parse(await readFile(path.join(root, "canonical-package.json"), "utf8"));
+const command = pkg.scripts?.[scriptName];
+const match = typeof command === "string" ? command.match(/^tsx\\s+([^\\s]+)(?:\\s+(.*))?$/) : null;
+if (!match?.[1]) throw new Error(\`Unsupported packaged Study Buddy script: \${scriptName}\`);
+const staticArgs = match[2]?.trim().split(/\\s+/).filter(Boolean) ?? [];
+const tsx = path.join(root, "node_modules", "tsx", "dist", "cli.mjs");
+const entry = path.join(root, match[1]);
+const child = spawn(process.execPath, [tsx, entry, ...staticArgs, ...forwarded], {
+  cwd: root,
+  env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+  stdio: "inherit",
+});
+child.once("error", (error) => { throw error; });
+child.once("exit", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  process.exit(code ?? 1);
+});
+`;
+
+const NODE_SHIM = `#!/usr/bin/env sh
+set -eu
+: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
+ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$@"
+`;
+
+const NPM_SHIM = `#!/usr/bin/env sh
+set -eu
+: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
+: "\${STUDY_BUDDY_ROOT:?STUDY_BUDDY_ROOT is required}"
+ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$STUDY_BUDDY_ROOT/bin/npm-run.mjs" "$@"
+`;
+
+const PACKAGED_TASK_SHIM = `#!/usr/bin/env sh
+set -eu
+: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
+: "\${STUDY_BUDDY_ROOT:?STUDY_BUDDY_ROOT is required}"
+ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$STUDY_BUDDY_ROOT/bin/study_buddy_task.mjs" "$@"
+`;
+
+const WINDOWS_TASK_WRAPPER = `@echo off
+if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
+if "%STUDY_BUDDY_ROOT%"=="" (echo STUDY_BUDDY_ROOT is required. 1>&2 & exit /b 1)
+set ELECTRON_RUN_AS_NODE=1
+"%STUDY_BUDDY_NODE_EXECUTABLE%" "%STUDY_BUDDY_ROOT%\\bin\\study_buddy_task.mjs" %*
+`;
+
+const WINDOWS_NODE_SHIM = `@echo off
+if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
+set ELECTRON_RUN_AS_NODE=1
+"%STUDY_BUDDY_NODE_EXECUTABLE%" %*
+`;
+
+const WINDOWS_NPM_SHIM = `@echo off
+if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
+if "%STUDY_BUDDY_ROOT%"=="" (echo STUDY_BUDDY_ROOT is required. 1>&2 & exit /b 1)
+set ELECTRON_RUN_AS_NODE=1
+"%STUDY_BUDDY_NODE_EXECUTABLE%" "%STUDY_BUDDY_ROOT%\\bin\\npm-run.mjs" %*
+`;
+
+export function shouldPublishDesktopArtifact(entry: string): boolean {
+  return !RELEASE_ARTIFACT_DENYLIST.has(entry);
+}
+
+export const stageWorkflowRuntime = Effect.fn("stageWorkflowRuntime")(function* (
+  workflowRoot: string,
+  stageRuntimeDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.join(stageRuntimeDir, "bin"), { recursive: true });
+  yield* fs.copy(
+    path.join(workflowRoot, "src/custom-skills"),
+    path.join(stageRuntimeDir, "src/custom-skills"),
+  );
+  yield* fs.copy(path.join(workflowRoot, "src/shared"), path.join(stageRuntimeDir, "src/shared"));
+  yield* fs.makeDirectory(path.join(stageRuntimeDir, "CI"), { recursive: true });
+  yield* fs.copyFile(
+    path.join(workflowRoot, "CI/logo.png"),
+    path.join(stageRuntimeDir, "CI/logo.png"),
+  );
+  const studyBuilderDocs = path.join(workflowRoot, "docs/study-builder-vnext");
+  if (yield* fs.exists(studyBuilderDocs)) {
+    yield* fs.copy(studyBuilderDocs, path.join(stageRuntimeDir, "docs/study-builder-vnext"));
+  }
+  yield* fs.copyFile(
+    path.join(workflowRoot, "package.json"),
+    path.join(stageRuntimeDir, "canonical-package.json"),
+  );
+  yield* fs.copyFile(
+    path.join(workflowRoot, "package.json"),
+    path.join(stageRuntimeDir, "package.json"),
+  );
+  yield* fs.copyFile(
+    path.join(workflowRoot, "package-lock.json"),
+    path.join(stageRuntimeDir, "package-lock.json"),
+  );
+  yield* fs.copyFile(
+    path.join(workflowRoot, "scripts/study_buddy_task.sh"),
+    path.join(stageRuntimeDir, "bin/study_buddy_task.sh"),
+  );
+  yield* fs.copyFile(
+    fileURLToPath(new URL("./study-buddy-packaged-task.mjs", import.meta.url)),
+    path.join(stageRuntimeDir, "bin/study_buddy_task.mjs"),
+  );
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/npm-run.mjs"), PACKAGED_NPM_RUNNER);
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/node"), NODE_SHIM);
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/npm"), NPM_SHIM);
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/node.cmd"), WINDOWS_NODE_SHIM);
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/npm.cmd"), WINDOWS_NPM_SHIM);
+  yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/study_buddy_task"), PACKAGED_TASK_SHIM);
+  yield* fs.writeFileString(
+    path.join(stageRuntimeDir, "bin/study_buddy_task.cmd"),
+    WINDOWS_TASK_WRAPPER,
+  );
+  yield* Effect.all(
+    ["study_buddy_task.sh", "study_buddy_task.mjs", "study_buddy_task", "node", "npm"].map((name) =>
+      fs.chmod(path.join(stageRuntimeDir, "bin", name), 0o755),
+    ),
+  );
+});
+
+async function enqueueNodeModulesPackages(directory: string, queue: string[]): Promise<void> {
+  for (const entry of await nodeReadDirectory(directory).catch(() => [])) {
+    if (entry === ".bin" || entry === ".pnpm") continue;
+    if (entry.startsWith("@")) {
+      for (const scopedEntry of await nodeReadDirectory(path.join(directory, entry)).catch(
+        () => [],
+      )) {
+        queue.push(path.join(directory, entry, scopedEntry));
+      }
+    } else {
+      queue.push(path.join(directory, entry));
+    }
+  }
+}
+
+export async function collectInstalledPackages(
+  nodeModulesRoots: readonly string[],
+): Promise<InstalledPackage[]> {
+  const packages = new Map<string, InstalledPackage>();
+  const visited = new Set<string>();
+  const queue: string[] = [];
+  for (const root of nodeModulesRoots) {
+    await enqueueNodeModulesPackages(root, queue);
+    for (const virtualPackage of await nodeReadDirectory(path.join(root, ".pnpm")).catch(
+      () => [],
+    )) {
+      await enqueueNodeModulesPackages(
+        path.join(root, ".pnpm", virtualPackage, "node_modules"),
+        queue,
+      );
+    }
+  }
+  while (queue.length > 0) {
+    const candidate = queue.shift()!;
+    const resolved = await nodeRealpath(candidate).catch(() => candidate);
+    if (visited.has(resolved)) continue;
+    visited.add(resolved);
+    try {
+      const packageJson = JSON.parse(
+        await nodeReadFile(path.join(resolved, "package.json"), "utf8"),
+      ) as {
+        name?: string;
+        version?: string;
+        license?: string;
+        dependencies?: Record<string, string>;
+      };
+      if (!packageJson.name || !packageJson.version) continue;
+      packages.set(`${packageJson.name}@${packageJson.version}`, {
+        name: packageJson.name,
+        version: packageJson.version,
+        ...(typeof packageJson.license === "string" ? { license: packageJson.license } : {}),
+      });
+      for (const dependencyName of Object.keys(packageJson.dependencies ?? {})) {
+        queue.push(path.join(resolved, "node_modules", dependencyName));
+      }
+    } catch {
+      // A non-package entry in node_modules is irrelevant to the SBOM.
+    }
+  }
+  return [...packages.values()];
+}
+
+async function collectReleaseAssetText(root: string): Promise<string> {
+  const chunks: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    for (const entry of await nodeReadDirectory(directory, { withFileTypes: true })) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+      } else if (/\.(?:html|js|mjs|cjs|map|ts|tsx|json|sh|cmd)$/i.test(entry.name)) {
+        chunks.push(await nodeReadFile(absolutePath, "utf8"));
+      }
+    }
+  };
+  await visit(root);
+  return chunks.join("\n");
 }
 
 export function createStagePnpmConfig(
@@ -320,6 +773,12 @@ const BuildEnvConfig = Config.all({
   verbose: Config.boolean("T3CODE_DESKTOP_VERBOSE").pipe(Config.withDefault(false)),
   mockUpdates: Config.boolean("T3CODE_DESKTOP_MOCK_UPDATES").pipe(Config.withDefault(false)),
   mockUpdateServerPort: Config.string("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.option),
+  workflowRoot: Config.string("STUDY_BUDDY_WORKFLOW_ROOT").pipe(Config.option),
+  updateRepository: Config.string("STUDY_BUDDY_DESKTOP_UPDATE_REPOSITORY").pipe(Config.option),
+  updateChannel: Config.schema(
+    DesktopUpdateChannelSchema,
+    "STUDY_BUDDY_DESKTOP_UPDATE_CHANNEL",
+  ).pipe(Config.option),
 });
 
 const MockUpdateServerPortSchema = Schema.NumberFromString.check(
@@ -392,6 +851,46 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
       ),
     ));
 
+  const workflowRoot =
+    Option.getOrUndefined(input.workflowRoot) ?? Option.getOrUndefined(env.workflowRoot);
+  const updateRepository =
+    Option.getOrUndefined(input.updateRepository) ?? Option.getOrUndefined(env.updateRepository);
+  const updateChannel =
+    Option.getOrUndefined(input.updateChannel) ?? Option.getOrUndefined(env.updateChannel);
+  const expectedUpdateChannel = version ? resolveDesktopUpdateChannel(version) : undefined;
+
+  if (!mockUpdates) {
+    if (!version || !RELEASE_VERSION_PATTERN.test(version)) {
+      return yield* new BuildScriptError({
+        message: "Release builds require an explicit semantic --build-version.",
+      });
+    }
+    if (!workflowRoot?.trim()) {
+      return yield* new BuildScriptError({
+        message: "Release builds require an explicit STUDY_BUDDY_WORKFLOW_ROOT.",
+      });
+    }
+    if (!updateRepository?.trim() || !updateChannel) {
+      return yield* new BuildScriptError({
+        message:
+          "Release builds require explicit Study Buddy update repository and channel settings.",
+      });
+    }
+    if (
+      !resolveGitHubPublishConfig(updateRepository, updateChannel) ||
+      updateRepository.trim().toLowerCase() === "pingdotgg/t3code"
+    ) {
+      return yield* new BuildScriptError({
+        message: "Configured updater repository is not a valid Study Buddy owner/repository.",
+      });
+    }
+    if (updateChannel !== expectedUpdateChannel) {
+      return yield* new BuildScriptError({
+        message: `Configured update channel '${updateChannel}' does not match version channel '${expectedUpdateChannel}'.`,
+      });
+    }
+  }
+
   return {
     platform,
     target,
@@ -404,6 +903,9 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     verbose,
     mockUpdates,
     mockUpdateServerPort,
+    workflowRoot: workflowRoot?.trim() || undefined,
+    updateRepository: updateRepository?.trim() || undefined,
+    updateChannel,
   } satisfies ResolvedBuildOptions;
 });
 
@@ -624,35 +1126,35 @@ export function resolveDesktopRuntimeDependencies(
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
-function resolveGitHubPublishConfig(updateChannel: "latest" | "nightly"):
+export function resolveGitHubPublishConfig(
+  rawRepository: string,
+  updateChannel: DesktopUpdateChannel,
+):
   | {
       readonly provider: "github";
       readonly owner: string;
       readonly repo: string;
       readonly releaseType: "release" | "prerelease";
-      readonly channel?: "nightly";
+      readonly channel?: Exclude<DesktopUpdateChannel, "latest">;
     }
   | undefined {
-  const rawRepo =
-    process.env.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() ||
-    process.env.GITHUB_REPOSITORY?.trim() ||
-    "";
-  if (!rawRepo) return undefined;
-
-  const [owner, repo, ...rest] = rawRepo.split("/");
+  const [owner, repo, ...rest] = rawRepository.trim().split("/");
   if (!owner || !repo || rest.length > 0) return undefined;
 
   return {
     provider: "github",
     owner,
     repo,
-    releaseType: updateChannel === "nightly" ? "prerelease" : "release",
-    ...(updateChannel === "nightly" ? { channel: "nightly" as const } : {}),
+    releaseType: updateChannel === "latest" ? "release" : "prerelease",
+    ...(updateChannel === "latest" ? {} : { channel: updateChannel }),
   };
 }
 
-export function resolveDesktopUpdateChannel(version: string): "latest" | "nightly" {
-  return /-nightly\.\d{8}\.\d+$/.test(version) ? "nightly" : "latest";
+export function resolveDesktopUpdateChannel(version: string): DesktopUpdateChannel {
+  const match = version.match(/-(alpha|beta|nightly)(?:\.|$)/);
+  return match?.[1] === "alpha" || match?.[1] === "beta" || match?.[1] === "nightly"
+    ? match[1]
+    : "latest";
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
@@ -676,9 +1178,9 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "Study Buddy T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+  const channel = resolveDesktopUpdateChannel(version);
+  if (channel === "latest") return desktopPackageJson.productName ?? "Study Buddy";
+  return `Study Buddy (${channel[0]!.toUpperCase()}${channel.slice(1)})`;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -688,11 +1190,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   signed: boolean,
   mockUpdates: boolean,
   mockUpdateServerPort: number | undefined,
+  updateRepository = STUDY_BUDDY_UPDATE_REPOSITORY,
+  configuredUpdateChannel?: DesktopUpdateChannel,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: STUDY_BUDDY_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "Study-Buddy-T3-Code-${version}-${arch}.${ext}",
+    artifactName: "Study-Buddy-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -702,19 +1206,42 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         to: "speech-sidecar",
         filter: ["study-buddy-speech", "study-buddy-speech.exe"],
       },
+      {
+        from: "study-buddy-runtime",
+        to: "study-buddy-runtime",
+        filter: ["**/*", "!node_modules/**"],
+      },
+      {
+        // electron-builder excludes nested node_modules from generic resources by default.
+        // Rooting this FileSet at node_modules makes the locked workflow runtime explicit.
+        from: "study-buddy-runtime/node_modules",
+        to: "study-buddy-runtime/node_modules",
+        filter: ["**/*"],
+      },
     ],
+    files: ["**/*", "!study-buddy-runtime/**"],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
-  const publishConfig = resolveGitHubPublishConfig(updateChannel);
-  if (publishConfig) {
-    buildConfig.publish = [publishConfig];
-  } else if (mockUpdates) {
+  if (configuredUpdateChannel && configuredUpdateChannel !== updateChannel) {
+    return yield* new BuildScriptError({
+      message: `Configured update channel '${configuredUpdateChannel}' does not match '${updateChannel}'.`,
+    });
+  }
+  if (mockUpdates) {
     buildConfig.publish = [
       {
         provider: "generic",
         url: resolveMockUpdateServerUrl(mockUpdateServerPort),
       },
     ];
+  } else {
+    const publishConfig = resolveGitHubPublishConfig(updateRepository, updateChannel);
+    if (!publishConfig) {
+      return yield* new BuildScriptError({
+        message: "Study Buddy update repository must use owner/repository syntax.",
+      });
+    }
+    buildConfig.publish = [publishConfig];
   }
 
   if (platform === "mac") {
@@ -728,7 +1255,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
       protocols: [
         {
-          name: "Study Buddy T3 Code",
+          name: "Study Buddy",
           schemes: [STUDY_BUDDY_EXECUTABLE_NAME],
         },
       ],
@@ -739,6 +1266,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.linux = {
       target: [target],
       executableName: STUDY_BUDDY_EXECUTABLE_NAME,
+      syncDesktopName: true,
       icon: "icons",
       category: "Development",
       desktop: {
@@ -758,7 +1286,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
     } else {
-      winConfig.signAndEditExecutable = false;
+      // Keep resedit enabled so unsigned builds still embed the Study Buddy icon and metadata.
+      // This disables only Authenticode signing; it does not require a certificate.
+      winConfig.signExecutable = false;
     }
     buildConfig.win = winConfig;
   }
@@ -797,6 +1327,17 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const workspaceCatalog = workspaceConfig.catalog ?? {};
   const workspaceOverrides = workspaceConfig.overrides ?? {};
   const workspacePatchedDependencies = workspaceConfig.patchedDependencies ?? {};
+  const appVersion = options.version ?? serverPackageJson.version;
+  const publicPostHogToken = yield* Effect.try({
+    try: () =>
+      assertReleasePublicConfiguration({
+        mockUpdates: options.mockUpdates,
+        environment: process.env,
+      }),
+    catch: (cause) =>
+      new BuildScriptError({ message: "Release public configuration is incomplete.", cause }),
+  });
+  const workflow = yield* resolveWorkflowRuntime(options.workflowRoot);
 
   const platformConfig = PLATFORM_CONFIG[options.platform];
   if (!platformConfig) {
@@ -840,7 +1381,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       }),
   });
 
-  const appVersion = options.version ?? serverPackageJson.version;
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const commitHash = yield* resolveGitCommitHash(repoRoot);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;
@@ -856,12 +1396,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     serverDist: path.join(repoRoot, "apps/server/dist"),
   };
   const bundledClientEntry = path.join(distDirs.serverDist, "client/index.html");
+  const releaseBuildEnvironment = sanitizeReleaseBuildEnvironment({
+    ...process.env,
+    APP_VERSION: appVersion,
+    ...(publicPostHogToken ? { VITE_POSTHOG_PROJECT_TOKEN: publicPostHogToken } : {}),
+  });
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
     yield* runCommand(
       ChildProcess.make({
         cwd: repoRoot,
+        env: releaseBuildEnvironment,
         // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
         shell: process.platform === "win32",
       })`vp run build:desktop`,
@@ -892,6 +1438,37 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
+  const releaseAssetText = yield* Effect.tryPromise({
+    try: () => collectReleaseAssetText(path.dirname(bundledClientEntry)),
+    catch: (cause) =>
+      new BuildScriptError({ message: "Could not inspect bundled renderer assets.", cause }),
+  });
+  const completeReleaseCodeText = yield* Effect.tryPromise({
+    try: async () =>
+      (
+        await Promise.all([
+          collectReleaseAssetText(distDirs.desktopDist),
+          collectReleaseAssetText(distDirs.serverDist),
+        ])
+      ).join("\n"),
+    catch: (cause) =>
+      new BuildScriptError({ message: "Could not inspect complete desktop release code.", cause }),
+  });
+  if (!releaseAssetText.includes(appVersion)) {
+    return yield* new BuildScriptError({
+      message: "Bundled renderer does not contain the requested release version.",
+    });
+  }
+  if (publicPostHogToken && !releaseAssetText.includes(publicPostHogToken)) {
+    return yield* new BuildScriptError({
+      message: "Bundled renderer does not contain the configured public PostHog project token.",
+    });
+  }
+  if (POSTHOG_ADMIN_TOKEN_PATTERN.test(completeReleaseCodeText)) {
+    return yield* new BuildScriptError({
+      message: "Bundled renderer contains a forbidden PostHog personal/admin token.",
+    });
+  }
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
@@ -900,6 +1477,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  const stageWorkflowRuntimeDir = path.join(stageAppDir, "study-buddy-runtime");
+  yield* stageWorkflowRuntime(workflow.root, stageWorkflowRuntimeDir);
+  const stagedWorkflowText = yield* Effect.tryPromise({
+    try: () => collectReleaseAssetText(stageWorkflowRuntimeDir),
+    catch: (cause) =>
+      new BuildScriptError({ message: "Could not inspect staged Study Buddy workflow.", cause }),
+  });
+  if (POSTHOG_ADMIN_TOKEN_PATTERN.test(stagedWorkflowText)) {
+    return yield* new BuildScriptError({
+      message: "Staged Study Buddy workflow contains a forbidden PostHog personal/admin token.",
+    });
+  }
   const speechSidecarFile =
     process.platform === "win32" ? "study-buddy-speech.exe" : "study-buddy-speech";
   const speechSidecarSource = path.join(
@@ -940,6 +1529,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePnpmConfig = createStagePnpmConfig(workspacePatchedDependencies, stageDependencies);
   const stagePackageJson: StagePackageJson = {
     name: STUDY_BUDDY_EXECUTABLE_NAME,
+    desktopName: STUDY_BUDDY_EXECUTABLE_NAME,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -955,6 +1545,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       options.signed,
       options.mockUpdates,
       options.mockUpdateServerPort,
+      options.updateRepository ?? STUDY_BUDDY_UPDATE_REPOSITORY,
+      options.updateChannel,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -975,15 +1567,27 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
+      env: releaseBuildEnvironment,
       // Windows needs shell mode to resolve .cmd shims (e.g. vp.cmd).
       shell: process.platform === "win32",
     })`vp install --prod --no-optional`,
     { label: "vp install --prod --no-optional", verbose: options.verbose },
   );
 
-  const buildEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-  };
+  yield* Effect.log("[desktop-artifact] Installing packaged Study Buddy workflow dependencies...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageWorkflowRuntimeDir,
+      env: releaseBuildEnvironment,
+      shell: process.platform === "win32",
+    })`npm ci --omit=dev --ignore-scripts`,
+    {
+      label: "npm ci --omit=dev --ignore-scripts (Study Buddy workflow)",
+      verbose: options.verbose,
+    },
+  );
+
+  const buildEnv: NodeJS.ProcessEnv = { ...releaseBuildEnvironment };
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
       delete buildEnv[key];
@@ -1037,11 +1641,32 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
+  const installedPackages = yield* Effect.tryPromise({
+    try: () =>
+      collectInstalledPackages([
+        path.join(stageAppDir, "node_modules"),
+        path.join(stageWorkflowRuntimeDir, "node_modules"),
+      ]),
+    catch: (cause) =>
+      new BuildScriptError({ message: "Could not inventory staged dependencies for SBOM.", cause }),
+  });
+  if (installedPackages.length === 0) {
+    return yield* new BuildScriptError({
+      message: "Refusing to publish an empty desktop dependency SBOM.",
+    });
+  }
+  const sbom = createDesktopCycloneDxSbom({ appVersion, packages: installedPackages });
+  yield* fs.writeFileString(
+    path.join(stageDistDir, "study-buddy-desktop.cdx.json"),
+    `${JSON.stringify(sbom, null, 2)}\n`,
+  );
+
   const stageEntries = yield* fs.readDirectory(stageDistDir);
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 
   const copiedArtifacts: string[] = [];
   for (const entry of stageEntries) {
+    if (!shouldPublishDesktopArtifact(entry)) continue;
     const from = path.join(stageDistDir, entry);
     const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));
     if (!stat || stat.type !== "File") continue;
@@ -1114,14 +1739,31 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.withDescription("Mock update server port (env: T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT)."),
     Flag.optional,
   ),
+  workflowRoot: Flag.string("workflow-root").pipe(
+    Flag.withDescription("Canonical Study Buddy workflow root (env: STUDY_BUDDY_WORKFLOW_ROOT)."),
+    Flag.optional,
+  ),
+  updateRepository: Flag.string("update-repository").pipe(
+    Flag.withDescription(
+      "Explicit Study Buddy owner/repository update source (env: STUDY_BUDDY_DESKTOP_UPDATE_REPOSITORY).",
+    ),
+    Flag.optional,
+  ),
+  updateChannel: Flag.choice("update-channel", DesktopUpdateChannelSchema.literals).pipe(
+    Flag.withDescription(
+      "Explicit updater channel matching the version (env: STUDY_BUDDY_DESKTOP_UPDATE_CHANNEL).",
+    ),
+    Flag.optional,
+  ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for T3 Code."),
+  Command.withDescription("Build a Study Buddy desktop artifact."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 
 const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
 
-if (import.meta.main) {
+if (import.meta.main || isDirectExecution(import.meta.url, process.argv[1])) {
+  process.argv = normalizeBuildCliArgv(process.argv);
   Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
     Effect.scoped,
     Effect.provide(cliRuntimeLayer),

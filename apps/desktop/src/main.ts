@@ -28,6 +28,7 @@ import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopCloudAuth from "./app/DesktopCloudAuth.ts";
 import * as DesktopCloudAuthTokenStore from "./app/DesktopCloudAuthTokenStore.ts";
+import * as DesktopSourceSecretKeyStore from "./app/DesktopSourceSecretKeyStore.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
@@ -115,6 +116,7 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopClientSettings.layer,
   DesktopSavedEnvironments.layer,
   DesktopCloudAuthTokenStore.layer,
+  DesktopSourceSecretKeyStore.layer,
   DesktopAssets.layer,
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));

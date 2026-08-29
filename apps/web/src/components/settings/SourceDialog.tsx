@@ -121,7 +121,10 @@ export function SourceDialog({
 
   const presentation = kind ? SOURCE_KIND_PRESENTATION[kind] : null;
   const isLegacy = source?.scope.tags.includes("legacy") ?? false;
-  const urlError = useMemo(() => validateDisplayUrl(url, kind), [kind, url]);
+  const urlError = useMemo(
+    () => validateDisplayUrl(url, kind, Boolean(source)),
+    [kind, source, url],
+  );
   const emailSendingSupported =
     kind === "email" &&
     (connection?.adapterId === "sogo" ||
@@ -174,7 +177,14 @@ export function SourceDialog({
           ...(kind === "email" ? { emailProviderHint } : {}),
           enabled,
         });
-        if (!isLegacy && password) {
+        if (kind === "calendar" && url.trim()) {
+          next = await ensureLocalApi().server.setStudyBuddySourceAuth({
+            operation: "set-bearer-url",
+            expectedRevision: next.revision,
+            sourceId: source.id,
+            value: url.trim(),
+          });
+        } else if (password) {
           next = await ensureLocalApi().server.setStudyBuddySourceAuth({
             operation: "set-password",
             expectedRevision: next.revision,
@@ -492,7 +502,6 @@ export function SourceDialog({
                             : "Enter password"
                         }
                         onValueChange={setPassword}
-                        disabled={isLegacy}
                       />
                     </Field>
                   </>
@@ -700,10 +709,16 @@ function createInput(input: {
   };
 }
 
-function validateDisplayUrl(value: string, kind: StudyBuddySourceKind | null): string | null {
+function validateDisplayUrl(
+  value: string,
+  kind: StudyBuddySourceKind | null,
+  allowSavedValue = false,
+): string | null {
   if (!kind) return null;
-  if (!value.trim())
+  if (!value.trim()) {
+    if (allowSavedValue) return null;
     return kind === "calendar" ? "Enter the private calendar link." : "Enter the source website.";
+  }
   try {
     const parsed = new URL(value.trim().replace(/^webcal:\/\//i, "https://"));
     if (kind === "email") {

@@ -770,15 +770,16 @@ const SourcesSetupStep = forwardRef<StepSaveHandle>(function SourcesSetupStep(_p
               Passwords and private links stay on this device. Study Buddy never shows them in chat.
             </p>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!inventory}
-            onClick={() => setAddRequest((request) => request + 1)}
-          >
-            <PlusIcon className="size-3.5" />
-            Add source
-          </Button>
+          {inventory && inventory.sources.length > 0 ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setAddRequest((request) => request + 1)}
+            >
+              <PlusIcon className="size-3.5" />
+              Add another source
+            </Button>
+          ) : null}
         </div>
         {inventory ? (
           <SourceInventory

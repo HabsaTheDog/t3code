@@ -16,7 +16,7 @@ import {
   resolveDefaultDesktopSettings,
 } from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
+import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
@@ -53,6 +53,9 @@ export interface DesktopEnvironmentShape {
   readonly appRoot: string;
   readonly backendEntryPath: string;
   readonly backendCwd: string;
+  readonly studyBuddyRoot: string;
+  readonly studyBuddyTaskWrapperPath: string;
+  readonly studyBuddyRuntimeBinPath: string;
   readonly preloadPath: string;
   readonly appUpdateYmlPath: string;
   readonly devServerUrl: Option.Option<URL>;
@@ -93,7 +96,11 @@ function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+  const updateChannel = resolveDefaultDesktopUpdateChannel(input.appVersion);
+  if (updateChannel === "nightly") return "Nightly";
+  if (updateChannel === "beta") return "Beta";
+  if (updateChannel === "alpha") return "Alpha";
+  return "Stable";
 }
 
 function resolveDesktopAppBranding(input: {
@@ -104,7 +111,7 @@ function resolveDesktopAppBranding(input: {
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: stageLabel === "Stable" ? APP_BASE_NAME : `${APP_BASE_NAME} (${stageLabel})`,
   };
 }
 
@@ -168,6 +175,12 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
   const userDataDirName = isDevelopment ? `${STUDY_BUDDY_LINUX_ID}-dev` : STUDY_BUDDY_LINUX_ID;
   const legacyUserDataDirName = isDevelopment ? "Study Buddy (Dev)" : "Study Buddy (Alpha)";
   const resourcesPath = input.resourcesPath;
+  const studyBuddyRoot = input.isPackaged
+    ? path.join(resourcesPath, "study-buddy-runtime")
+    : path.resolve(rootDir, "..");
+  const studyBuddyRuntimeBinPath = input.isPackaged
+    ? path.join(studyBuddyRoot, "bin")
+    : path.join(studyBuddyRoot, "node_modules", ".bin");
 
   return DesktopEnvironment.of({
     path,
@@ -192,6 +205,14 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     appRoot,
     backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
+    studyBuddyRoot,
+    studyBuddyTaskWrapperPath: input.isPackaged
+      ? path.join(
+          studyBuddyRuntimeBinPath,
+          input.platform === "win32" ? "study_buddy_task.cmd" : "study_buddy_task",
+        )
+      : path.join(homeDirectory, ".agents/skills/study-buddy/scripts/study_buddy_task.sh"),
+    studyBuddyRuntimeBinPath,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     appUpdateYmlPath: input.isPackaged
       ? path.join(resourcesPath, "app-update.yml")

@@ -24,6 +24,7 @@ interface UpdatesHarnessOptions {
     void,
     ElectronUpdater.ElectronUpdaterCheckForUpdatesError
   >;
+  readonly appVersion?: string;
   readonly env?: Record<string, string | undefined>;
 }
 
@@ -32,6 +33,8 @@ const flushCallbacks = Effect.yieldNow;
 function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let allowDowngrade = false;
+  let allowPrerelease = false;
+  let channel = "latest";
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
   const listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>();
   const sentStates: DesktopUpdateState[] = [];
@@ -60,8 +63,15 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
     setAutoDownload: () => Effect.void,
     setAutoInstallOnAppQuit: () => Effect.void,
-    setChannel: () => Effect.void,
-    setAllowPrerelease: () => Effect.void,
+    setChannel: (value) =>
+      Effect.sync(() => {
+        channel = value;
+        allowDowngrade = true;
+      }),
+    setAllowPrerelease: (value) =>
+      Effect.sync(() => {
+        allowPrerelease = value;
+      }),
     allowDowngrade: Effect.sync(() => allowDowngrade),
     setAllowDowngrade: (value) =>
       Effect.sync(() => {
@@ -119,7 +129,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     homeDirectory: `/tmp/t3-desktop-updates-home-${process.pid}`,
     platform: "darwin",
     processArch: "x64",
-    appVersion: "1.2.3",
+    appVersion: options.appVersion ?? "1.2.3",
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
@@ -159,6 +169,9 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
   return {
     layer,
     checkCount: () => checkCount,
+    channel: () => channel,
+    allowsDowngrade: () => allowDowngrade,
+    allowsPrerelease: () => allowPrerelease,
     feedUrls: () => feedUrls,
     listenerCount: () =>
       Array.from(listeners.values()).reduce(
@@ -175,6 +188,21 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 describe("DesktopUpdates", () => {
+  it.effect("allows prereleases without allowing startup downgrades", () => {
+    const harness = makeHarness({ appVersion: "0.1.0-alpha.3" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.equal(harness.channel(), "alpha");
+        assert.equal(harness.allowsPrerelease(), true);
+        assert.equal(harness.allowsDowngrade(), false);
+      }),
+    ).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 

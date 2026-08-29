@@ -65,6 +65,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.branding.displayName, "Study Buddy (Dev)");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
+      assert.equal(environment.studyBuddyRoot, "/");
       assert.equal(environment.appUserModelId, "com.studybuddy.t3code.dev");
       assert.equal(environment.linuxDesktopEntryName, "study-buddy-t3code-dev.desktop");
       assert.equal(environment.linuxWmClass, "study-buddy-t3code-dev");
@@ -105,10 +106,30 @@ describe("DesktopEnvironment", () => {
 
   it.effect("defaults packaged Study Buddy state away from upstream T3 Code", () =>
     Effect.gen(function* () {
-      const environment = yield* makeEnvironment();
+      const environment = yield* makeEnvironment({ isPackaged: true });
 
       assert.equal(environment.baseDir, "/Users/alice/.study-buddy-t3code");
       assert.equal(environment.stateDir, "/Users/alice/.study-buddy-t3code/userdata");
+      assert.equal(
+        environment.studyBuddyRoot,
+        "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime",
+      );
+      assert.equal(
+        environment.studyBuddyTaskWrapperPath,
+        "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime/bin/study_buddy_task",
+      );
+    }),
+  );
+
+  it.effect("selects the native packaged command bridge on clean Windows", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({ isPackaged: true, platform: "win32" });
+
+      assert.equal(
+        environment.studyBuddyTaskWrapperPath,
+        "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime/bin/study_buddy_task.cmd",
+      );
+      assert.notInclude(environment.studyBuddyTaskWrapperPath, ".sh");
     }),
   );
 

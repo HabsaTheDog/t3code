@@ -440,6 +440,29 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
+  it("captures write-only credentials before React releases the input event", async () => {
+    harness.providers = [
+      provider({ instanceId: "codex", driver: "codex", installed: true, version: "0.144.3" }),
+    ];
+    const screen = await render(<ProviderSetupStep />);
+
+    await page.getByRole("button", { name: "Sign in with access token" }).click();
+    const input = page.getByRole("textbox", { name: "Access token" });
+    await input.fill("synthetic-release-lab-token");
+    await page.getByRole("button", { name: "Continue" }).click();
+
+    await vi.waitFor(() => {
+      expect(harness.startProviderSetup).toHaveBeenCalledWith({
+        actionId: "codex.auth.access-token",
+        secretValue: "synthetic-release-lab-token",
+      });
+    });
+    expect(harness.registerSecret).toHaveBeenCalledWith("synthetic-release-lab-token");
+    await waitForJob("job-1");
+
+    await screen.unmount();
+  });
+
   it("keeps non-Codex providers out of the Study Buddy setup", async () => {
     const screen = await render(<ProviderSetupStep />);
 

@@ -89,11 +89,18 @@ export async function assertPublicHttpsUrl(
 ): Promise<void> {
   const parsed = new URL(value);
   if (parsed.protocol !== "https:") throw new Error("URL must use HTTPS.");
-  if (isDisallowedHostname(parsed.hostname)) {
+  await assertPublicNetworkHostname(parsed.hostname, resolveHostname);
+}
+
+export async function assertPublicNetworkHostname(
+  hostname: string,
+  resolveHostname: (hostname: string) => Promise<string[]> = resolveAllAddresses,
+): Promise<void> {
+  if (isDisallowedHostname(hostname)) {
     throw new Error("URL resolves to a local or private network address.");
   }
-  if (net.isIP(stripBrackets(parsed.hostname)) === 0) {
-    const addresses = await resolveHostname(parsed.hostname);
+  if (net.isIP(stripBrackets(hostname)) === 0) {
+    const addresses = await resolveHostname(hostname);
     if (addresses.length === 0 || addresses.some(isDisallowedAddress)) {
       throw new Error("URL resolves to a local or private network address.");
     }

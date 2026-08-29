@@ -1,11 +1,15 @@
 import type { DesktopUpdateChannel } from "@t3tools/contracts";
 
-const NIGHTLY_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
+const PRERELEASE_CHANNEL_PATTERN = /-(alpha|beta|nightly)(?:\.|$)/;
 
 export function isNightlyDesktopVersion(version: string): boolean {
-  return NIGHTLY_VERSION_PATTERN.test(version);
+  return resolveDefaultDesktopUpdateChannel(version) === "nightly";
 }
 
 export function resolveDefaultDesktopUpdateChannel(appVersion: string): DesktopUpdateChannel {
-  return isNightlyDesktopVersion(appVersion) ? "nightly" : "latest";
+  const match = appVersion.match(PRERELEASE_CHANNEL_PATTERN);
+  if (match?.[1] === "alpha" || match?.[1] === "beta" || match?.[1] === "nightly") {
+    return match[1];
+  }
+  return "latest";
 }

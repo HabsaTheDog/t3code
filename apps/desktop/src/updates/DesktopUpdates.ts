@@ -42,7 +42,7 @@ import {
 } from "./updateMachine.ts";
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+const AUTO_UPDATE_POLL_INTERVAL = "6 hours";
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
@@ -173,7 +173,7 @@ function getAutoUpdateDisabledReason(args: {
     return "Automatic updates are only available in packaged production builds.";
   }
   if (args.disabledByEnv) {
-    return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
+    return "Automatic updates are disabled by the STUDY_BUDDY_DISABLE_AUTO_UPDATE setting.";
   }
   if (args.platform === "linux" && !args.appImage) {
     return "Automatic updates on Linux require running the AppImage build.";
@@ -272,14 +272,14 @@ const make = Effect.gen(function* () {
     channel: DesktopUpdateChannel,
   ) {
     yield* Effect.annotateCurrentSpan({ channel });
-    const allowsPrerelease = channel === "nightly";
+    const allowsPrerelease = channel !== "latest";
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
-    yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    yield* electronUpdater.setAllowDowngrade(false);
     yield* logUpdaterInfo("using update channel", {
       channel,
       allowPrerelease: allowsPrerelease,
-      allowDowngrade: allowsPrerelease,
+      allowDowngrade: false,
     });
   });
 

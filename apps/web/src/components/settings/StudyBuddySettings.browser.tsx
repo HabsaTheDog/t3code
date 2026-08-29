@@ -175,7 +175,10 @@ const harness = vi.hoisted(() => {
       this.getConfiguration.mockClear();
       this.getInventory.mockClear();
       this.createSource.mockClear();
+      this.updateSource.mockClear();
+      this.setSourceAuth.mockClear();
       this.updateEmailPermissions.mockClear();
+      this.testSource.mockClear();
     },
   };
 });
@@ -233,12 +236,14 @@ describe("Study Buddy source settings", () => {
 
   it("offers plain per-account read, draft, and send-request permissions", async () => {
     const mounted = await render(<StudyBuddySettingsPanel />);
-    await page.getByRole("button", { name: "Add source" }).first().click();
+    await page.getByRole("button", { name: "Add another source" }).click();
     await page.getByRole("radio", { name: /Email/ }).click();
     await expect.element(page.getByText("Name in Study Buddy")).toBeVisible();
-    await expect.element(page.getByText("Read email")).toBeInTheDocument();
-    await expect.element(page.getByText("Prepare drafts")).toBeInTheDocument();
-    await expect.element(page.getByText("Ask to send")).toBeInTheDocument();
+    await expect.element(page.getByText("Read email", { exact: true }).last()).toBeInTheDocument();
+    await expect
+      .element(page.getByText("Prepare drafts", { exact: true }).last())
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Ask to send", { exact: true }).last()).toBeInTheDocument();
     await expect.element(page.getByRole("switch", { name: "Read email" })).toBeChecked();
     await expect.element(page.getByRole("switch", { name: "Prepare drafts" })).not.toBeChecked();
     await expect.element(page.getByRole("switch", { name: "Ask to send" })).toBeDisabled();
@@ -270,7 +275,7 @@ describe("Study Buddy source settings", () => {
 
   it("discovers an HTTPS SOGo profile and keeps read access fail-closed", async () => {
     const mounted = await render(<StudyBuddySettingsPanel />);
-    await page.getByRole("button", { name: "Add source" }).first().click();
+    await page.getByRole("button", { name: "Add another source" }).click();
     await page.getByRole("radio", { name: /Email/ }).click();
     await page
       .getByRole("textbox", { name: "Email website or server" })
@@ -289,7 +294,7 @@ describe("Study Buddy source settings", () => {
     });
 
     await expect.element(page.getByText("Check first to enable mail")).toBeInTheDocument();
-    await expect.element(page.getByText("Messages")).toBeInTheDocument();
+    await expect.element(page.getByText("Messages", { exact: true })).toBeInTheDocument();
     await expect.element(readButton).toBeDisabled();
 
     await page.getByRole("button", { name: "Check University email connection" }).click();
@@ -297,6 +302,46 @@ describe("Study Buddy source settings", () => {
     await expect.element(page.getByText("Ready to read")).toBeInTheDocument();
     await expect.element(readButton).toBeEnabled();
     expect(harness.testSource).toHaveBeenCalledWith({ sourceId: "university-email" });
+    await mounted.unmount();
+  });
+
+  it("refreshes the revision after a connection check before editing", async () => {
+    const refreshedInventory = {
+      ...harness.inventory,
+      revision: 1,
+    };
+    harness.getInventory
+      .mockResolvedValueOnce(harness.inventory)
+      .mockResolvedValueOnce(refreshedInventory);
+    harness.updateSource.mockResolvedValueOnce({ ...refreshedInventory, revision: 2 });
+
+    const mounted = await render(<StudyBuddySettingsPanel />);
+    await page.getByRole("button", { name: "Check Robotics Moodle connection" }).click();
+    await vi.waitFor(() => expect(harness.getInventory).toHaveBeenCalledTimes(2));
+    await page.getByRole("button", { name: "Edit Robotics Moodle" }).click();
+    await page.getByRole("textbox", { name: "Name in Study Buddy" }).fill("Robotics portal");
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    expect(harness.updateSource).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedRevision: 1, sourceId: "robotics-moodle" }),
+    );
+    await mounted.unmount();
+  });
+
+  it("replaces a saved private calendar link from the edit dialog", async () => {
+    const mounted = await render(<StudyBuddySettingsPanel />);
+    await page.getByRole("button", { name: "Edit Personal calendar" }).click();
+    await page
+      .getByRole("textbox", { name: "Private calendar link" })
+      .fill("https://calendar.example.edu/new-private-feed.ics");
+    await page.getByRole("button", { name: "Save changes" }).click();
+
+    expect(harness.setSourceAuth).toHaveBeenCalledWith({
+      operation: "set-bearer-url",
+      expectedRevision: 0,
+      sourceId: "personal-calendar",
+      value: "https://calendar.example.edu/new-private-feed.ics",
+    });
     await mounted.unmount();
   });
 
@@ -323,13 +368,13 @@ describe("Study Buddy source settings", () => {
 
   it("rejects credential-bearing website addresses before creating a source", async () => {
     const mounted = await render(<StudyBuddySettingsPanel />);
-    await page.getByRole("button", { name: "Add source" }).first().click();
+    await page.getByRole("button", { name: "Add another source" }).click();
     await page.getByRole("radio", { name: /Website/ }).click();
     await page
       .getByRole("textbox", { name: "Website address" })
       .fill("https://student:secret@example.edu/portal");
     await page.getByRole("button", { name: "Add source" }).last().click();
-    await expect.element(page.getByText(/Remove the username or password/)).toBeInTheDocument();
+    await expect.element(page.getByText(/Remove the sign-in details/)).toBeInTheDocument();
     expect(harness.createSource).not.toHaveBeenCalled();
     await mounted.unmount();
   });

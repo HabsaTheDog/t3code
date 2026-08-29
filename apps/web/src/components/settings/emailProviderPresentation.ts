@@ -51,6 +51,10 @@ export function emailProviderOption(hint: StudyBuddyEmailProviderHint) {
   return EMAIL_PROVIDER_OPTIONS.find((option) => option.value === hint)!;
 }
 
+function isHostOrSubdomain(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
 export function recognizeEmailProvider(
   hint: StudyBuddyEmailProviderHint,
   rawUrl: string,
@@ -79,7 +83,8 @@ export function recognizeEmailProvider(
     };
   }
 
-  const signature = `${parsed.hostname}${parsed.pathname}`.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase();
+  const signature = `${hostname}${parsed.pathname}`.toLowerCase();
   if (hint === "sogo" || signature.includes("sogo")) {
     return { status: "recognized", label: "SOGo", detail: "Recognized from the address." };
   }
@@ -92,8 +97,8 @@ export function recognizeEmailProvider(
   }
   if (
     hint === "microsoft-365" ||
-    signature.includes("outlook.office") ||
-    signature.includes("office.com")
+    isHostOrSubdomain(hostname, "office.com") ||
+    isHostOrSubdomain(hostname, "office365.com")
   ) {
     return {
       status: "recognized",
@@ -103,8 +108,8 @@ export function recognizeEmailProvider(
   }
   if (
     hint === "google-workspace" ||
-    signature.includes("mail.google") ||
-    signature.includes("gmail.com")
+    isHostOrSubdomain(hostname, "google.com") ||
+    isHostOrSubdomain(hostname, "gmail.com")
   ) {
     return {
       status: "recognized",

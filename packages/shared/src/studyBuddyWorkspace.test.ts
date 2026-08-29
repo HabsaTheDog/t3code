@@ -34,6 +34,9 @@ describe("Study Buddy workspace paths", () => {
     expect(joinWorkspacePath("/tmp/quick-chats/", "/thread-1/", "deliverables")).toBe(
       "/tmp/quick-chats/thread-1/deliverables",
     );
+    expect(joinWorkspacePath(`/tmp/quick-chats${"/".repeat(50_000)}`, "thread-1")).toBe(
+      "/tmp/quick-chats/thread-1",
+    );
   });
 });
 

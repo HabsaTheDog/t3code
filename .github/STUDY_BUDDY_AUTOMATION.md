@@ -7,9 +7,12 @@ managed in the parent Study Buddy repository.
 The inherited T3 Code release, relay deployment, mobile preview, label, and PR
 vouch workflows are intentionally inert. They target upstream infrastructure
 and must not be re-enabled in this fork. Fork CI uses GitHub-hosted runners and
-the secret scan covers the fork's complete reachable history. The default pnpm
-workspace and frozen lockfile contain only shipped Study Buddy packages; the
-disabled upstream mobile, marketing, and relay directories are not installed.
+the secret scan covers the fork's complete reachable history. CodeQL analyzes
+the TypeScript/JavaScript surface on pull requests, default-branch updates, and
+a weekly schedule. The default pnpm workspace and frozen lockfile contain only
+shipped Study Buddy packages. The unused upstream marketing site is not
+distributed in this fork; the disabled upstream mobile and relay directories
+are not installed.
 The `study-buddy:audit` gate blocks every high/critical advisory in that shipped
 dependency graph without exceptions.
 

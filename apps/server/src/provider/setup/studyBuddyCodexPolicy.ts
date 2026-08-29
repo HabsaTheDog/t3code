@@ -18,6 +18,9 @@ export interface StudyBuddyCodexPolicyPaths {
 }
 
 function legacyCredentialRoot(config: ServerConfigShape): string {
+  if (process.env.STUDY_BUDDY_CONFIG_ROOT) {
+    return path.resolve(process.env.STUDY_BUDDY_CONFIG_ROOT);
+  }
   if (process.env.STUDY_BUDDY_ROOT) return path.resolve(process.env.STUDY_BUDDY_ROOT);
   if (process.env.STUDY_BUDDY_T3_ROOT) {
     return path.resolve(process.env.STUDY_BUDDY_T3_ROOT, "..");
@@ -119,9 +122,23 @@ export async function ensureStudyBuddyCodexHome(
 export function studyBuddyCodexEnvironment(
   paths: StudyBuddyCodexPolicyPaths,
   source: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
+  const sanitized = sanitizeProviderEnvironment(source);
+  const managedBin = path.join(paths.codexHome, "bin");
+  const managedPath = [managedBin, sanitized.PATH].filter(Boolean).join(path.delimiter);
   return {
-    ...sanitizeProviderEnvironment(source),
+    ...sanitized,
+    ...(platform === "win32"
+      ? {}
+      : {
+          // Keep the standalone CLI inside Study Buddy's private state and
+          // make it immediately visible to provider probes in this process.
+          // Because the directory is already on PATH, the upstream installer
+          // does not edit the user's shell profile.
+          CODEX_INSTALL_DIR: managedBin,
+          PATH: managedPath,
+        }),
     CODEX_HOME: paths.codexHome,
     STUDY_BUDDY_CODEX_HOME: paths.codexHome,
     STUDY_BUDDY_CODEX_PERMISSION_PROFILE: STUDY_BUDDY_CODEX_PERMISSION_PROFILE,
