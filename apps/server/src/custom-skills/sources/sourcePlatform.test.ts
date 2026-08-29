@@ -376,6 +376,68 @@ describe("Study Buddy source inventory", () => {
     expect(JSON.stringify(environment)).not.toContain("first-password");
   });
 
+  it("prefers an exact Moodle entry path when sources share an origin", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "First course",
+      url: "https://moodle.example.edu/course/view.php?id=1",
+      enabled: true,
+      auth: { operation: "set-password", username: "first-user", password: "first-password" },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "moodle-course",
+      label: "Second course",
+      url: "https://moodle.example.edu/course/view.php?id=2",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "second-user",
+        password: "second-password",
+      },
+    });
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      args: ["doc", "--url", "https://moodle.example.edu/course/view.php?id=2"],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: "second-user",
+      MOODLE_PASSWORD: "second-password",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/course/view.php?id=2",
+    });
+  });
+
+  it("exposes an explicitly selected public CIS target without credentials", async () => {
+    const { platform } = await harness();
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "resource-portal",
+      label: "Public CIS resources",
+      url: "https://cis.example.edu/public/resources/",
+      enabled: true,
+      auth: { operation: "set-none" },
+    });
+    const cisId = inventory.sources.at(-1)!.id;
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [cisId],
+      args: ["combined", "https://cis.example.edu/public/resources/"],
+    });
+
+    expect(environment).toMatchObject({
+      CIS_URLS: "https://cis.example.edu/public/resources/",
+      CIS_DASHBOARD_URL: "https://cis.example.edu/public/resources/",
+      STUDY_BUDDY_CIS_URL: "https://cis.example.edu/public/resources/",
+      CIS_BASE_URL: "https://cis.example.edu",
+      CIS_LOGIN_ALLOWED_ORIGINS: "https://cis.example.edu",
+    });
+    expect(environment).not.toHaveProperty("CIS_USERNAME");
+    expect(environment).not.toHaveProperty("CIS_PASSWORD");
+  });
+
   it("skips an unconfigured Moodle source for unrelated calendar workflows", async () => {
     const { platform } = await harness();
     let inventory = await platform.createSource({

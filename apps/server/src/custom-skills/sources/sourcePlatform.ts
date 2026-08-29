@@ -215,21 +215,28 @@ export function createStudyBuddySourcePlatform(
         connection: document.connections.find((entry) => entry.id === source.connectionId),
       }))
       .filter((entry) => Boolean(entry.connection));
-    const matchesRequest = ({ connection }: (typeof candidates)[number]): boolean => {
-      if (!connection || !requestText) return false;
-      const target = new URL(connection.entryPath || "/", connection.displayOrigin).href;
-      return (
-        requestText.includes(connection.displayOrigin.toLowerCase()) ||
-        requestText.includes(target.toLowerCase())
-      );
+    const connectionTarget = ({ connection }: (typeof candidates)[number]): string | null => {
+      if (!connection) return null;
+      return new URL(connection.entryPath || "/", connection.displayOrigin).href.toLowerCase();
     };
+    const matchesExactTarget = (candidate: (typeof candidates)[number]): boolean => {
+      const target = connectionTarget(candidate);
+      return Boolean(target && requestText && requestText.includes(target));
+    };
+    const matchesOrigin = ({ connection }: (typeof candidates)[number]): boolean => {
+      if (!connection || !requestText) return false;
+      return requestText.includes(connection.displayOrigin.toLowerCase());
+    };
+    const targeted = <T extends (typeof candidates)[number]>(
+      entries: readonly T[],
+    ): T | undefined => entries.find(matchesExactTarget) ?? entries.find(matchesOrigin);
     const requested = <T extends (typeof candidates)[number]>(
       entries: readonly T[],
-    ): T | undefined => entries.find(matchesRequest) ?? entries[0];
+    ): T | undefined => targeted(entries) ?? entries[0];
     const environment: Record<string, string> = {};
 
     const moodleCandidates = candidates.filter(({ source }) => source.kind === "moodle-course");
-    const explicitlyRequestedMoodle = moodleCandidates.find(matchesRequest);
+    const explicitlyRequestedMoodle = targeted(moodleCandidates);
     if (
       explicitlyRequestedMoodle &&
       explicitlyRequestedMoodle.connection?.auth.state !== "configured"
@@ -276,15 +283,15 @@ export function createStudyBuddySourcePlatform(
     );
     if (cis?.connection) {
       const secret = await getSecret(config, secrets, cis.connection.id);
+      const target = new URL(cis.connection.entryPath || "/", cis.connection.displayOrigin).href;
+      environment.CIS_URLS = target;
+      environment.CIS_DASHBOARD_URL = target;
+      environment.STUDY_BUDDY_CIS_URL = target;
+      environment.CIS_BASE_URL = cis.connection.displayOrigin;
+      environment.CIS_LOGIN_ALLOWED_ORIGINS = cis.connection.allowedOrigins.join(",");
       if (secret?.type === "password") {
-        const target = new URL(cis.connection.entryPath || "/", cis.connection.displayOrigin).href;
         environment.CIS_USERNAME = secret.username;
         environment.CIS_PASSWORD = secret.password;
-        environment.CIS_URLS = target;
-        environment.CIS_DASHBOARD_URL = target;
-        environment.STUDY_BUDDY_CIS_URL = target;
-        environment.CIS_BASE_URL = cis.connection.displayOrigin;
-        environment.CIS_LOGIN_ALLOWED_ORIGINS = cis.connection.allowedOrigins.join(",");
       }
     }
 
