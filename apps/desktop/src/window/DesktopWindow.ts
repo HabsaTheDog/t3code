@@ -51,6 +51,7 @@ export type DesktopWindowError =
   | ElectronWindow.ElectronWindowCreateError;
 
 export interface DesktopWindowShape {
+  readonly createStartupMain: Effect.Effect<void, DesktopWindowError>;
   readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
   readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
@@ -90,6 +91,64 @@ function getIconOption(
 
 function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+}
+
+function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean): string {
+  const background = shouldUseDarkColors ? "#0b1020" : "#f6f7fb";
+  const document = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+    <meta name="color-scheme" content="${shouldUseDarkColors ? "dark" : "light"}">
+    <title>${displayName}</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+      body {
+        display: grid;
+        place-items: center;
+        background: ${background};
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      .drag-region {
+        position: fixed;
+        inset: 0 0 auto 0;
+        height: ${TITLEBAR_HEIGHT}px;
+        -webkit-app-region: drag;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
+      }
+      svg { width: 64px; height: 64px; }
+      .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid rgb(200 155 60 / 28%);
+        border-top-color: #c89b3c;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="drag-region" aria-hidden="true"></div>
+    <main aria-label="${displayName} is starting">
+      <svg viewBox="0 0 64 64" role="img" aria-label="Study Buddy">
+        <path fill="#c89b3c" d="M4 23 32 9l28 14-28 14L4 23Zm10 9 18 9 18-9v12c-5 5-11 8-18 8s-13-3-18-8V32Z"/>
+        <path fill="#e8c76c" d="M57 25h3v17h-3zM55 42h7v5h-7z"/>
+      </svg>
+      <div class="spinner" role="status" aria-label="Starting Study Buddy"></div>
+    </main>
+  </body>
+</html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(document)}`;
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -170,13 +229,22 @@ const make = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
+  const startupWindows = new WeakSet<Electron.BrowserWindow>();
+  const applicationUrls = new WeakMap<Electron.BrowserWindow, string>();
+  const pendingMenuActions = new WeakMap<Electron.BrowserWindow, string[]>();
+
+  const sendMenuAction = (window: Electron.BrowserWindow, action: string) => {
+    if (window.isDestroyed()) return;
+    window.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
+    void runPromise(electronWindow.reveal(window));
+  };
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
-    backendHttpUrl: URL,
+    initialUrl: string,
+    applicationUrl: string | undefined,
+    openDevTools: boolean,
+    revealImmediately: boolean,
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
-    const applicationUrl = environment.isDevelopment
-      ? yield* resolveDesktopDevServerUrl(environment)
-      : backendHttpUrl.href;
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -261,9 +329,11 @@ const make = Effect.gen(function* () {
       return { action: "deny" };
     });
     window.webContents.on("will-navigate", (event, url) => {
+      const allowedApplicationUrl = applicationUrls.get(window);
       if (
+        allowedApplicationUrl !== undefined &&
         isSameOriginRendererNavigation({
-          applicationUrl,
+          applicationUrl: allowedApplicationUrl,
           navigationUrl: url,
         })
       ) {
@@ -307,19 +377,27 @@ const make = Effect.gen(function* () {
       );
     });
 
-    const revealSubscribers: RevealSubscription[] = [(fire) => window.once("ready-to-show", fire)];
-    if (process.platform === "linux") {
-      revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+    if (!revealImmediately) {
+      const revealSubscribers: RevealSubscription[] = [
+        (fire) => window.once("ready-to-show", fire),
+      ];
+      if (process.platform === "linux") {
+        revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
+      }
+      bindFirstRevealTrigger(revealSubscribers, () => {
+        void runPromise(electronWindow.reveal(window));
+      });
     }
-    bindFirstRevealTrigger(revealSubscribers, () => {
-      void runPromise(electronWindow.reveal(window));
-    });
 
-    if (environment.isDevelopment) {
-      void window.loadURL(applicationUrl);
+    if (applicationUrl !== undefined) {
+      applicationUrls.set(window, applicationUrl);
+    }
+    void window.loadURL(initialUrl);
+    if (revealImmediately) {
+      yield* electronWindow.reveal(window);
+    }
+    if (openDevTools) {
       window.webContents.openDevTools({ mode: "detach" });
-    } else {
-      void window.loadURL(applicationUrl);
     }
 
     window.on("closed", () => {
@@ -329,9 +407,42 @@ const make = Effect.gen(function* () {
     return window;
   });
 
-  const createMain = Effect.gen(function* () {
+  const resolveApplicationUrl = Effect.gen(function* () {
+    if (environment.isDevelopment) {
+      return yield* resolveDesktopDevServerUrl(environment);
+    }
     const backendConfig = yield* serverExposure.backendConfig;
-    const window = yield* createWindow(backendConfig.httpBaseUrl);
+    return backendConfig.httpBaseUrl.href;
+  });
+
+  const loadApplication = Effect.fn("desktop.window.loadApplication")(function* (
+    window: Electron.BrowserWindow,
+  ) {
+    if (!startupWindows.has(window) || window.isDestroyed()) {
+      return;
+    }
+    const applicationUrl = yield* resolveApplicationUrl;
+    startupWindows.delete(window);
+    applicationUrls.set(window, applicationUrl);
+    const queuedActions = pendingMenuActions.get(window) ?? [];
+    pendingMenuActions.delete(window);
+    if (queuedActions.length > 0) {
+      window.webContents.once("did-finish-load", () => {
+        for (const action of queuedActions) sendMenuAction(window, action);
+      });
+    }
+    void window.loadURL(applicationUrl);
+    yield* logWindowInfo("startup window loading main application");
+  });
+
+  const createMain = Effect.gen(function* () {
+    const applicationUrl = yield* resolveApplicationUrl;
+    const window = yield* createWindow(
+      applicationUrl,
+      applicationUrl,
+      environment.isDevelopment,
+      false,
+    );
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
     return window;
@@ -354,12 +465,30 @@ const make = Effect.gen(function* () {
   const createMainIfBackendReady = Effect.gen(function* () {
     const backendReady = yield* Ref.get(state.backendReady);
     if (!backendReady) return;
-    const existingWindow = yield* electronWindow.currentMainOrFirst;
-    if (Option.isSome(existingWindow)) return;
+    const existingWindow = yield* electronWindow.main;
+    if (Option.isSome(existingWindow)) {
+      yield* loadApplication(existingWindow.value);
+      return;
+    }
     yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   return DesktopWindow.of({
+    createStartupMain: Effect.gen(function* () {
+      if (environment.isDevelopment) {
+        return;
+      }
+      const existingWindow = yield* electronWindow.main;
+      if (Option.isSome(existingWindow)) {
+        return;
+      }
+      const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+      const startupUrl = getStartupDocumentUrl(environment.displayName, shouldUseDarkColors);
+      const window = yield* createWindow(startupUrl, undefined, false, true);
+      startupWindows.add(window);
+      yield* electronWindow.setMain(window);
+      yield* logWindowInfo("startup window created");
+    }).pipe(Effect.withSpan("desktop.window.createStartupMain")),
     createMain,
     ensureMain,
     revealOrCreateMain,
@@ -382,11 +511,13 @@ const make = Effect.gen(function* () {
       const existingWindow = yield* electronWindow.focusedMainOrFirst;
       const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* createMain;
 
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
+      if (startupWindows.has(targetWindow)) {
+        const queuedActions = pendingMenuActions.get(targetWindow) ?? [];
+        pendingMenuActions.set(targetWindow, [...queuedActions, action]);
+        return;
+      }
+
+      const send = () => sendMenuAction(targetWindow, action);
 
       if (targetWindow.webContents.isLoadingMainFrame()) {
         targetWindow.webContents.once("did-finish-load", send);

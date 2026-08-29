@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
+import type { LoginCandidateClassifier } from "./loginCandidateClassifier.ts";
+import type { PasswordPortalConnectionInput } from "./portalAuthentication.ts";
 import type { StudyBuddyWebmailRuntime } from "./webmailProfileRuntime.ts";
 
 const temporaryDirectories: string[] = [];
@@ -22,6 +24,8 @@ async function harness(
   options: {
     webmailRuntime?: StudyBuddyWebmailRuntime;
     sourceSecretKey?: string | null;
+    loginCandidateClassifier?: LoginCandidateClassifier;
+    connectPasswordPortal?: (input: PasswordPortalConnectionInput) => Promise<void>;
   } = {},
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), "study-buddy-email-source-"));
@@ -85,6 +89,12 @@ async function harness(
       assertPublicNetworkHost: async () => undefined,
       ...(options.webmailRuntime
         ? { emailBrokerDependencies: { webmailRuntime: options.webmailRuntime } }
+        : {}),
+      ...(options.loginCandidateClassifier
+        ? { loginCandidateClassifier: options.loginCandidateClassifier }
+        : {}),
+      ...(options.connectPasswordPortal
+        ? { connectPasswordPortal: options.connectPasswordPortal }
         : {}),
     }),
   };
@@ -592,5 +602,44 @@ describe("Study Buddy IMAP source configuration", () => {
         senderEmail: "student@example.edu",
       }),
     ).rejects.toThrow("Sending is not available for this email service yet");
+  });
+});
+
+describe("Study Buddy website and resource portal authentication", () => {
+  it("routes password checks through the secure portal broker without persisting credentials", async () => {
+    const classifier: LoginCandidateClassifier = vi.fn(async () => null);
+    const connectPasswordPortal = vi.fn(async () => undefined);
+    const { directory, platform } = await harness({
+      loginCandidateClassifier: classifier,
+      connectPasswordPortal,
+    });
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "resource-portal",
+      label: "Library portal",
+      url: "https://portal.example.edu/login",
+      enabled: true,
+      auth: { operation: "set-password", username: "student", password: "portal-secret" },
+    });
+    const source = inventory.sources.find((entry) => entry.kind === "resource-portal")!;
+
+    await expect(platform.testSource({ sourceId: source.id })).resolves.toMatchObject({
+      status: "success",
+      code: "ok",
+    });
+    expect(connectPasswordPortal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceName: "Library portal",
+        targetUrl: "https://portal.example.edu/login",
+        username: "student",
+        password: "portal-secret",
+        allowedOrigins: ["https://portal.example.edu"],
+        classifyCandidates: classifier,
+        requireCredentialSubmission: true,
+      }),
+    );
+    expect(
+      await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
+    ).not.toContain("portal-secret");
   });
 });

@@ -33,13 +33,16 @@ const environmentInput = {
 
 function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const webContentsOnceListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContents = {
     copyImageAt: vi.fn(),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
     }),
-    once: vi.fn(),
+    once: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+      webContentsOnceListeners.set(eventName, listener);
+    }),
     openDevTools: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
@@ -55,7 +58,7 @@ function makeFakeBrowserWindow() {
     isDestroyed: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     on: vi.fn(),
     once: vi.fn(),
     restore: vi.fn(),
@@ -70,7 +73,9 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     loadURL: window.loadURL,
     openDevTools: webContents.openDevTools,
+    send: webContents.send,
     webContentsListeners,
+    webContentsOnceListeners,
   };
 }
 
@@ -122,11 +127,28 @@ const desktopEnvironmentLayer = DesktopEnvironment.layer(environmentInput).pipe(
   ),
 );
 
+const packagedDesktopEnvironmentLayer = DesktopEnvironment.layer({
+  ...environmentInput,
+  appPath: "/repo/app.asar",
+  isPackaged: true,
+}).pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      DesktopConfig.layerTest({
+        T3CODE_PORT: "3773",
+      }),
+    ),
+  ),
+);
+
 function makeTestLayer(input: {
   readonly window: Electron.BrowserWindow;
   readonly createCount: Ref.Ref<number>;
   readonly mainWindow: Ref.Ref<Option.Option<Electron.BrowserWindow>>;
   readonly openedExternalUrls?: unknown[];
+  readonly packaged?: boolean;
+  readonly revealCount?: Ref.Ref<number>;
 }) {
   const electronWindowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Ref.update(input.createCount, (count) => count + 1).pipe(Effect.as(input.window)),
@@ -135,7 +157,8 @@ function makeTestLayer(input: {
     focusedMainOrFirst: Ref.get(input.mainWindow),
     setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
     clearMain: () => Ref.set(input.mainWindow, Option.none()),
-    reveal: () => Effect.void,
+    reveal: () =>
+      input.revealCount ? Ref.update(input.revealCount, (count) => count + 1) : Effect.void,
     sendAll: () => Effect.void,
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
@@ -145,7 +168,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.packaged ? packagedDesktopEnvironmentLayer : desktopEnvironmentLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
         electronMenuLayer,
@@ -213,6 +236,83 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.deepEqual(fakeWindow.loadURL.mock.calls[0], ["http://127.0.0.1:5733/"]);
         assert.equal(fakeWindow.openDevTools.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect(
+    "shows the centered Study Buddy logo and gold spinner before loading the application",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const revealCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          packaged: true,
+          revealCount,
+        });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createStartupMain;
+
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(yield* Ref.get(revealCount), 1);
+          const startupUrl = fakeWindow.loadURL.mock.calls[0]?.[0];
+          if (typeof startupUrl !== "string") {
+            return yield* Effect.die("startup window URL was not loaded");
+          }
+          assert.isTrue(startupUrl.startsWith("data:text/html;charset=utf-8,"));
+          const startupDocument = decodeURIComponent(startupUrl);
+          assert.include(startupDocument, "place-items: center");
+          assert.include(startupDocument, 'aria-label="Study Buddy"');
+          assert.include(startupDocument, '<svg viewBox="0 0 64 64"');
+          assert.include(startupDocument, 'class="spinner"');
+          assert.include(startupDocument, "border-top-color: #c89b3c");
+          assert.notInclude(startupDocument, "Preparing your workspace…");
+          assert.notInclude(startupDocument, "<h1>");
+          assert.notInclude(startupDocument, 'class="pulse"');
+
+          yield* desktopWindow.handleBackendReady;
+
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:3773/"]);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect("replays menu actions after the startup document becomes the application", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        packaged: true,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createStartupMain;
+        yield* desktopWindow.dispatchMenuAction("open-settings");
+
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
+        yield* desktopWindow.handleBackendReady;
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
+
+        const applicationLoaded = fakeWindow.webContentsOnceListeners.get("did-finish-load");
+        if (!applicationLoaded) {
+          return yield* Effect.die("application load listener was not registered");
+        }
+        applicationLoaded();
+
+        assert.deepEqual(fakeWindow.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
       }).pipe(Effect.provide(layer));
     }),
   );

@@ -30,7 +30,6 @@ import * as Schema from "effect/Schema";
 import { chromium } from "playwright";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
-import { createBrowserLoginConfig, ensureLoggedIn } from "../moodle/browserAuth.ts";
 import {
   BROWSER_RUNTIME_MISSING_CODE,
   isBrowserRuntimeMissingError,
@@ -57,6 +56,14 @@ import {
   discoverStudyBuddyWebmailProvider,
   type StudyBuddyWebmailDiscoveryResult,
 } from "./webmailDiscovery.ts";
+import {
+  createCodexLoginCandidateClassifier,
+  type LoginCandidateClassifier,
+} from "./loginCandidateClassifier.ts";
+import {
+  connectPasswordPortal,
+  type PasswordPortalConnectionInput,
+} from "./portalAuthentication.ts";
 import {
   getSourceSecret as getSecret,
   removeSourceSecret as removeSecret,
@@ -156,6 +163,8 @@ export interface StudyBuddySourcePlatformDependencies {
   readonly discoverWebmailProvider?: (url: string) => Promise<StudyBuddyWebmailDiscoveryResult>;
   readonly emailBrokerDependencies?: StudyBuddyEmailBrokerDependencies;
   readonly assertPublicNetworkHost?: (hostname: string) => Promise<void>;
+  readonly loginCandidateClassifier?: LoginCandidateClassifier;
+  readonly connectPasswordPortal?: (input: PasswordPortalConnectionInput) => Promise<void>;
 }
 
 export function createStudyBuddySourcePlatform(
@@ -168,6 +177,10 @@ export function createStudyBuddySourcePlatform(
     dependencies.discoverWebmailProvider ?? discoverStudyBuddyWebmailProvider;
   const assertPublicNetworkHost =
     dependencies.assertPublicNetworkHost ?? assertPublicNetworkHostname;
+  const classifyLoginCandidates =
+    dependencies.loginCandidateClassifier ??
+    createCodexLoginCandidateClassifier({ model: "gpt-5.6-luna" });
+  const connectPortal = dependencies.connectPasswordPortal ?? connectPasswordPortal;
   let mutationQueue: Promise<void> = Promise.resolve();
 
   const withMutation = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -611,23 +624,16 @@ export function createStudyBuddySourcePlatform(
         executablePath: await resolveSystemBrowserExecutable(),
       });
       try {
-        const page =
-          legacyTarget === "cis"
-            ? await browser.newPage({
-                httpCredentials: { username: secret.username, password: secret.password },
-              })
-            : await browser.newPage();
-        await ensureLoggedIn(
-          page,
-          createBrowserLoginConfig({
-            serviceName: source.label,
-            targetUrl,
-            username: secret.username,
-            password: secret.password,
-            allowedOrigins: connection.allowedOrigins,
-            requireCredentialSubmission: legacyTarget !== "cis",
-          }),
-        );
+        await connectPortal({
+          browser,
+          serviceName: source.label,
+          targetUrl,
+          username: secret.username,
+          password: secret.password,
+          allowedOrigins: connection.allowedOrigins,
+          classifyCandidates: classifyLoginCandidates,
+          requireCredentialSubmission: legacyTarget !== "cis",
+        });
       } finally {
         await browser.close();
       }
