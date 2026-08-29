@@ -43,6 +43,7 @@ import {
 } from "../moodle/calendarConnection.ts";
 import {
   clearLegacyStudyBuddySourceCredentials,
+  publicStudyBuddyConfiguration,
   readStoredStudyBuddyConfiguration,
   updateStudyBuddyConfiguration,
 } from "../moodle/studyBuddyConfig.ts";
@@ -265,7 +266,16 @@ export function createStudyBuddySourcePlatform(
     const requested = <T extends (typeof candidates)[number]>(
       entries: readonly T[],
     ): T | undefined => targeted(entries) ?? entries[0];
-    const environment: Record<string, string> = {};
+    const quiz = publicStudyBuddyConfiguration(
+      await readStoredStudyBuddyConfiguration(config, secrets),
+    ).quiz;
+    const environment: Record<string, string> = {
+      MOODLE_QUIZ_ACCESS_MODE: quiz.accessMode,
+      MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES: String(quiz.minimumTimeLimitMinutes),
+      MOODLE_QUIZ_MIN_ATTEMPTS_LEFT: String(quiz.minimumAttemptsLeft),
+      MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD: String(quiz.fillConfidenceThreshold),
+      MOODLE_QUIZ_BLOCK_FINAL_SUBMIT: "true",
+    };
 
     const moodleCandidates = candidates.filter(({ source }) => source.kind === "moodle-course");
     const explicitlyRequestedMoodle = targeted(moodleCandidates);

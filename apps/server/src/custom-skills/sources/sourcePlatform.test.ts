@@ -325,6 +325,29 @@ describe("Study Buddy source inventory", () => {
     expect(JSON.stringify(await platform.getInventory())).not.toContain(password);
   });
 
+  it("forwards the saved non-secret quiz policy to brokered workflows", async () => {
+    const { directory, platform } = await harness();
+    await writeFile(
+      path.join(directory, ".env.local"),
+      [
+        "MOODLE_QUIZ_ACCESS_MODE=ask-before-attempt",
+        "MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES=17",
+        "MOODLE_QUIZ_MIN_ATTEMPTS_LEFT=3",
+        "MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD=0.92",
+        "MOODLE_QUIZ_BLOCK_FINAL_SUBMIT=true",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(platform.resolveWorkflowEnvironment()).resolves.toMatchObject({
+      MOODLE_QUIZ_ACCESS_MODE: "ask-before-attempt",
+      MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES: "17",
+      MOODLE_QUIZ_MIN_ATTEMPTS_LEFT: "3",
+      MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD: "0.92",
+      MOODLE_QUIZ_BLOCK_FINAL_SUBMIT: "true",
+    });
+  });
+
   it("honors explicit source selection and exposes CIS credentials to brokered workflows", async () => {
     const { platform } = await harness();
     let inventory = await platform.createSource({
