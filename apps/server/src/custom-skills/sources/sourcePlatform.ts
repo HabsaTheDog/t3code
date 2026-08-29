@@ -26,7 +26,6 @@ import * as Schema from "effect/Schema";
 import { chromium } from "playwright";
 import type { ServerSecretStoreShape } from "../../auth/ServerSecretStore.ts";
 import type { ServerConfigShape } from "../../config.ts";
-import { createBrowserLoginConfig, ensureLoggedIn } from "../moodle/browserAuth.ts";
 import { assertPublicHttpsUrl } from "../moodle/browserSecurity.ts";
 import {
   fetchCalendarText,
@@ -45,6 +44,14 @@ import {
   discoverStudyBuddyWebmailProvider,
   type StudyBuddyWebmailDiscoveryResult,
 } from "./webmailDiscovery.ts";
+import {
+  createCodexLoginCandidateClassifier,
+  type LoginCandidateClassifier,
+} from "./loginCandidateClassifier.ts";
+import {
+  connectPasswordPortal,
+  type PasswordPortalConnectionInput,
+} from "./portalAuthentication.ts";
 
 interface StoredSourceDocument {
   version: 1;
@@ -143,6 +150,8 @@ export interface StudyBuddySourcePlatform {
 export interface StudyBuddySourcePlatformDependencies {
   readonly discoverWebmailProvider?: (url: string) => Promise<StudyBuddyWebmailDiscoveryResult>;
   readonly emailBrokerDependencies?: StudyBuddyEmailBrokerDependencies;
+  readonly loginCandidateClassifier?: LoginCandidateClassifier;
+  readonly connectPasswordPortal?: (input: PasswordPortalConnectionInput) => Promise<void>;
 }
 
 export function createStudyBuddySourcePlatform(
@@ -153,6 +162,10 @@ export function createStudyBuddySourcePlatform(
   const registryPath = path.join(config.stateDir, "study-buddy-sources.json");
   const discoverWebmailProvider =
     dependencies.discoverWebmailProvider ?? discoverStudyBuddyWebmailProvider;
+  const classifyLoginCandidates =
+    dependencies.loginCandidateClassifier ??
+    createCodexLoginCandidateClassifier({ model: "gpt-5.6-luna" });
+  const connectPortal = dependencies.connectPasswordPortal ?? connectPasswordPortal;
   let mutationQueue: Promise<void> = Promise.resolve();
 
   const withMutation = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -580,18 +593,16 @@ export function createStudyBuddySourcePlatform(
       }
       const browser = await chromium.launch({ headless: true });
       try {
-        const page = await browser.newPage();
-        await ensureLoggedIn(
-          page,
-          createBrowserLoginConfig({
-            serviceName: source.label,
-            targetUrl,
-            username: secret.username,
-            password: secret.password,
-            allowedOrigins: connection.allowedOrigins,
-            requireCredentialSubmission: true,
-          }),
-        );
+        await connectPortal({
+          browser,
+          serviceName: source.label,
+          targetUrl,
+          username: secret.username,
+          password: secret.password,
+          allowedOrigins: connection.allowedOrigins,
+          classifyCandidates: classifyLoginCandidates,
+          requireCredentialSubmission: true,
+        });
       } finally {
         await browser.close();
       }
