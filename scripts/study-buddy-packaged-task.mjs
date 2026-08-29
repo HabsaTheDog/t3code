@@ -18,6 +18,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { maybeRunBrokeredWorkflow } from "./study-buddy-workflow-client.mjs";
+
+const brokeredExitCode = await maybeRunBrokeredWorkflow(process.argv.slice(2));
+if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 
 const USAGE = `Usage:
   study_buddy_task prompt "<natural language prompt>" [extra args]
@@ -29,6 +33,7 @@ const USAGE = `Usage:
   study_buddy_task interactive-study-guide-resume "<prompt>" <workflow-dir> [extra args]
   study_buddy_task cheat-sheet|assignment-brief|diagnose "<prompt>" [extra args]
   study_buddy_task quiz-url "<moodle quiz url>" [extra args]
+  study_buddy_task source-runtime-probe
   study_buddy_task cancel|status|checkpoint|wait "<run-dir>" [timeout-seconds]
   study_buddy_task root|workspace|data-root|output-root
 `;
@@ -955,6 +960,29 @@ async function main(argv = process.argv.slice(2)) {
   if (action === "status") return printStatus(args[0] ?? "");
   if (action === "checkpoint") return checkpoint(args[0] ?? "");
   if (action === "wait") return waitRun(args[0] ?? "", Number(args[1] ?? 900));
+  if (action === "source-runtime-probe") {
+    const required = [
+      "MOODLE_USERNAME",
+      "MOODLE_PASSWORD",
+      "MOODLE_DASHBOARD_URL",
+      "MOODLE_BASE_URL",
+      "MOODLE_LOGIN_ALLOWED_ORIGINS",
+    ];
+    const missing = required.filter((name) => !process.env[name]?.trim());
+    console.log(
+      JSON.stringify({
+        schemaVersion: 1,
+        status: missing.length === 0 ? "success" : "failed",
+        checks: {
+          brokerExecution: process.env.STUDY_BUDDY_BROKER_EXECUTION === "1",
+          packagedRoot: existsSync(path.join(packagedRoot, "canonical-package.json")),
+          sourceEnvironment: missing.length === 0,
+        },
+        missing,
+      }),
+    );
+    return missing.length === 0 ? 0 : 1;
+  }
 
   const prompt = requirePrompt(args);
   const extra = args.slice(1);

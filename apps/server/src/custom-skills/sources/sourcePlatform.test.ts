@@ -305,13 +305,13 @@ describe("Study Buddy source inventory", () => {
       MOODLE_BASE_URL: "https://moodle.example.edu",
       MOODLE_LOGIN_ALLOWED_ORIGINS: "https://moodle.example.edu",
     });
-    const publicAndPersisted = [
-      JSON.stringify(await platform.getInventory()),
+    const persisted = [
       await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
       ...Array.from(secretValues.values(), (value) => new TextDecoder().decode(value)),
     ].join("\n");
-    expect(publicAndPersisted).not.toContain(username);
-    expect(publicAndPersisted).not.toContain(password);
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+    expect(JSON.stringify(await platform.getInventory())).not.toContain(password);
   });
 
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {

@@ -1,0 +1,112 @@
+// @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned workflow process boundary.
+import path from "node:path";
+
+export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
+  "prompt",
+  "combined",
+  "doc",
+  "extract",
+  "render",
+  "interactive-study-guide",
+  "interactive-study-guide-resume",
+  "cheat-sheet",
+  "assignment-brief",
+  "diagnose",
+  "quiz-url",
+  "source-runtime-probe",
+]);
+
+const MAX_ARGUMENTS = 128;
+const MAX_ARGUMENT_LENGTH = 32_768;
+
+export interface StudyBuddyWorkflowRequest {
+  readonly args: readonly string[];
+  readonly workspace: string;
+  readonly threadId?: string;
+  readonly sourceIds?: readonly string[];
+}
+
+export interface StudyBuddyWorkflowInvocation {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
+}
+
+export interface StudyBuddyWorkflowResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export interface StudyBuddyWorkflowBrokerDependencies {
+  readonly packagedRoot: string;
+  readonly nodeExecutable: string;
+  readonly baseEnvironment: NodeJS.ProcessEnv;
+  readonly resolveWorkflowEnvironment: (input: {
+    readonly sourceIds?: readonly string[];
+  }) => Promise<Record<string, string>>;
+  readonly spawnWorkflow: (
+    invocation: StudyBuddyWorkflowInvocation,
+  ) => Promise<StudyBuddyWorkflowResult>;
+}
+
+function validateRequest(input: StudyBuddyWorkflowRequest): void {
+  const [command] = input.args;
+  if (!command || !BROKERED_STUDY_BUDDY_COMMANDS.has(command)) {
+    throw new Error(`Unsupported Study Buddy workflow command: ${command || "<missing>"}.`);
+  }
+  if (!path.isAbsolute(input.workspace)) {
+    throw new Error("Study Buddy workflow workspace must be an absolute path.");
+  }
+  if (input.args.length > MAX_ARGUMENTS) {
+    throw new Error("Study Buddy workflow has too many arguments.");
+  }
+  if (
+    input.args.some((argument) => argument.length > MAX_ARGUMENT_LENGTH || argument.includes("\0"))
+  ) {
+    throw new Error("Study Buddy workflow contains an invalid argument.");
+  }
+  if (input.sourceIds?.some((sourceId) => !/^source-[a-f0-9-]+$/i.test(sourceId))) {
+    throw new Error("Study Buddy workflow contains an invalid source identifier.");
+  }
+}
+
+function redact(value: string, secrets: readonly string[]): string {
+  return secrets.reduce(
+    (output, secret) => (secret.length >= 3 ? output.split(secret).join("[REDACTED]") : output),
+    value,
+  );
+}
+
+export async function executeStudyBuddyWorkflow(
+  input: StudyBuddyWorkflowRequest,
+  dependencies: StudyBuddyWorkflowBrokerDependencies,
+): Promise<StudyBuddyWorkflowResult> {
+  validateRequest(input);
+  const workflowEnvironment = await dependencies.resolveWorkflowEnvironment(
+    input.sourceIds ? { sourceIds: input.sourceIds } : {},
+  );
+  const result = await dependencies.spawnWorkflow({
+    command: dependencies.nodeExecutable,
+    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...input.args],
+    cwd: input.workspace,
+    environment: {
+      ...dependencies.baseEnvironment,
+      ...workflowEnvironment,
+      ELECTRON_RUN_AS_NODE: "1",
+      STUDY_BUDDY_BROKER_EXECUTION: "1",
+      STUDY_BUDDY_ROOT: dependencies.packagedRoot,
+      STUDY_BUDDY_WORKSPACE: input.workspace,
+      ...(input.threadId ? { STUDY_BUDDY_THREAD_ID: input.threadId } : {}),
+    },
+  });
+  const secretValues = Object.entries(workflowEnvironment).flatMap(([name, value]) =>
+    /(USERNAME|PASSWORD|PASSCODE|TOKEN|SECRET|API_KEY)$/i.test(name) ? [value] : [],
+  );
+  return {
+    exitCode: result.exitCode,
+    stdout: redact(result.stdout, secretValues),
+    stderr: redact(result.stderr, secretValues),
+  };
+}
