@@ -304,6 +304,28 @@ describe("Study Buddy workflow broker", () => {
     expect(result.stdout).not.toContain("123");
   });
 
+  it("redacts JSON-escaped and URL-encoded credential forms", async () => {
+    const secret = 'a"b\\c\n';
+    const result = await executeStudyBuddyWorkflow(
+      { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => ({ MOODLE_PASSWORD: secret }),
+        spawnWorkflow: async () => ({
+          exitCode: 1,
+          stdout: `${JSON.stringify({ password: secret })}\n${encodeURIComponent(secret)}`,
+          stderr: "",
+        }),
+      },
+    );
+
+    expect(result.stdout).not.toContain(JSON.stringify(secret).slice(1, -1));
+    expect(result.stdout).not.toContain(encodeURIComponent(secret));
+    expect(result.stdout).toContain("[REDACTED]");
+  });
+
   it("accepts legacy stable source IDs and redacts private calendar URLs", async () => {
     const calendarUrl = "https://calendar.example.edu/private/token";
     const resolveWorkflowEnvironment = vi.fn(async () => ({ CIS_CALENDAR_URL: calendarUrl }));

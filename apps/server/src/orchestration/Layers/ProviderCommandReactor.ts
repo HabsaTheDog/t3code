@@ -51,6 +51,11 @@ import {
   resolveStudyBuddyEmailApprovalResponse,
   STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID,
 } from "../../custom-skills/sources/emailSendApprovals.ts";
+import {
+  captureStudyBuddyQuizApprovalActivity,
+  resolveStudyBuddyQuizApprovalResponse,
+  STUDY_BUDDY_QUIZ_PERMISSION_QUESTION_ID,
+} from "../../custom-skills/sources/quizApprovals.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 
@@ -950,6 +955,11 @@ const make = Effect.gen(function* () {
               String(event.payload.requestId),
               persistedRequest.payload,
             );
+            captureStudyBuddyQuizApprovalActivity(
+              String(event.payload.threadId),
+              String(event.payload.requestId),
+              persistedRequest.payload,
+            );
           }
           const result = await resolveStudyBuddyEmailApprovalResponse(
             String(event.payload.threadId),
@@ -977,7 +987,7 @@ const make = Effect.gen(function* () {
           requestId: event.payload.requestId,
         });
       }
-      const providerAnswers = emailApproval.failed
+      let providerAnswers = emailApproval.failed
         ? {
             ...event.payload.answers,
             [STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID]: "Do not send",
@@ -989,6 +999,41 @@ const make = Effect.gen(function* () {
                 "Email sent and verified by the Study Buddy server",
             }
           : event.payload.answers;
+
+      const quizApproval = yield* Effect.promise(async () => {
+        try {
+          return {
+            ...resolveStudyBuddyQuizApprovalResponse(
+              String(event.payload.threadId),
+              String(event.payload.requestId),
+              event.payload.answers,
+            ),
+            failed: false as const,
+          };
+        } catch (cause) {
+          return {
+            handled: true,
+            approved: false,
+            failed: true as const,
+            detail: cause instanceof Error ? cause.message : String(cause),
+          };
+        }
+      });
+      if (quizApproval.failed) {
+        yield* appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.user-input.respond.failed",
+          summary: "Quiz access was not approved",
+          detail: quizApproval.detail,
+          turnId: null,
+          createdAt: event.payload.createdAt,
+          requestId: event.payload.requestId,
+        });
+        providerAnswers = {
+          ...providerAnswers,
+          [STUDY_BUDDY_QUIZ_PERMISSION_QUESTION_ID]: "Do not allow",
+        };
+      }
 
       yield* providerService
         .respondToUserInput({

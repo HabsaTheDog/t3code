@@ -225,6 +225,18 @@ export function createStudyBuddySourcePlatform(
       }
     }
     const requestText = (input.args ?? []).join("\n").toLowerCase();
+    const requestUrls = new Set<string>();
+    for (const argument of input.args ?? []) {
+      const candidates = [argument, ...(argument.match(/https?:\/\/[^\s"'<>]+/giu) ?? [])];
+      for (const candidate of candidates) {
+        try {
+          requestUrls.add(new URL(candidate.replace(/[),.;]+$/u, "")).href);
+        } catch {
+          // Non-URL arguments are ordinary workflow text.
+        }
+      }
+    }
+    const requestOrigins = new Set([...requestUrls].map((value) => new URL(value).origin));
     const candidates = document.sources
       .filter((source) => source.enabled && (!selectedIds || selectedIds.has(source.id)))
       .map((source) => ({
@@ -234,15 +246,18 @@ export function createStudyBuddySourcePlatform(
       .filter((entry) => Boolean(entry.connection));
     const connectionTarget = ({ connection }: (typeof candidates)[number]): string | null => {
       if (!connection) return null;
-      return new URL(connection.entryPath || "/", connection.displayOrigin).href.toLowerCase();
+      return new URL(connection.entryPath || "/", connection.displayOrigin).href;
     };
     const matchesExactTarget = (candidate: (typeof candidates)[number]): boolean => {
       const target = connectionTarget(candidate);
-      return Boolean(target && requestText && requestText.includes(target));
+      return Boolean(target && requestUrls.has(target));
     };
     const matchesOrigin = ({ connection }: (typeof candidates)[number]): boolean => {
       if (!connection || !requestText) return false;
-      return requestText.includes(connection.displayOrigin.toLowerCase());
+      return (
+        requestOrigins.has(connection.displayOrigin) ||
+        (requestUrls.size === 0 && requestText.includes(connection.displayOrigin.toLowerCase()))
+      );
     };
     const targeted = <T extends (typeof candidates)[number]>(
       entries: readonly T[],

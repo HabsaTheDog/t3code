@@ -390,7 +390,7 @@ describe("Study Buddy source inventory", () => {
       expectedRevision: inventory.revision,
       kind: "moodle-course",
       label: "Second course",
-      url: "https://moodle.example.edu/course/view.php?id=2",
+      url: "https://moodle.example.edu/course/view.php?id=10",
       enabled: true,
       auth: {
         operation: "set-password",
@@ -400,13 +400,13 @@ describe("Study Buddy source inventory", () => {
     });
 
     const environment = await platform.resolveWorkflowEnvironment({
-      args: ["doc", "--url", "https://moodle.example.edu/course/view.php?id=2"],
+      args: ["doc", "--url", "https://moodle.example.edu/course/view.php?id=10"],
     });
 
     expect(environment).toMatchObject({
       MOODLE_USERNAME: "second-user",
       MOODLE_PASSWORD: "second-password",
-      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/course/view.php?id=2",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/course/view.php?id=10",
     });
   });
 

@@ -97,12 +97,14 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
 }
 
 function redact(value: string, secrets: readonly string[]): string {
-  return [...new Set(secrets)]
+  const variants = secrets.flatMap((secret) =>
+    secret.length > 0
+      ? [secret, JSON.stringify(secret).slice(1, -1), encodeURIComponent(secret)]
+      : [],
+  );
+  return [...new Set(variants)]
     .sort((left, right) => right.length - left.length)
-    .reduce(
-      (output, secret) => (secret.length > 0 ? output.split(secret).join("[REDACTED]") : output),
-      value,
-    );
+    .reduce((output, secret) => output.split(secret).join("[REDACTED]"), value);
 }
 
 async function sanitizeArgumentOverrides(

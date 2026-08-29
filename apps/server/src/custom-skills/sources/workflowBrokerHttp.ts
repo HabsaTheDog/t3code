@@ -19,6 +19,7 @@ import { ProjectionSnapshotQuery } from "../../orchestration/Services/Projection
 import { resolveStudyBuddyCodexPolicyPaths } from "../../provider/setup/studyBuddyCodexPolicy.ts";
 import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
+import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
 import {
   executeStudyBuddyWorkflow,
   type StudyBuddyWorkflowInvocation,
@@ -170,6 +171,7 @@ export async function stageQuizPermissionRequest(input: {
   if (!allowedOrigins.has(new URL(parsed.targetUrl).origin)) {
     throw new Error("Study Buddy quiz permission target is outside the selected Moodle source.");
   }
+  assertStudyBuddyQuizApprovalGrant(parsed);
   const stagingRoot = path.join(input.stateDir, "workflow-approvals");
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   await chmod(stagingRoot, 0o700).catch(() => undefined);

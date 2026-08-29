@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createBrokerExecutionRequest,
@@ -12,6 +12,32 @@ import {
   stageQuizPermissionRequest,
   terminateWorkflowTree,
 } from "./workflowBrokerHttp.ts";
+import {
+  captureStudyBuddyQuizApprovalRequest,
+  clearStudyBuddyQuizApprovalsForTest,
+  resolveStudyBuddyQuizApprovalResponse,
+} from "./quizApprovals.ts";
+
+afterEach(clearStudyBuddyQuizApprovalsForTest);
+
+function approveQuiz(request: Record<string, unknown>): void {
+  const nativeRequestId = `native-${String(request.requestId)}`;
+  captureStudyBuddyQuizApprovalRequest("thread-1", nativeRequestId, [
+    {
+      id: "study_buddy_quiz_permission_v1",
+      header: "Quiz access",
+      question: JSON.stringify(request),
+      multiSelect: false,
+      options: [
+        { label: "Work on quiz (Recommended)", description: "Approve this exact quiz." },
+        { label: "Do not allow", description: "Do not access the quiz." },
+      ],
+    },
+  ]);
+  resolveStudyBuddyQuizApprovalResponse("thread-1", nativeRequestId, {
+    study_buddy_quiz_permission_v1: "Work on quiz (Recommended)",
+  });
+}
 
 describe("Study Buddy workflow broker process termination", () => {
   it("uses taskkill tree termination on Windows", () => {
@@ -109,6 +135,7 @@ describe("Study Buddy quiz permission staging", () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
     await writeFile(requestPath, JSON.stringify(request));
+    approveQuiz(request);
 
     try {
       const stagedPath = await stageQuizPermissionRequest({
@@ -182,19 +209,18 @@ describe("Study Buddy quiz permission staging", () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "study-buddy-quiz-workspace-"));
     const stateDir = await mkdtemp(path.join(os.tmpdir(), "study-buddy-quiz-state-"));
     const requestPath = path.join(workspace, "quiz-permission-request.json");
-    await writeFile(
-      requestPath,
-      JSON.stringify({
-        version: 1,
-        requestId: "nested/../../../outside",
-        owner: "study-buddy",
-        action: "execute_quiz_attempt",
-        scope: "exact_quiz_attempt",
-        status: "pending",
-        targetUrl: "https://moodle.example.test/mod/quiz/view.php?id=7",
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      }),
-    );
+    const request = {
+      version: 1,
+      requestId: "nested/../../../outside",
+      owner: "study-buddy",
+      action: "execute_quiz_attempt",
+      scope: "exact_quiz_attempt",
+      status: "pending",
+      targetUrl: "https://moodle.example.test/mod/quiz/view.php?id=7",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    await writeFile(requestPath, JSON.stringify(request));
+    approveQuiz(request);
 
     try {
       const stagedPath = await stageQuizPermissionRequest({
