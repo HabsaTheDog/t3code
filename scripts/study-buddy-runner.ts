@@ -8,7 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sanitizeStudyBuddyHostEnvironment } from "./lib/study-buddy-environment.ts";
+import {
+  mergeMissingLinuxDesktopEnvironment,
+  parseLinuxDesktopEnvironment,
+  sanitizeStudyBuddyHostEnvironment,
+} from "./lib/study-buddy-environment.ts";
 import { assertStudyBuddyRuntimeIsolation } from "./lib/study-buddy-runtime-isolation.ts";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -186,8 +190,22 @@ function studyBuddyEnv(): NodeJS.ProcessEnv {
   // server, desktop shell, and their provider children read credentials from
   // Study Buddy's owner-only configuration file instead and must never inherit
   // portal values through the host environment.
-  const baseEnvironment =
+  let baseEnvironment =
     command === "moodle" ? { ...process.env } : sanitizeStudyBuddyHostEnvironment(process.env);
+  if (command === "app" && process.platform === "linux") {
+    const systemdEnvironment = spawnSync("systemctl", ["--user", "show-environment"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2_000,
+    });
+    if (systemdEnvironment.status === 0 && typeof systemdEnvironment.stdout === "string") {
+      baseEnvironment = mergeMissingLinuxDesktopEnvironment(
+        baseEnvironment,
+        parseLinuxDesktopEnvironment(systemdEnvironment.stdout),
+        process.platform,
+      );
+    }
+  }
   return {
     ...baseEnvironment,
     T3CODE_PORT_OFFSET: process.env.T3CODE_PORT_OFFSET || DEFAULT_PORT_OFFSET,
