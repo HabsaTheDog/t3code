@@ -13,6 +13,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { resolveStudyBuddyCodexPolicyPaths } from "../../provider/setup/studyBuddyCodexPolicy.ts";
+import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
 import {
   executeStudyBuddyWorkflow,
@@ -153,11 +154,14 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const url = HttpServerRequest.toURL(request);
+        const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
         if (
           config.mode !== "desktop" ||
           Option.isNone(url) ||
+          Option.isNone(runtimeState) ||
           !isLoopbackHostname(url.value.hostname) ||
-          request.headers["x-study-buddy-workflow-client"] !== "1"
+          request.headers["x-study-buddy-workflow-client"] !== "1" ||
+          request.headers["x-study-buddy-workflow-token"] !== runtimeState.value.workflowToken
         ) {
           return HttpServerResponse.jsonUnsafe(
             { message: "Study Buddy workflow request was not authorized." },

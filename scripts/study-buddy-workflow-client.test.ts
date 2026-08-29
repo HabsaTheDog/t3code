@@ -23,7 +23,8 @@ describe("packaged Study Buddy workflow client", () => {
         STUDY_BUDDY_WORKSPACE: path.resolve("/workspace"),
         STUDY_BUDDY_THREAD_ID: "thread-1",
       },
-      readRuntimeState: async () => JSON.stringify({ version: 1, port: 45678 }),
+      readRuntimeState: async () =>
+        JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
       fetchImpl,
       writeStdout: stdout,
       writeStderr: stderr,
@@ -32,7 +33,12 @@ describe("packaged Study Buddy workflow client", () => {
     expect(exitCode).toBe(0);
     expect(fetchImpl).toHaveBeenCalledWith(
       "http://127.0.0.1:45678/api/study-buddy/workflow",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-study-buddy-workflow-token": "a".repeat(43),
+        }),
+      }),
     );
     const request = fetchImpl.mock.calls[0]![1];
     expect(request.body).toBe(

@@ -22,7 +22,9 @@ function validRuntimeState(value) {
     value.version === 1 &&
     Number.isSafeInteger(value.port) &&
     value.port > 0 &&
-    value.port <= 65_535
+    value.port <= 65_535 &&
+    typeof value.workflowToken === "string" &&
+    /^[A-Za-z0-9_-]{43}$/.test(value.workflowToken)
   );
 }
 
@@ -63,6 +65,7 @@ export async function maybeRunBrokeredWorkflow(
         headers: {
           "content-type": "application/json",
           "x-study-buddy-workflow-client": "1",
+          "x-study-buddy-workflow-token": runtimeState.workflowToken,
         },
         body: JSON.stringify({
           args,
