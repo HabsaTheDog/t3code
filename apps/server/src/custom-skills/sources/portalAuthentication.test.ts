@@ -4,17 +4,21 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { chromium, type Browser } from "playwright";
 
+import { resolveSystemBrowserExecutable } from "../moodle/browserRuntime.ts";
 import type { LoginCandidateClassifierInput } from "./loginCandidateClassifier.ts";
 import { connectPasswordPortal } from "./portalAuthentication.ts";
 
-let browser: Browser;
+let browser!: Browser;
 
 beforeAll(async () => {
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: await resolveSystemBrowserExecutable(),
+  });
 });
 
 afterAll(async () => {
-  await browser.close();
+  await browser?.close();
 });
 
 describe("secure password portal authentication", () => {
