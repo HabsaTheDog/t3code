@@ -20,6 +20,33 @@ export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
 const MAX_ARGUMENTS = 128;
 const MAX_ARGUMENT_LENGTH = 32_768;
 
+// These values are owned by the server-side wrapper. Allowing a broker client
+// to append a second occurrence could redirect a credential-bearing workflow
+// to another output tree, executable, or remote source.
+const REJECTED_OVERRIDE_OPTIONS = new Set([
+  "--calendar-url",
+  "--cis-url",
+  "--codex-path",
+  "--deliver-to",
+  "--out",
+  "--request-name",
+  "--run-dir",
+  "--url",
+]);
+
+// These inputs are legitimate for explicit resume/approval flows, but must
+// resolve to an existing object within the active registered workspace.
+const CONTAINED_PATH_OPTIONS = new Set([
+  "--approve-assignment-request",
+  "--approve-quiz-request",
+  "--asset",
+  "--assignment-file",
+  "--resume-extraction-run-dir",
+  "--resume-run-dir",
+  "--source-file",
+  "--source-run-dir",
+]);
+
 export interface StudyBuddyWorkflowRequest {
   readonly args: readonly string[];
   readonly workspace: string;
@@ -85,13 +112,38 @@ function redact(value: string, secrets: readonly string[]): string {
 
 async function validatePathArguments(input: StudyBuddyWorkflowRequest): Promise<void> {
   const [command, , runPath] = input.args;
-  if (!runPath || (command !== "render" && command !== "interactive-study-guide-resume")) {
-    return;
+  const workspace = path.resolve(input.workspace);
+
+  const assertContained = async (candidate: string): Promise<void> => {
+    const resolved = await realpath(path.resolve(workspace, candidate));
+    const relative = path.relative(workspace, resolved);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error("Study Buddy workflow path must stay inside the active workspace.");
+    }
+  };
+
+  if (runPath && (command === "render" || command === "interactive-study-guide-resume")) {
+    await assertContained(runPath);
   }
-  const resolved = await realpath(path.resolve(input.workspace, runPath));
-  const relative = path.relative(input.workspace, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Study Buddy workflow path must stay inside the active workspace.");
+
+  const optionStart = command === "render" || command === "interactive-study-guide-resume" ? 3 : 2;
+  for (let index = optionStart; index < input.args.length; index += 1) {
+    const argument = input.args[index] ?? "";
+    const separator = argument.indexOf("=");
+    const option = separator >= 0 ? argument.slice(0, separator) : argument;
+    const inlineValue = separator >= 0 ? argument.slice(separator + 1) : undefined;
+
+    if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
+      throw new Error(`Study Buddy workflow may not override ${option}.`);
+    }
+    if (!CONTAINED_PATH_OPTIONS.has(option)) continue;
+
+    const candidate = inlineValue ?? input.args[index + 1];
+    if (!candidate || (!inlineValue && candidate.startsWith("--"))) {
+      throw new Error(`Study Buddy workflow option ${option} requires a path.`);
+    }
+    await assertContained(candidate);
+    if (inlineValue === undefined) index += 1;
   }
 }
 

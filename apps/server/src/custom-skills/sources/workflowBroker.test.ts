@@ -112,6 +112,78 @@ describe("Study Buddy workflow broker", () => {
     expect(spawnWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each(["prompt", "combined", "doc", "extract", "interactive-study-guide"])(
+    "rejects wrapper-owned run directory overrides for %s",
+    async (command) => {
+      const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
+      const spawnWorkflow = vi.fn();
+
+      await expect(
+        executeStudyBuddyWorkflow(
+          {
+            args: [command, "test", "--run-dir", process.cwd()],
+            workspace: path.resolve("/registered-workspace"),
+          },
+          {
+            packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+            nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+            baseEnvironment: {},
+            resolveWorkflowEnvironment,
+            spawnWorkflow,
+          },
+        ),
+      ).rejects.toThrow("may not override --run-dir");
+      expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+      expect(spawnWorkflow).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects inline server-owned source URL overrides before resolving secrets", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
+    const spawnWorkflow = vi.fn();
+
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: ["prompt", "test", "--url=https://attacker.example.test/"],
+          workspace: path.resolve("/registered-workspace"),
+        },
+        {
+          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow("may not override --url");
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("rejects path-valued approval inputs outside the workspace", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
+    const spawnWorkflow = vi.fn();
+
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: ["prompt", "test", `--assignment-file=${process.cwd()}`],
+          workspace: path.resolve("/registered-workspace"),
+        },
+        {
+          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow("must stay inside the active workspace");
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
   it("redacts even one-character credentials from workflow output", async () => {
     const result = await executeStudyBuddyWorkflow(
       { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },
