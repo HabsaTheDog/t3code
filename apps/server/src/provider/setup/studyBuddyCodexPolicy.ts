@@ -60,6 +60,7 @@ allow_login_shell = false
 
 [features]
 default_mode_request_user_input = true
+network_proxy = true
 
 [permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}]
 description = "Study Buddy workspace access with credentials denied."
@@ -77,7 +78,12 @@ ${absoluteRules}
 "**/*.credentials" = "deny"
 
 [permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}.network]
-enabled = false
+enabled = true
+mode = "limited"
+allow_local_binding = false
+
+[permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}.network.domains]
+"127.0.0.1" = "allow"
 
 [permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}]
 description = "Read-only Study Buddy analysis with credentials denied."
@@ -95,7 +101,12 @@ ${absoluteRules}
 "**/*.credentials" = "deny"
 
 [permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}.network]
-enabled = false
+enabled = true
+mode = "limited"
+allow_local_binding = false
+
+[permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}.network.domains]
+"127.0.0.1" = "allow"
 
 [shell_environment_policy]
 inherit = "core"
