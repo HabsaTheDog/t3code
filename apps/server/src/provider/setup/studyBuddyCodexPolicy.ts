@@ -14,6 +14,7 @@ export { MINIMUM_STUDY_BUDDY_CODEX_VERSION };
 export interface StudyBuddyCodexPolicyPaths {
   readonly codexHome: string;
   readonly configPath: string;
+  readonly configRoot: string;
   readonly deniedPaths: ReadonlyArray<string>;
 }
 
@@ -37,6 +38,7 @@ export function resolveStudyBuddyCodexPolicyPaths(
   return {
     codexHome,
     configPath: path.join(codexHome, "config.toml"),
+    configRoot: config.stateDir,
     deniedPaths: [
       config.secretsDir,
       path.join(credentialRoot, ".env.local"),
@@ -58,6 +60,7 @@ allow_login_shell = false
 
 [features]
 default_mode_request_user_input = true
+network_proxy = true
 
 [permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}]
 description = "Study Buddy workspace access with credentials denied."
@@ -75,7 +78,12 @@ ${absoluteRules}
 "**/*.credentials" = "deny"
 
 [permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}.network]
-enabled = false
+enabled = true
+mode = "limited"
+allow_local_binding = false
+
+[permissions.${STUDY_BUDDY_CODEX_PERMISSION_PROFILE}.network.domains]
+"127.0.0.1" = "allow"
 
 [permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}]
 description = "Read-only Study Buddy analysis with credentials denied."
@@ -93,12 +101,20 @@ ${absoluteRules}
 "**/*.credentials" = "deny"
 
 [permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}.network]
-enabled = false
+enabled = true
+mode = "limited"
+allow_local_binding = false
+
+[permissions.${STUDY_BUDDY_CODEX_ANALYSIS_PERMISSION_PROFILE}.network.domains]
+"127.0.0.1" = "allow"
 
 [shell_environment_policy]
 inherit = "core"
 ignore_default_excludes = false
 exclude = ["MOODLE_*", "CIS_*", "*PASSWORD*", "*PASSCODE*", "*TOKEN*", "*SECRET*", "*API_KEY*"]
+
+[shell_environment_policy.set]
+STUDY_BUDDY_CONFIG_ROOT = ${tomlString(paths.configRoot)}
 `;
 }
 

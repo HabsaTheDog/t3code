@@ -13,9 +13,28 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { inspectRunContract } from "./study-buddy-packaged-task.mjs";
+import {
+  inspectRunContract,
+  shouldDetachWorkflow,
+  workflowProcessGroupId,
+} from "./study-buddy-packaged-task.mjs";
 
 const adapterPath = fileURLToPath(new URL("./study-buddy-packaged-task.mjs", import.meta.url));
+
+it("keeps brokered Unix workflows in the broker wrapper process group", () => {
+  assert.isFalse(shouldDetachWorkflow({ STUDY_BUDDY_BROKER_EXECUTION: "1" }, "linux"));
+  assert.isTrue(shouldDetachWorkflow({}, "linux"));
+  assert.isFalse(shouldDetachWorkflow({}, "win32"));
+  assert.equal(
+    workflowProcessGroupId(700, { STUDY_BUDDY_BROKER_EXECUTION: "1" }, "linux", 600),
+    600,
+  );
+  assert.equal(workflowProcessGroupId(700, {}, "linux", 600), 700);
+  assert.equal(
+    workflowProcessGroupId(700, { STUDY_BUDDY_BROKER_EXECUTION: "1" }, "win32", 600),
+    700,
+  );
+});
 
 it("uses route-aware packaged completion contracts and rejects stale artifacts", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "study-buddy-packaged-contract-"));

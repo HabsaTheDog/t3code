@@ -43,6 +43,7 @@ import {
 } from "../moodle/calendarConnection.ts";
 import {
   clearLegacyStudyBuddySourceCredentials,
+  publicStudyBuddyConfiguration,
   readStoredStudyBuddyConfiguration,
   updateStudyBuddyConfiguration,
 } from "../moodle/studyBuddyConfig.ts";
@@ -149,6 +150,10 @@ const ADAPTERS: readonly StudyBuddySourceAdapterDescriptor[] = [
 export interface StudyBuddySourcePlatform {
   readonly email: StudyBuddyEmailReadBroker;
   getInventory(): Promise<StudyBuddySourceInventory>;
+  resolveWorkflowEnvironment(input?: {
+    readonly sourceIds?: readonly string[];
+    readonly args?: readonly string[];
+  }): Promise<Record<string, string>>;
   createSource(input: StudyBuddyCreateSourceInput): Promise<StudyBuddySourceInventory>;
   updateSource(input: StudyBuddyUpdateSourceInput): Promise<StudyBuddySourceInventory>;
   deleteSource(input: StudyBuddyDeleteSourceInput): Promise<StudyBuddySourceInventory>;
@@ -194,6 +199,152 @@ export function createStudyBuddySourcePlatform(
 
   const getInventory = async (): Promise<StudyBuddySourceInventory> =>
     publicInventory(config, await materializedDocument(config, registryPath, secrets), secrets);
+
+  const resolveWorkflowEnvironment = async (
+    input: {
+      readonly sourceIds?: readonly string[];
+      readonly args?: readonly string[];
+    } = {},
+  ): Promise<Record<string, string>> => {
+    const document = await materializedDocument(config, registryPath, secrets);
+    const selectedIds = input.sourceIds ? new Set(input.sourceIds) : null;
+    if (selectedIds) {
+      const enabledIds = new Set(
+        document.sources
+          .filter(
+            (source) =>
+              source.enabled &&
+              document.connections.some((connection) => connection.id === source.connectionId),
+          )
+          .map((source) => source.id),
+      );
+      if (
+        selectedIds.size === 0 ||
+        [...selectedIds].some((sourceId) => !enabledIds.has(sourceId))
+      ) {
+        throw sourceError("unavailable", "A selected Study Buddy source is unavailable.");
+      }
+    }
+    const requestText = (input.args ?? []).join("\n").toLowerCase();
+    const requestUrls = new Set<string>();
+    for (const argument of input.args ?? []) {
+      const candidates = [argument, ...(argument.match(/https?:\/\/[^\s"'<>]+/giu) ?? [])];
+      for (const candidate of candidates) {
+        try {
+          requestUrls.add(new URL(candidate.replace(/[),.;]+$/u, "")).href);
+        } catch {
+          // Non-URL arguments are ordinary workflow text.
+        }
+      }
+    }
+    const requestOrigins = new Set([...requestUrls].map((value) => new URL(value).origin));
+    const candidates = document.sources
+      .filter((source) => source.enabled && (!selectedIds || selectedIds.has(source.id)))
+      .map((source) => ({
+        source,
+        connection: document.connections.find((entry) => entry.id === source.connectionId),
+      }))
+      .filter((entry) => Boolean(entry.connection));
+    const connectionTarget = ({ connection }: (typeof candidates)[number]): string | null => {
+      if (!connection) return null;
+      return new URL(connection.entryPath || "/", connection.displayOrigin).href;
+    };
+    const matchesExactTarget = (candidate: (typeof candidates)[number]): boolean => {
+      const target = connectionTarget(candidate);
+      return Boolean(target && requestUrls.has(target));
+    };
+    const matchesOrigin = ({ connection }: (typeof candidates)[number]): boolean => {
+      if (!connection || !requestText) return false;
+      return (
+        requestOrigins.has(connection.displayOrigin) ||
+        (requestUrls.size === 0 && requestText.includes(connection.displayOrigin.toLowerCase()))
+      );
+    };
+    const targeted = <T extends (typeof candidates)[number]>(
+      entries: readonly T[],
+    ): T | undefined => entries.find(matchesExactTarget) ?? entries.find(matchesOrigin);
+    const requested = <T extends (typeof candidates)[number]>(
+      entries: readonly T[],
+    ): T | undefined => targeted(entries) ?? entries[0];
+    const quiz = publicStudyBuddyConfiguration(
+      await readStoredStudyBuddyConfiguration(config, secrets),
+    ).quiz;
+    const environment: Record<string, string> = {
+      MOODLE_QUIZ_ACCESS_MODE: quiz.accessMode,
+      MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES: String(quiz.minimumTimeLimitMinutes),
+      MOODLE_QUIZ_MIN_ATTEMPTS_LEFT: String(quiz.minimumAttemptsLeft),
+      MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD: String(quiz.fillConfidenceThreshold),
+      MOODLE_QUIZ_BLOCK_FINAL_SUBMIT: "true",
+    };
+
+    const moodleCandidates = candidates.filter(({ source }) => source.kind === "moodle-course");
+    const explicitlyRequestedMoodle = targeted(moodleCandidates);
+    if (
+      explicitlyRequestedMoodle &&
+      explicitlyRequestedMoodle.connection?.auth.state !== "configured"
+    ) {
+      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    }
+    const configuredMoodleCandidates = moodleCandidates.filter(
+      ({ connection }) => connection?.auth.state === "configured",
+    );
+    const moodle = explicitlyRequestedMoodle ?? requested(configuredMoodleCandidates);
+    if (!moodle && selectedIds && moodleCandidates.length > 0) {
+      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    }
+    if (moodle?.connection) {
+      const secret = await getSecret(config, secrets, moodle.connection.id);
+      if (secret?.type !== "password") {
+        throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+      }
+      environment.MOODLE_USERNAME = secret.username;
+      environment.MOODLE_PASSWORD = secret.password;
+      const dashboardUrl = new URL(
+        moodle.connection.entryPath || "/",
+        moodle.connection.displayOrigin,
+      ).href;
+      environment.MOODLE_DASHBOARD_URL = dashboardUrl;
+      environment.STUDY_BUDDY_MOODLE_URL = dashboardUrl;
+      environment.MOODLE_BASE_URL = moodle.connection.displayOrigin;
+      environment.MOODLE_LOGIN_ALLOWED_ORIGINS = moodle.connection.allowedOrigins.join(",");
+    }
+
+    const cis = requested(
+      candidates.filter(({ source, connection }) => {
+        if ((source.kind !== "website" && source.kind !== "resource-portal") || !connection) {
+          return false;
+        }
+        const hostname = new URL(connection.displayOrigin).hostname.toLowerCase();
+        return (
+          selectedIds?.has(source.id) === true ||
+          source.id === "legacy-cis" ||
+          connection.adapterId === "legacy-cis" ||
+          hostname.split(".").includes("cis")
+        );
+      }),
+    );
+    if (cis?.connection) {
+      const secret = await getSecret(config, secrets, cis.connection.id);
+      const target = new URL(cis.connection.entryPath || "/", cis.connection.displayOrigin).href;
+      environment.CIS_URLS = target;
+      environment.CIS_DASHBOARD_URL = target;
+      environment.STUDY_BUDDY_CIS_URL = target;
+      environment.CIS_BASE_URL = cis.connection.displayOrigin;
+      environment.CIS_LOGIN_ALLOWED_ORIGINS = cis.connection.allowedOrigins.join(",");
+      if (secret?.type === "password") {
+        environment.CIS_USERNAME = secret.username;
+        environment.CIS_PASSWORD = secret.password;
+      }
+    }
+
+    const calendar = requested(candidates.filter(({ source }) => source.kind === "calendar"));
+    if (calendar?.connection) {
+      const secret = await getSecret(config, secrets, calendar.connection.id);
+      if (secret?.type === "bearer-url") environment.CIS_CALENDAR_URL = secret.value;
+    }
+
+    return environment;
+  };
 
   const resolveEmailAccess = async (
     sourceId: string,
@@ -662,6 +813,7 @@ export function createStudyBuddySourcePlatform(
   return {
     email,
     getInventory,
+    resolveWorkflowEnvironment,
     createSource,
     updateSource,
     deleteSource,

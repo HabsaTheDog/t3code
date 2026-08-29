@@ -291,6 +291,246 @@ describe("Study Buddy source inventory", () => {
     expect(persisted).toContain('"algorithm":"aes-256-gcm"');
   });
 
+  it("resolves encrypted Moodle credentials only inside the server workflow boundary", async () => {
+    const { directory, platform, secretValues } = await harness();
+    const username = "workflow-user-canary";
+    const password = "workflow-password-canary";
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Deterministic Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username, password },
+    });
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [inventory.sources[0]!.id],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: username,
+      MOODLE_PASSWORD: password,
+      MOODLE_DASHBOARD_URL: "https://moodle.example.edu/my/",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/my/",
+      MOODLE_BASE_URL: "https://moodle.example.edu",
+      MOODLE_LOGIN_ALLOWED_ORIGINS: "https://moodle.example.edu",
+    });
+    const persisted = [
+      await readFile(path.join(directory, "state", "study-buddy-sources.json"), "utf8"),
+      ...Array.from(secretValues.values(), (value) => new TextDecoder().decode(value)),
+    ].join("\n");
+    expect(persisted).not.toContain(username);
+    expect(persisted).not.toContain(password);
+    expect(JSON.stringify(await platform.getInventory())).not.toContain(password);
+  });
+
+  it("forwards the saved non-secret quiz policy to brokered workflows", async () => {
+    const { directory, platform } = await harness();
+    await writeFile(
+      path.join(directory, ".env.local"),
+      [
+        "MOODLE_QUIZ_ACCESS_MODE=ask-before-attempt",
+        "MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES=17",
+        "MOODLE_QUIZ_MIN_ATTEMPTS_LEFT=3",
+        "MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD=0.92",
+        "MOODLE_QUIZ_BLOCK_FINAL_SUBMIT=true",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(platform.resolveWorkflowEnvironment()).resolves.toMatchObject({
+      MOODLE_QUIZ_ACCESS_MODE: "ask-before-attempt",
+      MOODLE_QUIZ_MIN_TIME_LIMIT_MINUTES: "17",
+      MOODLE_QUIZ_MIN_ATTEMPTS_LEFT: "3",
+      MOODLE_QUIZ_FILL_CONFIDENCE_THRESHOLD: "0.92",
+      MOODLE_QUIZ_BLOCK_FINAL_SUBMIT: "true",
+    });
+  });
+
+  it("honors explicit source selection and exposes CIS credentials to brokered workflows", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "First Moodle",
+      url: "https://first-moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "first-user", password: "first-password" },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "moodle-course",
+      label: "Selected Moodle",
+      url: "https://selected-moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "selected-user",
+        password: "selected-password",
+      },
+    });
+    const selectedMoodleId = inventory.sources.at(-1)!.id;
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "website",
+      label: "CIS student portal",
+      url: "https://portal.example.edu/admin/",
+      enabled: true,
+      auth: { operation: "set-password", username: "cis-user", password: "cis-password" },
+    });
+    const cisId = inventory.sources.at(-1)!.id;
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [selectedMoodleId, cisId],
+      args: ["combined", "Use https://selected-moodle.example.edu/my/ and CIS"],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: "selected-user",
+      MOODLE_PASSWORD: "selected-password",
+      MOODLE_DASHBOARD_URL: "https://selected-moodle.example.edu/my/",
+      STUDY_BUDDY_MOODLE_URL: "https://selected-moodle.example.edu/my/",
+      CIS_USERNAME: "cis-user",
+      CIS_PASSWORD: "cis-password",
+      CIS_DASHBOARD_URL: "https://portal.example.edu/admin/",
+      STUDY_BUDDY_CIS_URL: "https://portal.example.edu/admin/",
+    });
+    expect(JSON.stringify(environment)).not.toContain("first-password");
+  });
+
+  it("prefers an exact Moodle entry path when sources share an origin", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "First course",
+      url: "https://moodle.example.edu/course/view.php?id=1",
+      enabled: true,
+      auth: { operation: "set-password", username: "first-user", password: "first-password" },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "moodle-course",
+      label: "Second course",
+      url: "https://moodle.example.edu/course/view.php?id=10",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "second-user",
+        password: "second-password",
+      },
+    });
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      args: ["doc", "--url", "https://moodle.example.edu/course/view.php?id=10"],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: "second-user",
+      MOODLE_PASSWORD: "second-password",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/course/view.php?id=10",
+    });
+  });
+
+  it("exposes an explicitly selected public CIS target without credentials", async () => {
+    const { platform } = await harness();
+    const inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "resource-portal",
+      label: "Public CIS resources",
+      url: "https://cis.example.edu/public/resources/",
+      enabled: true,
+      auth: { operation: "set-none" },
+    });
+    const cisId = inventory.sources.at(-1)!.id;
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [cisId],
+      args: ["combined", "https://cis.example.edu/public/resources/"],
+    });
+
+    expect(environment).toMatchObject({
+      CIS_URLS: "https://cis.example.edu/public/resources/",
+      CIS_DASHBOARD_URL: "https://cis.example.edu/public/resources/",
+      STUDY_BUDDY_CIS_URL: "https://cis.example.edu/public/resources/",
+      CIS_BASE_URL: "https://cis.example.edu",
+      CIS_LOGIN_ALLOWED_ORIGINS: "https://cis.example.edu",
+    });
+    expect(environment).not.toHaveProperty("CIS_USERNAME");
+    expect(environment).not.toHaveProperty("CIS_PASSWORD");
+  });
+
+  it("skips an unconfigured Moodle source for unrelated calendar workflows", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Disconnected Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "student", password: "temporary" },
+    });
+    const moodleId = inventory.sources.at(-1)!.id;
+    inventory = await platform.setSourceAuth({
+      expectedRevision: inventory.revision,
+      sourceId: moodleId,
+      operation: "clear",
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "calendar",
+      label: "Personal calendar",
+      url: "https://calendar.example.edu/private.ics?token=calendar-token",
+      enabled: true,
+      auth: {
+        operation: "set-bearer-url",
+        value: "https://calendar.example.edu/private.ics?token=calendar-token",
+      },
+    });
+
+    await expect(
+      platform.resolveWorkflowEnvironment({ args: ["combined", "show my calendar"] }),
+    ).resolves.toMatchObject({
+      CIS_CALENDAR_URL: "https://calendar.example.edu/private.ics?token=calendar-token",
+    });
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [moodleId] })).rejects.toThrow(
+      "Moodle sign-in details are not configured",
+    );
+  });
+
+  it("rejects disabled, deleted, and empty explicit source selections", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "student", password: "password" },
+    });
+    const sourceId = inventory.sources.at(-1)!.id;
+    inventory = await platform.updateSource({
+      expectedRevision: inventory.revision,
+      sourceId,
+      enabled: false,
+    });
+
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [sourceId] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+    inventory = await platform.deleteSource({
+      expectedRevision: inventory.revision,
+      sourceId,
+    });
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [sourceId] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+  });
+
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {
     const { platform, secretValues } = await harness();
     const username = "legacy-user-canary";

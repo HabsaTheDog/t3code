@@ -18,6 +18,10 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { maybeRunBrokeredWorkflow } from "./study-buddy-workflow-client.mjs";
+
+const brokeredExitCode = await maybeRunBrokeredWorkflow(process.argv.slice(2));
+if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 
 const USAGE = `Usage:
   study_buddy_task prompt "<natural language prompt>" [extra args]
@@ -29,6 +33,7 @@ const USAGE = `Usage:
   study_buddy_task interactive-study-guide-resume "<prompt>" <workflow-dir> [extra args]
   study_buddy_task cheat-sheet|assignment-brief|diagnose "<prompt>" [extra args]
   study_buddy_task quiz-url "<moodle quiz url>" [extra args]
+  study_buddy_task source-runtime-probe
   study_buddy_task cancel|status|checkpoint|wait "<run-dir>" [timeout-seconds]
   study_buddy_task root|workspace|data-root|output-root
 `;
@@ -88,6 +93,32 @@ function fail(message, code = 1) {
   console.error(message);
   process.exitCode = code;
   return code;
+}
+
+export function sourceRuntimeProbe(environment = process.env, runtimeRoot = packagedRoot) {
+  const required = [
+    "MOODLE_USERNAME",
+    "MOODLE_PASSWORD",
+    "MOODLE_DASHBOARD_URL",
+    "MOODLE_BASE_URL",
+    "MOODLE_LOGIN_ALLOWED_ORIGINS",
+  ];
+  const missing = required.filter((name) => !environment[name]?.trim());
+  const checks = {
+    brokerExecution: environment.STUDY_BUDDY_BROKER_EXECUTION === "1",
+    packagedRoot: existsSync(path.join(runtimeRoot, "canonical-package.json")),
+    sourceEnvironment: missing.length === 0,
+  };
+  const success = Object.values(checks).every(Boolean);
+  return {
+    exitCode: success ? 0 : 1,
+    payload: {
+      schemaVersion: 1,
+      status: success ? "success" : "failed",
+      checks,
+      missing,
+    },
+  };
 }
 
 function nonEmptyFile(filePath) {
@@ -478,19 +509,34 @@ function resolveScript(scriptName) {
   };
 }
 
-function watchdogArguments(runDir, pid, environment = process.env) {
+export function workflowProcessGroupId(
+  childPid,
+  environment = process.env,
+  platform = process.platform,
+  wrapperPid = process.pid,
+) {
+  return platform !== "win32" && environment.STUDY_BUDDY_BROKER_EXECUTION === "1"
+    ? wrapperPid
+    : childPid;
+}
+
+function watchdogArguments(runDir, pid, environment = process.env, processGroupId = pid) {
   return [
     "--run-dir",
     runDir,
     "--pid",
     String(pid),
     "--process-group-id",
-    String(pid),
+    String(processGroupId),
     "--idle-timeout-ms",
     environment.STUDY_BUDDY_EXTERNAL_IDLE_TIMEOUT_MS ?? "360000",
     "--max-runtime-ms",
     environment.STUDY_BUDDY_EXTERNAL_MAX_RUNTIME_MS ?? "5400000",
   ];
+}
+
+export function shouldDetachWorkflow(environment = process.env, platform = process.platform) {
+  return platform !== "win32" && environment.STUDY_BUDDY_BROKER_EXECUTION !== "1";
 }
 
 function spawnWorkflow(scriptName, args, runDir) {
@@ -500,17 +546,18 @@ function spawnWorkflow(scriptName, args, runDir) {
     cwd: packagedRoot,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     stdio: "inherit",
-    detached: process.platform !== "win32",
+    detached: shouldDetachWorkflow(),
     windowsHide: true,
   });
   if (!child.pid) throw new Error(`Could not start packaged Study Buddy script: ${scriptName}`);
+  const processGroupId = workflowProcessGroupId(child.pid);
   const watchdogLog = openSync(path.join(runDir, "watchdog.log"), "a");
   const watchdog = spawn(
     process.execPath,
     [
       tsx,
       path.join(packagedRoot, "src/custom-skills/moodle/runWatchdogCli.ts"),
-      ...watchdogArguments(runDir, child.pid),
+      ...watchdogArguments(runDir, child.pid, process.env, processGroupId),
     ],
     {
       cwd: packagedRoot,
@@ -526,7 +573,7 @@ function spawnWorkflow(scriptName, args, runDir) {
       {
         wrapper_pid: process.pid,
         child_pid: child.pid,
-        process_group_id: child.pid,
+        process_group_id: processGroupId,
         started_at: utcTimestamp(),
         command: `packaged:${scriptName}`,
       },
@@ -539,6 +586,10 @@ function spawnWorkflow(scriptName, args, runDir) {
     try {
       if (process.platform === "win32") {
         spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      } else if (process.env.STUDY_BUDDY_BROKER_EXECUTION === "1") {
+        // The outer broker signals the shared wrapper process group, which
+        // already includes this child and its watchdog.
+        return;
       } else {
         process.kill(-child.pid, signal);
       }
@@ -955,6 +1006,11 @@ async function main(argv = process.argv.slice(2)) {
   if (action === "status") return printStatus(args[0] ?? "");
   if (action === "checkpoint") return checkpoint(args[0] ?? "");
   if (action === "wait") return waitRun(args[0] ?? "", Number(args[1] ?? 900));
+  if (action === "source-runtime-probe") {
+    const result = sourceRuntimeProbe();
+    console.log(JSON.stringify(result.payload));
+    return result.exitCode;
+  }
 
   const prompt = requirePrompt(args);
   const extra = args.slice(1);

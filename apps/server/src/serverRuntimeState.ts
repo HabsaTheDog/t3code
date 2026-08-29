@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Persists a process-local capability for the packaged workflow broker.
+import { randomBytes } from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,6 +17,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
   port: Schema.Int,
   origin: Schema.String,
   startedAt: Schema.String,
+  workflowToken: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
@@ -42,6 +45,7 @@ export const makePersistedServerRuntimeState = (input: {
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
     startedAt: DateTime.formatIso(now),
+    workflowToken: randomBytes(32).toString("base64url"),
   }));
 
 export const persistServerRuntimeState = (input: {
@@ -51,6 +55,7 @@ export const persistServerRuntimeState = (input: {
   writeFileStringAtomically({
     filePath: input.path,
     contents: `${JSON.stringify(input.state)}\n`,
+    mode: 0o600,
   });
 
 export const clearPersistedServerRuntimeState = (path: string) =>

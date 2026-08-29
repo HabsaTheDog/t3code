@@ -549,42 +549,113 @@ child.once("exit", (code, signal) => {
 
 const NODE_SHIM = `#!/usr/bin/env sh
 set -eu
-: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
+export STUDY_BUDDY_ROOT
+if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
+  echo "Study Buddy could not locate its packaged application executable." >&2
+  exit 1
+fi
 ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$@"
 `;
 
 const NPM_SHIM = `#!/usr/bin/env sh
 set -eu
-: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
-: "\${STUDY_BUDDY_ROOT:?STUDY_BUDDY_ROOT is required}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
+export STUDY_BUDDY_ROOT
+if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
+  echo "Study Buddy could not locate its packaged application executable." >&2
+  exit 1
+fi
 ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$STUDY_BUDDY_ROOT/bin/npm-run.mjs" "$@"
 `;
 
 const PACKAGED_TASK_SHIM = `#!/usr/bin/env sh
 set -eu
-: "\${STUDY_BUDDY_NODE_EXECUTABLE:?STUDY_BUDDY_NODE_EXECUTABLE is required}"
-: "\${STUDY_BUDDY_ROOT:?STUDY_BUDDY_ROOT is required}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
+export STUDY_BUDDY_ROOT
+if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
+  echo "Study Buddy could not locate its packaged application executable." >&2
+  exit 1
+fi
 ELECTRON_RUN_AS_NODE=1 exec "$STUDY_BUDDY_NODE_EXECUTABLE" "$STUDY_BUDDY_ROOT/bin/study_buddy_task.mjs" "$@"
 `;
 
 const WINDOWS_TASK_WRAPPER = `@echo off
-if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
-if "%STUDY_BUDDY_ROOT%"=="" (echo STUDY_BUDDY_ROOT is required. 1>&2 & exit /b 1)
+setlocal
+if not defined STUDY_BUDDY_ROOT for %%I in ("%~dp0..") do set "STUDY_BUDDY_ROOT=%%~fI"
+if not defined STUDY_BUDDY_NODE_EXECUTABLE call :find_app
+if not defined STUDY_BUDDY_NODE_EXECUTABLE (echo Study Buddy could not locate its packaged application executable. 1>&2 & exit /b 1)
 set ELECTRON_RUN_AS_NODE=1
 "%STUDY_BUDDY_NODE_EXECUTABLE%" "%STUDY_BUDDY_ROOT%\\bin\\study_buddy_task.mjs" %*
+exit /b %ERRORLEVEL%
+:find_app
+for %%I in ("%STUDY_BUDDY_ROOT%\\..\\..") do set "STUDY_BUDDY_APP_ROOT=%%~fI"
+for %%N in ("Study Buddy.exe" "Study Buddy (Alpha).exe" "Study Buddy (Beta).exe" "Study Buddy (Nightly).exe") do if exist "%STUDY_BUDDY_APP_ROOT%\\%%~N" set "STUDY_BUDDY_NODE_EXECUTABLE=%STUDY_BUDDY_APP_ROOT%\\%%~N"
+exit /b 0
 `;
 
 const WINDOWS_NODE_SHIM = `@echo off
-if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
+setlocal
+if not defined STUDY_BUDDY_ROOT for %%I in ("%~dp0..") do set "STUDY_BUDDY_ROOT=%%~fI"
+if not defined STUDY_BUDDY_NODE_EXECUTABLE call :find_app
+if not defined STUDY_BUDDY_NODE_EXECUTABLE (echo Study Buddy could not locate its packaged application executable. 1>&2 & exit /b 1)
 set ELECTRON_RUN_AS_NODE=1
 "%STUDY_BUDDY_NODE_EXECUTABLE%" %*
+exit /b %ERRORLEVEL%
+:find_app
+for %%I in ("%STUDY_BUDDY_ROOT%\\..\\..") do set "STUDY_BUDDY_APP_ROOT=%%~fI"
+for %%N in ("Study Buddy.exe" "Study Buddy (Alpha).exe" "Study Buddy (Beta).exe" "Study Buddy (Nightly).exe") do if exist "%STUDY_BUDDY_APP_ROOT%\\%%~N" set "STUDY_BUDDY_NODE_EXECUTABLE=%STUDY_BUDDY_APP_ROOT%\\%%~N"
+exit /b 0
 `;
 
 const WINDOWS_NPM_SHIM = `@echo off
-if "%STUDY_BUDDY_NODE_EXECUTABLE%"=="" (echo STUDY_BUDDY_NODE_EXECUTABLE is required. 1>&2 & exit /b 1)
-if "%STUDY_BUDDY_ROOT%"=="" (echo STUDY_BUDDY_ROOT is required. 1>&2 & exit /b 1)
+setlocal
+if not defined STUDY_BUDDY_ROOT for %%I in ("%~dp0..") do set "STUDY_BUDDY_ROOT=%%~fI"
+if not defined STUDY_BUDDY_NODE_EXECUTABLE call :find_app
+if not defined STUDY_BUDDY_NODE_EXECUTABLE (echo Study Buddy could not locate its packaged application executable. 1>&2 & exit /b 1)
 set ELECTRON_RUN_AS_NODE=1
 "%STUDY_BUDDY_NODE_EXECUTABLE%" "%STUDY_BUDDY_ROOT%\\bin\\npm-run.mjs" %*
+exit /b %ERRORLEVEL%
+:find_app
+for %%I in ("%STUDY_BUDDY_ROOT%\\..\\..") do set "STUDY_BUDDY_APP_ROOT=%%~fI"
+for %%N in ("Study Buddy.exe" "Study Buddy (Alpha).exe" "Study Buddy (Beta).exe" "Study Buddy (Nightly).exe") do if exist "%STUDY_BUDDY_APP_ROOT%\\%%~N" set "STUDY_BUDDY_NODE_EXECUTABLE=%STUDY_BUDDY_APP_ROOT%\\%%~N"
+exit /b 0
 `;
 
 export function shouldPublishDesktopArtifact(entry: string): boolean {
@@ -631,6 +702,10 @@ export const stageWorkflowRuntime = Effect.fn("stageWorkflowRuntime")(function* 
   yield* fs.copyFile(
     fileURLToPath(new URL("./study-buddy-packaged-task.mjs", import.meta.url)),
     path.join(stageRuntimeDir, "bin/study_buddy_task.mjs"),
+  );
+  yield* fs.copyFile(
+    fileURLToPath(new URL("./study-buddy-workflow-client.mjs", import.meta.url)),
+    path.join(stageRuntimeDir, "bin/study-buddy-workflow-client.mjs"),
   );
   yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/npm-run.mjs"), PACKAGED_NPM_RUNNER);
   yield* fs.writeFileString(path.join(stageRuntimeDir, "bin/node"), NODE_SHIM);

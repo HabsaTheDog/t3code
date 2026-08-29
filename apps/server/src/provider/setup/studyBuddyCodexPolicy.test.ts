@@ -29,8 +29,14 @@ describe("Study Buddy Codex policy", () => {
     expect(rendered).toContain('"/state/userdata/secrets" = "deny"');
     expect(rendered).toContain('"/workspace/study-buddy/.env.local" = "deny"');
     expect(rendered).toContain('"**/.env.*" = "deny"');
-    expect(rendered).toContain("enabled = false");
+    expect(rendered).toContain("network_proxy = true");
+    expect(rendered).toContain("enabled = true");
+    expect(rendered).toContain('mode = "limited"');
+    expect(rendered).toContain("allow_local_binding = false");
+    expect(rendered.match(/"127\.0\.0\.1" = "allow"/g)).toHaveLength(2);
+    expect(rendered).not.toContain('"*" = "allow"');
     expect(rendered).toContain('inherit = "core"');
+    expect(rendered).toContain('STUDY_BUDDY_CONFIG_ROOT = "/state/userdata"');
     expect(rendered).toContain("default_mode_request_user_input = true");
   });
 
@@ -69,9 +75,13 @@ describe("Study Buddy Codex policy", () => {
     const rendered = buildStudyBuddyCodexConfig({
       codexHome: "C:\\Users\\Student\\AppData\\Local\\StudyBuddy\\Codex",
       configPath: "ignored",
+      configRoot: "C:\\Users\\Student\\AppData\\Local\\StudyBuddy\\userdata",
       deniedPaths: ["C:\\Users\\Student\\Study Buddy\\.env.local"],
     });
     expect(rendered).toContain('"C:\\\\Users\\\\Student\\\\Study Buddy\\\\.env.local" = "deny"');
+    expect(rendered).toContain(
+      'STUDY_BUDDY_CONFIG_ROOT = "C:\\\\Users\\\\Student\\\\AppData\\\\Local\\\\StudyBuddy\\\\userdata"',
+    );
   });
 
   it("materializes a private app-owned home with an atomic generated config", async () => {

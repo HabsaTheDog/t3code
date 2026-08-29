@@ -56,6 +56,7 @@ import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { captureStudyBuddyEmailApprovalRequest } from "../../custom-skills/sources/emailSendApprovals.ts";
+import { captureStudyBuddyQuizApprovalRequest } from "../../custom-skills/sources/quizApprovals.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -617,6 +618,7 @@ function mapToRuntimeEvents(
         return [];
       }
       captureStudyBuddyEmailApprovalRequest(String(canonicalThreadId), event.requestId, questions);
+      captureStudyBuddyQuizApprovalRequest(String(canonicalThreadId), event.requestId, questions);
       return [
         {
           ...runtimeEventBase(event, canonicalThreadId),
