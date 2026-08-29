@@ -207,6 +207,23 @@ export function createStudyBuddySourcePlatform(
   ): Promise<Record<string, string>> => {
     const document = await materializedDocument(config, registryPath, secrets);
     const selectedIds = input.sourceIds ? new Set(input.sourceIds) : null;
+    if (selectedIds) {
+      const enabledIds = new Set(
+        document.sources
+          .filter(
+            (source) =>
+              source.enabled &&
+              document.connections.some((connection) => connection.id === source.connectionId),
+          )
+          .map((source) => source.id),
+      );
+      if (
+        selectedIds.size === 0 ||
+        [...selectedIds].some((sourceId) => !enabledIds.has(sourceId))
+      ) {
+        throw sourceError("unavailable", "A selected Study Buddy source is unavailable.");
+      }
+    }
     const requestText = (input.args ?? []).join("\n").toLowerCase();
     const candidates = document.sources
       .filter((source) => source.enabled && (!selectedIds || selectedIds.has(source.id)))

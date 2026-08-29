@@ -476,6 +476,38 @@ describe("Study Buddy source inventory", () => {
     );
   });
 
+  it("rejects disabled, deleted, and empty explicit source selections", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "student", password: "password" },
+    });
+    const sourceId = inventory.sources.at(-1)!.id;
+    inventory = await platform.updateSource({
+      expectedRevision: inventory.revision,
+      sourceId,
+      enabled: false,
+    });
+
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [sourceId] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+    inventory = await platform.deleteSource({
+      expectedRevision: inventory.revision,
+      sourceId,
+    });
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [sourceId] })).rejects.toThrow(
+      "selected Study Buddy source is unavailable",
+    );
+  });
+
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {
     const { platform, secretValues } = await harness();
     const username = "legacy-user-canary";

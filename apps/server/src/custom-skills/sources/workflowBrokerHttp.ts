@@ -108,6 +108,21 @@ function decodeRequest(value: unknown): StudyBuddyWorkflowRequest {
   };
 }
 
+export function createBrokerExecutionRequest(
+  input: StudyBuddyWorkflowRequest,
+  canonicalWorkspace: string,
+  makeUuid: () => string = randomUUID,
+): StudyBuddyWorkflowRequest {
+  // The loopback credential authenticates the packaged client, not a specific
+  // Codex thread. Never let a caller choose another thread's data/lock tree;
+  // each privileged broker execution receives a server-owned isolated scope.
+  return {
+    ...input,
+    workspace: canonicalWorkspace,
+    threadId: `broker-${makeUuid()}`,
+  };
+}
+
 export async function stageQuizPermissionRequest(input: {
   readonly requestPath: string;
   readonly workspace: string;
@@ -361,19 +376,16 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
             ) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
             }
-            return executeStudyBuddyWorkflow(
-              { ...input, workspace },
-              {
-                packagedRoot,
-                nodeExecutable,
-                baseEnvironment: safeBaseEnvironment(process.env, codexHome),
-                resolveWorkflowEnvironment: (selection) =>
-                  sourcePlatform.resolveWorkflowEnvironment(selection),
-                stageQuizPermissionRequest: (permission) =>
-                  stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
-                spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
-              },
-            );
+            return executeStudyBuddyWorkflow(createBrokerExecutionRequest(input, workspace), {
+              packagedRoot,
+              nodeExecutable,
+              baseEnvironment: safeBaseEnvironment(process.env, codexHome),
+              resolveWorkflowEnvironment: (selection) =>
+                sourcePlatform.resolveWorkflowEnvironment(selection),
+              stageQuizPermissionRequest: (permission) =>
+                stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
+              spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
+            });
           },
           catch: (cause) => new StudyBuddyWorkflowBrokerRequestError({ cause }),
         }).pipe(Effect.result);

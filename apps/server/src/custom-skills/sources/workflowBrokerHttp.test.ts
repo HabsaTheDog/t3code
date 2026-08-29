@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  createBrokerExecutionRequest,
   spawnWorkflow,
   stageQuizPermissionRequest,
   terminateWorkflowTree,
@@ -70,6 +71,25 @@ describe("Study Buddy workflow broker process termination", () => {
     controller.abort();
 
     await expect(result).resolves.toMatchObject({ exitCode: 1 });
+  });
+});
+
+describe("Study Buddy workflow broker request identity", () => {
+  it("replaces caller-controlled thread ids with a server-owned execution scope", () => {
+    expect(
+      createBrokerExecutionRequest(
+        {
+          args: ["doc", "Build a guide"],
+          workspace: "/caller/workspace",
+          threadId: "another-users-thread",
+        },
+        "/canonical/workspace",
+        () => "00000000-0000-4000-8000-000000000001",
+      ),
+    ).toMatchObject({
+      workspace: "/canonical/workspace",
+      threadId: "broker-00000000-0000-4000-8000-000000000001",
+    });
   });
 });
 
