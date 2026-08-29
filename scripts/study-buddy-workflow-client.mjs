@@ -6,15 +6,14 @@ const BROKERED_COMMANDS = new Set([
   "combined",
   "doc",
   "extract",
-  "render",
   "interactive-study-guide",
-  "interactive-study-guide-resume",
   "cheat-sheet",
   "assignment-brief",
   "diagnose",
   "quiz-url",
   "source-runtime-probe",
 ]);
+const BLOCKED_PATH_COMMANDS = new Set(["render", "interactive-study-guide-resume"]);
 
 function brokerSelection(args, environment) {
   const forwardedArgs = [];
@@ -62,9 +61,16 @@ export async function maybeRunBrokeredWorkflow(
     writeStderr = (value) => new Promise((resolve) => process.stderr.write(value, resolve)),
   } = {},
 ) {
-  if (environment.STUDY_BUDDY_BROKER_EXECUTION === "1" || !BROKERED_COMMANDS.has(args[0])) {
+  if (environment.STUDY_BUDDY_BROKER_EXECUTION === "1") {
     return null;
   }
+  if (BLOCKED_PATH_COMMANDS.has(args[0]) && environment.STUDY_BUDDY_CONFIG_ROOT?.trim()) {
+    await writeStderr(
+      "This path-bearing continuation is unavailable in the packaged app. Use the atomic doc or interactive-study-guide workflow instead.\n",
+    );
+    return 1;
+  }
+  if (!BROKERED_COMMANDS.has(args[0])) return null;
   const selection = brokerSelection(args, environment);
   const configRoot = environment.STUDY_BUDDY_CONFIG_ROOT?.trim();
   if (!configRoot) return null;

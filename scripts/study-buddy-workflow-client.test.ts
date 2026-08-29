@@ -64,6 +64,21 @@ describe("packaged Study Buddy workflow client", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("fails closed for packaged path-bearing continuation commands", async () => {
+    const fetchImpl = vi.fn();
+    const stderr = vi.fn();
+
+    await expect(
+      maybeRunBrokeredWorkflow(["render", "test", "/workspace/run"], {
+        environment: { STUDY_BUDDY_CONFIG_ROOT: path.resolve("/private/state") },
+        fetchImpl,
+        writeStderr: stderr,
+      }),
+    ).resolves.toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("path-bearing continuation"));
+  });
+
   it("passes explicit source selections to the broker without forwarding private flags", async () => {
     const fetchImpl = vi.fn(
       async (_input: unknown, _init?: RequestInit) =>

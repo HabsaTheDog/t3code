@@ -1,7 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Owns the local packaged-workflow process boundary.
 // @effect-diagnostics globalTimers:off -- Native child-process escalation must outlive Effect scopes.
+// @effect-diagnostics globalDate:off -- Permission expiry is wall-clock security state.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { realpath, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import * as Data from "effect/Data";
@@ -27,6 +29,7 @@ import {
 export const STUDY_BUDDY_WORKFLOW_ROUTE = "/api/study-buddy/workflow";
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const PROCESS_TREE_KILL_GRACE_MS = 2_000;
+const MAX_PERMISSION_REQUEST_BYTES = 64 * 1024;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SAFE_BASE_ENVIRONMENT_NAMES = new Set([
   "PATH",
@@ -103,6 +106,66 @@ function decodeRequest(value: unknown): StudyBuddyWorkflowRequest {
     ...(typeof input.threadId === "string" ? { threadId: input.threadId } : {}),
     ...(Array.isArray(input.sourceIds) ? { sourceIds: input.sourceIds as string[] } : {}),
   };
+}
+
+export async function stageQuizPermissionRequest(input: {
+  readonly requestPath: string;
+  readonly workspace: string;
+  readonly workflowEnvironment: Readonly<Record<string, string>>;
+  readonly stateDir: string;
+}): Promise<string> {
+  const sourcePath = await realpath(path.resolve(input.workspace, input.requestPath));
+  const relative = path.relative(input.workspace, sourcePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Study Buddy quiz permission must originate in the active workspace.");
+  }
+  const details = await stat(sourcePath);
+  if (!details.isFile() || details.size <= 0 || details.size > MAX_PERMISSION_REQUEST_BYTES) {
+    throw new Error("Study Buddy quiz permission request has an invalid size or type.");
+  }
+  const parsed = JSON.parse(await readFile(sourcePath, "utf8")) as Record<string, unknown>;
+  if (
+    parsed.version !== 1 ||
+    parsed.owner !== "study-buddy" ||
+    parsed.action !== "execute_quiz_attempt" ||
+    parsed.scope !== "exact_quiz_attempt" ||
+    parsed.status !== "pending" ||
+    typeof parsed.requestId !== "string" ||
+    typeof parsed.targetUrl !== "string" ||
+    typeof parsed.expiresAt !== "string" ||
+    !Number.isFinite(Date.parse(parsed.expiresAt)) ||
+    Date.parse(parsed.expiresAt) <= Date.now()
+  ) {
+    throw new Error("Study Buddy quiz permission request is invalid or expired.");
+  }
+  const allowedOrigins = new Set(
+    [
+      input.workflowEnvironment.STUDY_BUDDY_MOODLE_URL,
+      input.workflowEnvironment.MOODLE_BASE_URL,
+      input.workflowEnvironment.MOODLE_DASHBOARD_URL,
+      ...(input.workflowEnvironment.MOODLE_LOGIN_ALLOWED_ORIGINS ?? "").split(","),
+    ].flatMap((value) => {
+      try {
+        return value?.trim() ? [new URL(value.trim()).origin] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  if (!allowedOrigins.has(new URL(parsed.targetUrl).origin)) {
+    throw new Error("Study Buddy quiz permission target is outside the selected Moodle source.");
+  }
+  const stagingRoot = path.join(input.stateDir, "workflow-approvals");
+  await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
+  await chmod(stagingRoot, 0o700).catch(() => undefined);
+  const stagedPath = path.join(stagingRoot, `quiz-${parsed.requestId}-${randomUUID()}.json`);
+  await writeFile(stagedPath, `${JSON.stringify(parsed, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  await chmod(stagedPath, 0o600).catch(() => undefined);
+  return stagedPath;
 }
 
 interface WorkflowTreeKillResult {
@@ -288,6 +351,8 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                 baseEnvironment: safeBaseEnvironment(process.env, codexHome),
                 resolveWorkflowEnvironment: (selection) =>
                   sourcePlatform.resolveWorkflowEnvironment(selection),
+                stageQuizPermissionRequest: (permission) =>
+                  stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
                 spawnWorkflow,
               },
             );

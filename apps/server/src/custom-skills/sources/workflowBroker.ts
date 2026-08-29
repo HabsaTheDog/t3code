@@ -5,6 +5,7 @@ export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
   "prompt",
   "combined",
   "doc",
+  "extract",
   "interactive-study-guide",
   "cheat-sheet",
   "assignment-brief",
@@ -20,13 +21,10 @@ const MAX_ARGUMENT_LENGTH = 32_768;
 // to append a second occurrence could redirect a credential-bearing workflow
 // to another output tree, executable, or remote source.
 const REJECTED_OVERRIDE_OPTIONS = new Set([
-  "--calendar-url",
-  "--cis-url",
   "--codex-path",
   "--deliver-to",
   "--out",
   "--approve-assignment-request",
-  "--approve-quiz-request",
   "--asset",
   "--assignment-file",
   "--request-name",
@@ -35,8 +33,8 @@ const REJECTED_OVERRIDE_OPTIONS = new Set([
   "--run-dir",
   "--source-file",
   "--source-run-dir",
-  "--url",
 ]);
+const SERVER_SELECTED_SOURCE_OPTIONS = new Set(["--calendar-url", "--cis-url", "--url"]);
 
 export interface StudyBuddyWorkflowRequest {
   readonly args: readonly string[];
@@ -66,6 +64,11 @@ export interface StudyBuddyWorkflowBrokerDependencies {
     readonly sourceIds?: readonly string[];
     readonly args?: readonly string[];
   }) => Promise<Record<string, string>>;
+  readonly stageQuizPermissionRequest?: (input: {
+    readonly requestPath: string;
+    readonly workspace: string;
+    readonly workflowEnvironment: Readonly<Record<string, string>>;
+  }) => Promise<string>;
   readonly spawnWorkflow: (
     invocation: StudyBuddyWorkflowInvocation,
   ) => Promise<StudyBuddyWorkflowResult>;
@@ -101,12 +104,52 @@ function redact(value: string, secrets: readonly string[]): string {
     );
 }
 
-function validateArgumentOverrides(input: StudyBuddyWorkflowRequest): void {
+async function sanitizeArgumentOverrides(
+  input: StudyBuddyWorkflowRequest,
+  dependencies: StudyBuddyWorkflowBrokerDependencies,
+  workflowEnvironment: Readonly<Record<string, string>>,
+): Promise<string[]> {
+  const sanitized = input.args.slice(0, 2);
   for (let index = 2; index < input.args.length; index += 1) {
     const argument = input.args[index] ?? "";
     const separator = argument.indexOf("=");
     const option = separator >= 0 ? argument.slice(0, separator) : argument;
+    const inlineValue = separator >= 0 ? argument.slice(separator + 1) : undefined;
 
+    if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
+      throw new Error(`Study Buddy workflow may not override ${option}.`);
+    }
+    if (SERVER_SELECTED_SOURCE_OPTIONS.has(option)) {
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
+    if (option === "--approve-quiz-request") {
+      const requestPath = inlineValue ?? input.args[index + 1];
+      if (!requestPath || (!inlineValue && requestPath.startsWith("--"))) {
+        throw new Error("Study Buddy workflow option --approve-quiz-request requires a path.");
+      }
+      if (!dependencies.stageQuizPermissionRequest) {
+        throw new Error("Study Buddy quiz permission staging is unavailable.");
+      }
+      const stagedPath = await dependencies.stageQuizPermissionRequest({
+        requestPath,
+        workspace: input.workspace,
+        workflowEnvironment,
+      });
+      sanitized.push("--approve-quiz-request", stagedPath);
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
+    sanitized.push(argument);
+  }
+  return sanitized;
+}
+
+function validateRejectedArgumentOverrides(input: StudyBuddyWorkflowRequest): void {
+  for (let index = 2; index < input.args.length; index += 1) {
+    const argument = input.args[index] ?? "";
+    const separator = argument.indexOf("=");
+    const option = separator >= 0 ? argument.slice(0, separator) : argument;
     if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
       throw new Error(`Study Buddy workflow may not override ${option}.`);
     }
@@ -118,14 +161,15 @@ export async function executeStudyBuddyWorkflow(
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
   validateRequest(input);
-  validateArgumentOverrides(input);
+  validateRejectedArgumentOverrides(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
     args: input.args,
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
   });
+  const sanitizedArgs = await sanitizeArgumentOverrides(input, dependencies, workflowEnvironment);
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
-    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...input.args],
+    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...sanitizedArgs],
     cwd: input.workspace,
     environment: {
       ...dependencies.baseEnvironment,

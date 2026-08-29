@@ -138,27 +138,35 @@ describe("Study Buddy workflow broker", () => {
     },
   );
 
-  it("rejects inline server-owned source URL overrides before resolving secrets", async () => {
+  it("uses a direct URL only for server-side source selection and strips it from the child", async () => {
     const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
-    const spawnWorkflow = vi.fn();
+    let invocation: StudyBuddyWorkflowInvocation | undefined;
+    const spawnWorkflow = vi.fn(async (input: StudyBuddyWorkflowInvocation) => {
+      invocation = input;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
 
-    await expect(
-      executeStudyBuddyWorkflow(
-        {
-          args: ["prompt", "test", "--url=https://attacker.example.test/"],
-          workspace: path.resolve("/registered-workspace"),
-        },
-        {
-          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
-          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
-          baseEnvironment: {},
-          resolveWorkflowEnvironment,
-          spawnWorkflow,
-        },
-      ),
-    ).rejects.toThrow("may not override --url");
-    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
-    expect(spawnWorkflow).not.toHaveBeenCalled();
+    await executeStudyBuddyWorkflow(
+      {
+        args: ["prompt", "test", "--url=https://moodle.example.test/course/1"],
+        workspace: path.resolve("/registered-workspace"),
+      },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment,
+        spawnWorkflow,
+      },
+    );
+    expect(resolveWorkflowEnvironment).toHaveBeenCalledWith({
+      args: ["prompt", "test", "--url=https://moodle.example.test/course/1"],
+    });
+    expect(invocation?.args).toEqual([
+      path.resolve("/application/resources/study-buddy-runtime/bin/study_buddy_task.mjs"),
+      "prompt",
+      "test",
+    ]);
   });
 
   it("rejects path-valued approval inputs outside the workspace", async () => {
@@ -182,6 +190,46 @@ describe("Study Buddy workflow broker", () => {
     ).rejects.toThrow("may not override --assignment-file");
     expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
     expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("replaces an approved quiz request with a server-owned staged copy", async () => {
+    const workflowEnvironment = {
+      MOODLE_PASSWORD: "not-forwarded-in-argv",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.test/my/",
+    };
+    const stageQuizPermissionRequest = vi.fn(async () => "/private/quiz-request.json");
+    let invocation: StudyBuddyWorkflowInvocation | undefined;
+
+    await executeStudyBuddyWorkflow(
+      {
+        args: ["prompt", "quiz", "--approve-quiz-request", "/workspace/request.json"],
+        workspace: path.resolve("/workspace"),
+      },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => workflowEnvironment,
+        stageQuizPermissionRequest,
+        spawnWorkflow: async (input) => {
+          invocation = input;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    expect(stageQuizPermissionRequest).toHaveBeenCalledWith({
+      requestPath: "/workspace/request.json",
+      workspace: path.resolve("/workspace"),
+      workflowEnvironment,
+    });
+    expect(invocation?.args).toEqual([
+      path.resolve("/application/resources/study-buddy-runtime/bin/study_buddy_task.mjs"),
+      "prompt",
+      "quiz",
+      "--approve-quiz-request",
+      "/private/quiz-request.json",
+    ]);
   });
 
   it("redacts even one-character credentials from workflow output", async () => {

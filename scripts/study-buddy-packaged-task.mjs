@@ -509,14 +509,25 @@ function resolveScript(scriptName) {
   };
 }
 
-function watchdogArguments(runDir, pid, environment = process.env) {
+export function workflowProcessGroupId(
+  childPid,
+  environment = process.env,
+  platform = process.platform,
+  wrapperPid = process.pid,
+) {
+  return platform !== "win32" && environment.STUDY_BUDDY_BROKER_EXECUTION === "1"
+    ? wrapperPid
+    : childPid;
+}
+
+function watchdogArguments(runDir, pid, environment = process.env, processGroupId = pid) {
   return [
     "--run-dir",
     runDir,
     "--pid",
     String(pid),
     "--process-group-id",
-    String(pid),
+    String(processGroupId),
     "--idle-timeout-ms",
     environment.STUDY_BUDDY_EXTERNAL_IDLE_TIMEOUT_MS ?? "360000",
     "--max-runtime-ms",
@@ -539,13 +550,14 @@ function spawnWorkflow(scriptName, args, runDir) {
     windowsHide: true,
   });
   if (!child.pid) throw new Error(`Could not start packaged Study Buddy script: ${scriptName}`);
+  const processGroupId = workflowProcessGroupId(child.pid);
   const watchdogLog = openSync(path.join(runDir, "watchdog.log"), "a");
   const watchdog = spawn(
     process.execPath,
     [
       tsx,
       path.join(packagedRoot, "src/custom-skills/moodle/runWatchdogCli.ts"),
-      ...watchdogArguments(runDir, child.pid),
+      ...watchdogArguments(runDir, child.pid, process.env, processGroupId),
     ],
     {
       cwd: packagedRoot,
@@ -561,7 +573,7 @@ function spawnWorkflow(scriptName, args, runDir) {
       {
         wrapper_pid: process.pid,
         child_pid: child.pid,
-        process_group_id: child.pid,
+        process_group_id: processGroupId,
         started_at: utcTimestamp(),
         command: `packaged:${scriptName}`,
       },
@@ -574,6 +586,10 @@ function spawnWorkflow(scriptName, args, runDir) {
     try {
       if (process.platform === "win32") {
         spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      } else if (process.env.STUDY_BUDDY_BROKER_EXECUTION === "1") {
+        // The outer broker signals the shared wrapper process group, which
+        // already includes this child and its watchdog.
+        return;
       } else {
         process.kill(-child.pid, signal);
       }
