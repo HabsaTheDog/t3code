@@ -215,20 +215,34 @@ export function createStudyBuddySourcePlatform(
         connection: document.connections.find((entry) => entry.id === source.connectionId),
       }))
       .filter((entry) => Boolean(entry.connection));
+    const matchesRequest = ({ connection }: (typeof candidates)[number]): boolean => {
+      if (!connection || !requestText) return false;
+      const target = new URL(connection.entryPath || "/", connection.displayOrigin).href;
+      return (
+        requestText.includes(connection.displayOrigin.toLowerCase()) ||
+        requestText.includes(target.toLowerCase())
+      );
+    };
     const requested = <T extends (typeof candidates)[number]>(
       entries: readonly T[],
-    ): T | undefined =>
-      entries.find(({ connection }) => {
-        if (!connection || !requestText) return false;
-        const target = new URL(connection.entryPath || "/", connection.displayOrigin).href;
-        return (
-          requestText.includes(connection.displayOrigin.toLowerCase()) ||
-          requestText.includes(target.toLowerCase())
-        );
-      }) ?? entries[0];
+    ): T | undefined => entries.find(matchesRequest) ?? entries[0];
     const environment: Record<string, string> = {};
 
-    const moodle = requested(candidates.filter(({ source }) => source.kind === "moodle-course"));
+    const moodleCandidates = candidates.filter(({ source }) => source.kind === "moodle-course");
+    const explicitlyRequestedMoodle = moodleCandidates.find(matchesRequest);
+    if (
+      explicitlyRequestedMoodle &&
+      explicitlyRequestedMoodle.connection?.auth.state !== "configured"
+    ) {
+      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    }
+    const configuredMoodleCandidates = moodleCandidates.filter(
+      ({ connection }) => connection?.auth.state === "configured",
+    );
+    const moodle = explicitlyRequestedMoodle ?? requested(configuredMoodleCandidates);
+    if (!moodle && selectedIds && moodleCandidates.length > 0) {
+      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    }
     if (moodle?.connection) {
       const secret = await getSecret(config, secrets, moodle.connection.id);
       if (secret?.type !== "password") {

@@ -136,4 +136,41 @@ describe("Study Buddy quiz permission staging", () => {
       await rm(stateDir, { recursive: true, force: true });
     }
   });
+
+  it("keeps request ids with path separators inside private server state", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "study-buddy-quiz-workspace-"));
+    const stateDir = await mkdtemp(path.join(os.tmpdir(), "study-buddy-quiz-state-"));
+    const requestPath = path.join(workspace, "quiz-permission-request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        version: 1,
+        requestId: "nested/../../../outside",
+        owner: "study-buddy",
+        action: "execute_quiz_attempt",
+        scope: "exact_quiz_attempt",
+        status: "pending",
+        targetUrl: "https://moodle.example.test/mod/quiz/view.php?id=7",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    );
+
+    try {
+      const stagedPath = await stageQuizPermissionRequest({
+        requestPath,
+        workspace,
+        stateDir,
+        workflowEnvironment: {
+          STUDY_BUDDY_MOODLE_URL: "https://moodle.example.test/my/",
+        },
+      });
+
+      const stagingRoot = path.join(stateDir, "workflow-approvals");
+      expect(path.dirname(stagedPath)).toBe(stagingRoot);
+      expect(path.basename(stagedPath)).toMatch(/^quiz-[0-9a-f-]+\.json$/);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
 });

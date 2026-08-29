@@ -158,7 +158,9 @@ export async function stageQuizPermissionRequest(input: {
   const stagingRoot = path.join(input.stateDir, "workflow-approvals");
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 });
   await chmod(stagingRoot, 0o700).catch(() => undefined);
-  const stagedPath = path.join(stagingRoot, `quiz-${parsed.requestId}-${randomUUID()}.json`);
+  // The request id remains part of the staged document for the trusted workflow to
+  // validate, but it must never influence a server-owned filesystem path.
+  const stagedPath = path.join(stagingRoot, `quiz-${randomUUID()}.json`);
   await writeFile(stagedPath, `${JSON.stringify(parsed, null, 2)}\n`, {
     encoding: "utf8",
     flag: "wx",

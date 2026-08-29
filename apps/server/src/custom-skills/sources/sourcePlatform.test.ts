@@ -376,6 +376,44 @@ describe("Study Buddy source inventory", () => {
     expect(JSON.stringify(environment)).not.toContain("first-password");
   });
 
+  it("skips an unconfigured Moodle source for unrelated calendar workflows", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "Disconnected Moodle",
+      url: "https://moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "student", password: "temporary" },
+    });
+    const moodleId = inventory.sources.at(-1)!.id;
+    inventory = await platform.setSourceAuth({
+      expectedRevision: inventory.revision,
+      sourceId: moodleId,
+      operation: "clear",
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "calendar",
+      label: "Personal calendar",
+      url: "https://calendar.example.edu/private.ics?token=calendar-token",
+      enabled: true,
+      auth: {
+        operation: "set-bearer-url",
+        value: "https://calendar.example.edu/private.ics?token=calendar-token",
+      },
+    });
+
+    await expect(
+      platform.resolveWorkflowEnvironment({ args: ["combined", "show my calendar"] }),
+    ).resolves.toMatchObject({
+      CIS_CALENDAR_URL: "https://calendar.example.edu/private.ics?token=calendar-token",
+    });
+    await expect(platform.resolveWorkflowEnvironment({ sourceIds: [moodleId] })).rejects.toThrow(
+      "Moodle sign-in details are not configured",
+    );
+  });
+
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {
     const { platform, secretValues } = await harness();
     const username = "legacy-user-canary";
