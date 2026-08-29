@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Owns the local packaged-workflow process boundary.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -103,6 +103,42 @@ function decodeRequest(value: unknown): StudyBuddyWorkflowRequest {
   };
 }
 
+interface WorkflowTreeKillResult {
+  readonly error?: Error;
+  readonly status: number | null;
+}
+
+type SpawnSyncProcess = (
+  command: string,
+  args: readonly string[],
+  options: { readonly windowsHide: boolean; readonly stdio: "ignore" },
+) => WorkflowTreeKillResult;
+
+export function terminateWorkflowTree(
+  child: Pick<ChildProcess, "pid" | "kill">,
+  platform: NodeJS.Platform = process.platform,
+  spawnSyncProcess: SpawnSyncProcess = spawnSync,
+  killProcess: typeof process.kill = process.kill,
+): void {
+  if (!child.pid) {
+    child.kill();
+    return;
+  }
+  if (platform === "win32") {
+    const result = spawnSyncProcess("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    if (result.error || result.status !== 0) child.kill();
+    return;
+  }
+  try {
+    killProcess(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM");
+  }
+}
+
 function spawnWorkflow(
   invocation: StudyBuddyWorkflowInvocation,
 ): Promise<StudyBuddyWorkflowResult> {
@@ -112,6 +148,7 @@ function spawnWorkflow(
       env: invocation.environment,
       shell: false,
       windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
@@ -121,8 +158,9 @@ function spawnWorkflow(
     const capture = (target: Buffer[], chunk: Buffer) => {
       capturedBytes += chunk.length;
       if (capturedBytes > MAX_CAPTURE_BYTES) {
+        if (outputLimitExceeded) return;
         outputLimitExceeded = true;
-        child.kill();
+        terminateWorkflowTree(child);
         return;
       }
       target.push(chunk);
