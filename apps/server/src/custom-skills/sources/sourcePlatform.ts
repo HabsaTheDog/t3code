@@ -236,10 +236,12 @@ export function createStudyBuddySourcePlatform(
       }
       environment.MOODLE_USERNAME = secret.username;
       environment.MOODLE_PASSWORD = secret.password;
-      environment.MOODLE_DASHBOARD_URL = new URL(
+      const dashboardUrl = new URL(
         moodle.connection.entryPath || "/",
         moodle.connection.displayOrigin,
       ).href;
+      environment.MOODLE_DASHBOARD_URL = dashboardUrl;
+      environment.STUDY_BUDDY_MOODLE_URL = dashboardUrl;
       environment.MOODLE_BASE_URL = moodle.connection.displayOrigin;
       environment.MOODLE_LOGIN_ALLOWED_ORIGINS = moodle.connection.allowedOrigins.join(",");
     }

@@ -312,6 +312,7 @@ describe("Study Buddy source inventory", () => {
       MOODLE_USERNAME: username,
       MOODLE_PASSWORD: password,
       MOODLE_DASHBOARD_URL: "https://moodle.example.edu/my/",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.edu/my/",
       MOODLE_BASE_URL: "https://moodle.example.edu",
       MOODLE_LOGIN_ALLOWED_ORIGINS: "https://moodle.example.edu",
     });
@@ -366,6 +367,7 @@ describe("Study Buddy source inventory", () => {
       MOODLE_USERNAME: "selected-user",
       MOODLE_PASSWORD: "selected-password",
       MOODLE_DASHBOARD_URL: "https://selected-moodle.example.edu/my/",
+      STUDY_BUDDY_MOODLE_URL: "https://selected-moodle.example.edu/my/",
       CIS_USERNAME: "cis-user",
       CIS_PASSWORD: "cis-password",
       CIS_DASHBOARD_URL: "https://cis.example.edu/cis.php/",

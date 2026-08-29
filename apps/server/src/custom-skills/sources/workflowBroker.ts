@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned workflow process boundary.
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
@@ -80,11 +81,24 @@ function redact(value: string, secrets: readonly string[]): string {
   );
 }
 
+async function validatePathArguments(input: StudyBuddyWorkflowRequest): Promise<void> {
+  const [command, , runPath] = input.args;
+  if (!runPath || (command !== "render" && command !== "interactive-study-guide-resume")) {
+    return;
+  }
+  const resolved = await realpath(path.resolve(input.workspace, runPath));
+  const relative = path.relative(input.workspace, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Study Buddy workflow path must stay inside the active workspace.");
+  }
+}
+
 export async function executeStudyBuddyWorkflow(
   input: StudyBuddyWorkflowRequest,
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
   validateRequest(input);
+  await validatePathArguments(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
     args: input.args,
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),

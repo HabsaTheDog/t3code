@@ -93,4 +93,28 @@ describe("packaged Study Buddy workflow client", () => {
       sourceIds: ["source-aabb-1234"],
     });
   });
+
+  it("waits for broker output writers to drain before returning", async () => {
+    let stdoutDrained = false;
+    const exitCode = await maybeRunBrokeredWorkflow(["diagnose", "test"], {
+      environment: {
+        STUDY_BUDDY_CONFIG_ROOT: path.resolve("/private/state"),
+        STUDY_BUDDY_WORKSPACE: path.resolve("/workspace"),
+      },
+      readRuntimeState: async () =>
+        JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ exitCode: 0, stdout: "complete", stderr: "" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      writeStdout: async () => {
+        await Promise.resolve();
+        stdoutDrained = true;
+      },
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdoutDrained).toBe(true);
+  });
 });

@@ -89,6 +89,29 @@ describe("Study Buddy workflow broker", () => {
     expect(spawnWorkflow).not.toHaveBeenCalled();
   });
 
+  it("rejects resume paths outside the registered workspace before resolving secrets", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
+    const spawnWorkflow = vi.fn();
+
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: ["interactive-study-guide-resume", "continue", process.cwd()],
+          workspace: path.resolve("/registered-workspace"),
+        },
+        {
+          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow("must stay inside the active workspace");
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
   it("redacts even one-character credentials from workflow output", async () => {
     const result = await executeStudyBuddyWorkflow(
       { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },

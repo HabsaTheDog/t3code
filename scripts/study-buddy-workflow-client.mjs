@@ -58,8 +58,8 @@ export async function maybeRunBrokeredWorkflow(
     cwd = process.cwd(),
     readRuntimeState = (filePath) => readFile(filePath, "utf8"),
     fetchImpl = globalThis.fetch,
-    writeStdout = (value) => process.stdout.write(value),
-    writeStderr = (value) => process.stderr.write(value),
+    writeStdout = (value) => new Promise((resolve) => process.stdout.write(value, resolve)),
+    writeStderr = (value) => new Promise((resolve) => process.stderr.write(value, resolve)),
   } = {},
 ) {
   if (environment.STUDY_BUDDY_BROKER_EXECUTION === "1" || !BROKERED_COMMANDS.has(args[0])) {
@@ -73,11 +73,13 @@ export async function maybeRunBrokeredWorkflow(
   try {
     runtimeState = JSON.parse(await readRuntimeState(path.join(configRoot, "server-runtime.json")));
   } catch {
-    writeStderr("Study Buddy's local workflow service is not ready. Restart the app and retry.\n");
+    await writeStderr(
+      "Study Buddy's local workflow service is not ready. Restart the app and retry.\n",
+    );
     return 1;
   }
   if (!validRuntimeState(runtimeState)) {
-    writeStderr("Study Buddy's local workflow service information is invalid.\n");
+    await writeStderr("Study Buddy's local workflow service information is invalid.\n");
     return 1;
   }
 
@@ -103,16 +105,16 @@ export async function maybeRunBrokeredWorkflow(
     );
     const result = await response.json();
     if (!response.ok || typeof result?.exitCode !== "number") {
-      writeStderr(
+      await writeStderr(
         `${typeof result?.message === "string" ? result.message : "Study Buddy's local workflow service rejected the request."}\n`,
       );
       return 1;
     }
-    if (typeof result.stdout === "string" && result.stdout) writeStdout(result.stdout);
-    if (typeof result.stderr === "string" && result.stderr) writeStderr(result.stderr);
+    if (typeof result.stdout === "string" && result.stdout) await writeStdout(result.stdout);
+    if (typeof result.stderr === "string" && result.stderr) await writeStderr(result.stderr);
     return result.exitCode;
   } catch {
-    writeStderr(
+    await writeStderr(
       "Study Buddy's local workflow service could not be reached. Restart the app and retry.\n",
     );
     return 1;
