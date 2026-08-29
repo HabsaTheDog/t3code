@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Owns the local packaged-workflow process boundary.
+// @effect-diagnostics globalTimers:off -- Native child-process escalation must outlive Effect scopes.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
@@ -25,6 +26,7 @@ import {
 
 export const STUDY_BUDDY_WORKFLOW_ROUTE = "/api/study-buddy/workflow";
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
+const PROCESS_TREE_KILL_GRACE_MS = 2_000;
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const SAFE_BASE_ENVIRONMENT_NAMES = new Set([
   "PATH",
@@ -119,10 +121,10 @@ export function terminateWorkflowTree(
   platform: NodeJS.Platform = process.platform,
   spawnSyncProcess: SpawnSyncProcess = spawnSync,
   killProcess: typeof process.kill = process.kill,
-): void {
+): (() => void) | undefined {
   if (!child.pid) {
     child.kill();
-    return;
+    return undefined;
   }
   if (platform === "win32") {
     const result = spawnSyncProcess("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
@@ -130,13 +132,22 @@ export function terminateWorkflowTree(
       stdio: "ignore",
     });
     if (result.error || result.status !== 0) child.kill();
-    return;
+    return undefined;
   }
   try {
     killProcess(-child.pid, "SIGTERM");
   } catch {
     child.kill("SIGTERM");
   }
+  const escalation = setTimeout(() => {
+    try {
+      killProcess(-child.pid!, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+  }, PROCESS_TREE_KILL_GRACE_MS);
+  escalation.unref();
+  return () => clearTimeout(escalation);
 }
 
 function spawnWorkflow(
@@ -155,12 +166,13 @@ function spawnWorkflow(
     const stderr: Buffer[] = [];
     let capturedBytes = 0;
     let outputLimitExceeded = false;
+    let cancelKillEscalation: (() => void) | undefined;
     const capture = (target: Buffer[], chunk: Buffer) => {
       capturedBytes += chunk.length;
       if (capturedBytes > MAX_CAPTURE_BYTES) {
         if (outputLimitExceeded) return;
         outputLimitExceeded = true;
-        terminateWorkflowTree(child);
+        cancelKillEscalation = terminateWorkflowTree(child);
         return;
       }
       target.push(chunk);
@@ -169,6 +181,7 @@ function spawnWorkflow(
     child.stderr.on("data", (chunk: Buffer) => capture(stderr, chunk));
     child.once("error", reject);
     child.once("close", (code) => {
+      cancelKillEscalation?.();
       resolve({
         exitCode: outputLimitExceeded ? 1 : (code ?? 1),
         stdout: Buffer.concat(stdout).toString("utf8"),

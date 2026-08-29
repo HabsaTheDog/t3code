@@ -27,12 +27,22 @@ describe("Study Buddy workflow broker process termination", () => {
   });
 
   it("terminates the detached process group on Unix-like systems", () => {
+    vi.useFakeTimers();
     const kill = vi.fn(() => true);
     const killProcess = vi.fn(() => true) as unknown as typeof process.kill;
 
-    terminateWorkflowTree({ pid: 777, kill }, "linux", undefined, killProcess);
+    const cancelEscalation = terminateWorkflowTree(
+      { pid: 777, kill },
+      "linux",
+      undefined,
+      killProcess,
+    );
 
     expect(killProcess).toHaveBeenCalledWith(-777, "SIGTERM");
+    vi.advanceTimersByTime(2_000);
+    expect(killProcess).toHaveBeenCalledWith(-777, "SIGKILL");
     expect(kill).not.toHaveBeenCalled();
+    cancelEscalation?.();
+    vi.useRealTimers();
   });
 });

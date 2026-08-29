@@ -110,20 +110,22 @@ function redact(value: string, secrets: readonly string[]): string {
     );
 }
 
-async function validatePathArguments(input: StudyBuddyWorkflowRequest): Promise<void> {
+async function sanitizePathArguments(input: StudyBuddyWorkflowRequest): Promise<string[]> {
   const [command, , runPath] = input.args;
   const workspace = path.resolve(input.workspace);
+  const sanitizedArgs = [...input.args];
 
-  const assertContained = async (candidate: string): Promise<void> => {
+  const resolveContained = async (candidate: string): Promise<string> => {
     const resolved = await realpath(path.resolve(workspace, candidate));
     const relative = path.relative(workspace, resolved);
     if (relative.startsWith("..") || path.isAbsolute(relative)) {
       throw new Error("Study Buddy workflow path must stay inside the active workspace.");
     }
+    return resolved;
   };
 
   if (runPath && (command === "render" || command === "interactive-study-guide-resume")) {
-    await assertContained(runPath);
+    sanitizedArgs[2] = await resolveContained(runPath);
   }
 
   const optionStart = command === "render" || command === "interactive-study-guide-resume" ? 3 : 2;
@@ -142,9 +144,15 @@ async function validatePathArguments(input: StudyBuddyWorkflowRequest): Promise<
     if (!candidate || (!inlineValue && candidate.startsWith("--"))) {
       throw new Error(`Study Buddy workflow option ${option} requires a path.`);
     }
-    await assertContained(candidate);
-    if (inlineValue === undefined) index += 1;
+    const resolved = await resolveContained(candidate);
+    if (inlineValue === undefined) {
+      sanitizedArgs[index + 1] = resolved;
+      index += 1;
+    } else {
+      sanitizedArgs[index] = `${option}=${resolved}`;
+    }
   }
+  return sanitizedArgs;
 }
 
 export async function executeStudyBuddyWorkflow(
@@ -152,14 +160,14 @@ export async function executeStudyBuddyWorkflow(
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
   validateRequest(input);
-  await validatePathArguments(input);
+  const sanitizedArgs = await sanitizePathArguments(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
-    args: input.args,
+    args: sanitizedArgs,
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
   });
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
-    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...input.args],
+    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...sanitizedArgs],
     cwd: input.workspace,
     environment: {
       ...dependencies.baseEnvironment,
