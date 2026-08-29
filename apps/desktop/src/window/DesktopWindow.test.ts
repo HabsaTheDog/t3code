@@ -235,39 +235,49 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("shows packaged startup feedback before loading the backend application", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const revealCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = makeTestLayer({
-        window: fakeWindow.window,
-        createCount,
-        mainWindow,
-        packaged: true,
-        revealCount,
-      });
+  it.effect(
+    "shows the centered Study Buddy logo and gold spinner before loading the application",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const revealCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          packaged: true,
+          revealCount,
+        });
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        yield* desktopWindow.createStartupMain;
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createStartupMain;
 
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(yield* Ref.get(revealCount), 1);
-        const startupUrl = fakeWindow.loadURL.mock.calls[0]?.[0];
-        if (typeof startupUrl !== "string") {
-          return yield* Effect.die("startup window URL was not loaded");
-        }
-        assert.isTrue(startupUrl.startsWith("data:text/html;charset=utf-8,"));
-        assert.include(decodeURIComponent(startupUrl), "Preparing your workspace…");
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.equal(yield* Ref.get(revealCount), 1);
+          const startupUrl = fakeWindow.loadURL.mock.calls[0]?.[0];
+          if (typeof startupUrl !== "string") {
+            return yield* Effect.die("startup window URL was not loaded");
+          }
+          assert.isTrue(startupUrl.startsWith("data:text/html;charset=utf-8,"));
+          const startupDocument = decodeURIComponent(startupUrl);
+          assert.include(startupDocument, "place-items: center");
+          assert.include(startupDocument, 'aria-label="Study Buddy"');
+          assert.include(startupDocument, '<svg viewBox="0 0 64 64"');
+          assert.include(startupDocument, 'class="spinner"');
+          assert.include(startupDocument, "border-top-color: #c89b3c");
+          assert.notInclude(startupDocument, "Preparing your workspace…");
+          assert.notInclude(startupDocument, "<h1>");
+          assert.notInclude(startupDocument, 'class="pulse"');
 
-        yield* desktopWindow.handleBackendReady;
+          yield* desktopWindow.handleBackendReady;
 
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:3773/"]);
-      }).pipe(Effect.provide(layer));
-    }),
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:3773/"]);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>

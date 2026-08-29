@@ -95,9 +95,6 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean): string {
   const background = shouldUseDarkColors ? "#0b1020" : "#f6f7fb";
-  const foreground = shouldUseDarkColors ? "#f8fafc" : "#111827";
-  const muted = shouldUseDarkColors ? "#a8b0c4" : "#667085";
-  const surface = shouldUseDarkColors ? "#151c31" : "#ffffff";
   const document = `<!doctype html>
 <html lang="en">
   <head>
@@ -111,9 +108,7 @@ function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean
       body {
         display: grid;
         place-items: center;
-        color: ${foreground};
         background: ${background};
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         -webkit-user-select: none;
         user-select: none;
       }
@@ -124,36 +119,22 @@ function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean
         -webkit-app-region: drag;
       }
       main {
-        min-width: 280px;
-        padding: 34px 42px;
-        text-align: center;
-        border: 1px solid color-mix(in srgb, ${muted} 24%, transparent);
-        border-radius: 22px;
-        background: ${surface};
-        box-shadow: 0 24px 70px rgb(0 0 0 / 18%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 18px;
       }
-      svg { width: 66px; height: 66px; margin-bottom: 16px; }
-      h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
-      p { margin: 9px 0 0; color: ${muted}; font-size: 14px; }
-      .pulse {
-        width: 34px;
-        height: 3px;
-        margin: 22px auto 0;
-        overflow: hidden;
-        border-radius: 999px;
-        background: color-mix(in srgb, ${muted} 22%, transparent);
+      svg { width: 64px; height: 64px; }
+      .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid rgb(200 155 60 / 28%);
+        border-top-color: #c89b3c;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
       }
-      .pulse::after {
-        content: "";
-        display: block;
-        width: 45%;
-        height: 100%;
-        border-radius: inherit;
-        background: #c89b3c;
-        animation: loading 1.1s ease-in-out infinite alternate;
-      }
-      @keyframes loading { to { transform: translateX(122%); } }
-      @media (prefers-reduced-motion: reduce) { .pulse::after { animation: none; width: 100%; } }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
     </style>
   </head>
   <body>
@@ -163,9 +144,7 @@ function getStartupDocumentUrl(displayName: string, shouldUseDarkColors: boolean
         <path fill="#c89b3c" d="M4 23 32 9l28 14-28 14L4 23Zm10 9 18 9 18-9v12c-5 5-11 8-18 8s-13-3-18-8V32Z"/>
         <path fill="#e8c76c" d="M57 25h3v17h-3zM55 42h7v5h-7z"/>
       </svg>
-      <h1>${displayName}</h1>
-      <p>Preparing your workspace…</p>
-      <div class="pulse" aria-hidden="true"></div>
+      <div class="spinner" role="status" aria-label="Starting Study Buddy"></div>
     </main>
   </body>
 </html>`;
