@@ -211,9 +211,20 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                 .filter((thread) => thread.deletedAt === null && thread.worktreePath)
                 .map((thread) => thread.worktreePath!),
             ];
+            const canonicalAllowedRoots = (
+              await Promise.all(
+                allowedWorkspaceRoots.map(async (allowedRoot) => {
+                  try {
+                    return await realpath(path.resolve(allowedRoot));
+                  } catch {
+                    return null;
+                  }
+                }),
+              )
+            ).filter((allowedRoot): allowedRoot is string => allowedRoot !== null);
             if (
-              !allowedWorkspaceRoots.some(
-                (allowedRoot) => path.relative(path.resolve(allowedRoot), workspace) === "",
+              !canonicalAllowedRoots.some(
+                (allowedRoot) => path.relative(allowedRoot, workspace) === "",
               )
             ) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
