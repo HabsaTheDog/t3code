@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - This test exercises the dependency-free packaged Node client directly.
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vite-plus/test";
