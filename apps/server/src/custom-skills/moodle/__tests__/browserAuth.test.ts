@@ -24,7 +24,7 @@ describe("ensureLoggedIn connection validation", () => {
     ).rejects.toThrow("HTTP 503");
   });
 
-  it("fills explicit Moodle/CIS login fields and succeeds once the form disappears", async () => {
+  it("prefers explicit password login when an optional passkey control is also visible", async () => {
     let currentUrl = "https://moodle.example/login/index.php";
     const filled: Array<{ selector: string; value: string }> = [];
     const loginSelectors = new Set([
@@ -35,6 +35,7 @@ describe("ensureLoggedIn connection validation", () => {
       "input[name='password']",
       "button[type='submit']",
       "input[type='submit']",
+      "button[data-testid*='passkey' i]",
     ]);
 
     const page = {

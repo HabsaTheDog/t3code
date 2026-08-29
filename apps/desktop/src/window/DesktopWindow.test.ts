@@ -33,13 +33,16 @@ const environmentInput = {
 
 function makeFakeBrowserWindow() {
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
+  const webContentsOnceListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContents = {
     copyImageAt: vi.fn(),
     isLoadingMainFrame: vi.fn(() => false),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       webContentsListeners.set(eventName, listener);
     }),
-    once: vi.fn(),
+    once: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
+      webContentsOnceListeners.set(eventName, listener);
+    }),
     openDevTools: vi.fn(),
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
@@ -70,7 +73,9 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     loadURL: window.loadURL,
     openDevTools: webContents.openDevTools,
+    send: webContents.send,
     webContentsListeners,
+    webContentsOnceListeners,
   };
 }
 
@@ -278,6 +283,38 @@ describe("DesktopWindow", () => {
           assert.deepEqual(fakeWindow.loadURL.mock.calls[1], ["http://127.0.0.1:3773/"]);
         }).pipe(Effect.provide(layer));
       }),
+  );
+
+  it.effect("replays menu actions after the startup document becomes the application", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        packaged: true,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createStartupMain;
+        yield* desktopWindow.dispatchMenuAction("open-settings");
+
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
+        yield* desktopWindow.handleBackendReady;
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
+
+        const applicationLoaded = fakeWindow.webContentsOnceListeners.get("did-finish-load");
+        if (!applicationLoaded) {
+          return yield* Effect.die("application load listener was not registered");
+        }
+        applicationLoaded();
+
+        assert.deepEqual(fakeWindow.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>

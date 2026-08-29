@@ -231,6 +231,13 @@ const make = Effect.gen(function* () {
   const runPromise = Effect.runPromiseWith(context);
   const startupWindows = new WeakSet<Electron.BrowserWindow>();
   const applicationUrls = new WeakMap<Electron.BrowserWindow, string>();
+  const pendingMenuActions = new WeakMap<Electron.BrowserWindow, string[]>();
+
+  const sendMenuAction = (window: Electron.BrowserWindow, action: string) => {
+    if (window.isDestroyed()) return;
+    window.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
+    void runPromise(electronWindow.reveal(window));
+  };
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     initialUrl: string,
@@ -417,6 +424,13 @@ const make = Effect.gen(function* () {
     const applicationUrl = yield* resolveApplicationUrl;
     startupWindows.delete(window);
     applicationUrls.set(window, applicationUrl);
+    const queuedActions = pendingMenuActions.get(window) ?? [];
+    pendingMenuActions.delete(window);
+    if (queuedActions.length > 0) {
+      window.webContents.once("did-finish-load", () => {
+        for (const action of queuedActions) sendMenuAction(window, action);
+      });
+    }
     void window.loadURL(applicationUrl);
     yield* logWindowInfo("startup window loading main application");
   });
@@ -497,11 +511,13 @@ const make = Effect.gen(function* () {
       const existingWindow = yield* electronWindow.focusedMainOrFirst;
       const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* createMain;
 
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
+      if (startupWindows.has(targetWindow)) {
+        const queuedActions = pendingMenuActions.get(targetWindow) ?? [];
+        pendingMenuActions.set(targetWindow, [...queuedActions, action]);
+        return;
+      }
+
+      const send = () => sendMenuAction(targetWindow, action);
 
       if (targetWindow.webContents.isLoadingMainFrame()) {
         targetWindow.webContents.once("did-finish-load", send);

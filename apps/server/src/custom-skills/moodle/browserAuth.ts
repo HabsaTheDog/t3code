@@ -212,7 +212,10 @@ export async function ensureLoggedIn(
 
   authenticationGate.lock();
   try {
-    if (await hasInteractiveAuthenticationSurface(page, config.allowedOrigins)) {
+    if (!plan && candidates.length === 0) {
+      plan = await legacyLoginPlan(page, config.allowedOrigins);
+    }
+    if (!plan && (await hasInteractiveAuthenticationSurface(page, config.allowedOrigins))) {
       await handleInteractiveAuthentication(page, config, authenticationGate);
       await verifyCleanAuthenticatedDocument(page, config);
       authenticationGate.authenticate();
@@ -224,9 +227,6 @@ export async function ensureLoggedIn(
       );
     }
 
-    if (!plan && candidates.length === 0) {
-      plan = await legacyLoginPlan(page, config.allowedOrigins);
-    }
     if (!plan && config.classifyCandidates && candidates.length > 0) {
       plan = await classifiedLoginPlan(candidates, config.classifyCandidates);
     }
