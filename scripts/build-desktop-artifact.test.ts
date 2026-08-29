@@ -224,6 +224,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.isTrue(yield* fs.exists(path.join(stage, "CI/logo.png")));
       assert.isTrue(yield* fs.exists(path.join(stage, "bin/study_buddy_task.sh")));
       assert.isTrue(yield* fs.exists(path.join(stage, "bin/study_buddy_task.mjs")));
+      assert.isTrue(yield* fs.exists(path.join(stage, "bin/study-buddy-workflow-client.mjs")));
       assert.isTrue(yield* fs.exists(path.join(stage, "bin/study_buddy_task")));
       assert.isTrue(yield* fs.exists(path.join(stage, "bin/study_buddy_task.cmd")));
       assert.isTrue(yield* fs.exists(path.join(stage, "bin/node.cmd")));
@@ -231,12 +232,23 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const windowsTaskWrapper = yield* fs.readFileString(
         path.join(stage, "bin/study_buddy_task.cmd"),
       );
+      const posixTaskWrapper = yield* fs.readFileString(path.join(stage, "bin/study_buddy_task"));
       assert.notInclude(windowsTaskWrapper.toLowerCase(), "bash");
       assert.notInclude(windowsTaskWrapper.toLowerCase(), "wsl");
       assert.include(windowsTaskWrapper, "study_buddy_task.mjs");
+      assert.notInclude(windowsTaskWrapper, "STUDY_BUDDY_NODE_EXECUTABLE is required");
+      assert.notInclude(windowsTaskWrapper, "STUDY_BUDDY_ROOT is required");
+      assert.include(windowsTaskWrapper, "%~dp0");
+      assert.notInclude(posixTaskWrapper, "STUDY_BUDDY_NODE_EXECUTABLE is required");
+      assert.notInclude(posixTaskWrapper, "STUDY_BUDDY_ROOT is required");
+      assert.include(posixTaskWrapper, "SCRIPT_DIR=");
       assert.include(
         yield* fs.readFileString(path.join(stage, "bin/study_buddy_task.mjs")),
         'from "node:child_process"',
+      );
+      assert.include(
+        yield* fs.readFileString(path.join(stage, "bin/study_buddy_task.mjs")),
+        'action === "source-runtime-probe"',
       );
       assert.include(
         yield* fs.readFileString(path.join(stage, "bin/node")),

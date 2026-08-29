@@ -14,6 +14,7 @@ export { MINIMUM_STUDY_BUDDY_CODEX_VERSION };
 export interface StudyBuddyCodexPolicyPaths {
   readonly codexHome: string;
   readonly configPath: string;
+  readonly configRoot: string;
   readonly deniedPaths: ReadonlyArray<string>;
 }
 
@@ -37,6 +38,7 @@ export function resolveStudyBuddyCodexPolicyPaths(
   return {
     codexHome,
     configPath: path.join(codexHome, "config.toml"),
+    configRoot: config.stateDir,
     deniedPaths: [
       config.secretsDir,
       path.join(credentialRoot, ".env.local"),
@@ -99,6 +101,9 @@ enabled = false
 inherit = "core"
 ignore_default_excludes = false
 exclude = ["MOODLE_*", "CIS_*", "*PASSWORD*", "*PASSCODE*", "*TOKEN*", "*SECRET*", "*API_KEY*"]
+
+[shell_environment_policy.set]
+STUDY_BUDDY_CONFIG_ROOT = ${tomlString(paths.configRoot)}
 `;
 }
 

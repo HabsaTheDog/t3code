@@ -31,6 +31,7 @@ describe("Study Buddy Codex policy", () => {
     expect(rendered).toContain('"**/.env.*" = "deny"');
     expect(rendered).toContain("enabled = false");
     expect(rendered).toContain('inherit = "core"');
+    expect(rendered).toContain('STUDY_BUDDY_CONFIG_ROOT = "/state/userdata"');
     expect(rendered).toContain("default_mode_request_user_input = true");
   });
 
@@ -69,9 +70,13 @@ describe("Study Buddy Codex policy", () => {
     const rendered = buildStudyBuddyCodexConfig({
       codexHome: "C:\\Users\\Student\\AppData\\Local\\StudyBuddy\\Codex",
       configPath: "ignored",
+      configRoot: "C:\\Users\\Student\\AppData\\Local\\StudyBuddy\\userdata",
       deniedPaths: ["C:\\Users\\Student\\Study Buddy\\.env.local"],
     });
     expect(rendered).toContain('"C:\\\\Users\\\\Student\\\\Study Buddy\\\\.env.local" = "deny"');
+    expect(rendered).toContain(
+      'STUDY_BUDDY_CONFIG_ROOT = "C:\\\\Users\\\\Student\\\\AppData\\\\Local\\\\StudyBuddy\\\\userdata"',
+    );
   });
 
   it("materializes a private app-owned home with an atomic generated config", async () => {

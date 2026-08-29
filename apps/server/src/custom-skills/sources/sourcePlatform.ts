@@ -149,6 +149,9 @@ const ADAPTERS: readonly StudyBuddySourceAdapterDescriptor[] = [
 export interface StudyBuddySourcePlatform {
   readonly email: StudyBuddyEmailReadBroker;
   getInventory(): Promise<StudyBuddySourceInventory>;
+  resolveWorkflowEnvironment(input?: {
+    readonly sourceIds?: readonly string[];
+  }): Promise<Record<string, string>>;
   createSource(input: StudyBuddyCreateSourceInput): Promise<StudyBuddySourceInventory>;
   updateSource(input: StudyBuddyUpdateSourceInput): Promise<StudyBuddySourceInventory>;
   deleteSource(input: StudyBuddyDeleteSourceInput): Promise<StudyBuddySourceInventory>;
@@ -194,6 +197,39 @@ export function createStudyBuddySourcePlatform(
 
   const getInventory = async (): Promise<StudyBuddySourceInventory> =>
     publicInventory(config, await materializedDocument(config, registryPath, secrets), secrets);
+
+  const resolveWorkflowEnvironment = async (
+    input: {
+      readonly sourceIds?: readonly string[];
+    } = {},
+  ): Promise<Record<string, string>> => {
+    const document = await materializedDocument(config, registryPath, secrets);
+    const selectedIds = input.sourceIds ? new Set(input.sourceIds) : null;
+    const selected = document.sources
+      .filter(
+        (source) =>
+          source.enabled &&
+          source.kind === "moodle-course" &&
+          (!selectedIds || selectedIds.has(source.id)),
+      )
+      .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
+    const source = selected[0];
+    if (!source) return {};
+    const connection = document.connections.find((entry) => entry.id === source.connectionId);
+    if (!connection) throw sourceError("internal", "Moodle source connection is missing.");
+    const secret = await getSecret(config, secrets, connection.id);
+    if (secret?.type !== "password") {
+      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    }
+    const dashboardUrl = new URL(connection.entryPath || "/", connection.displayOrigin).href;
+    return {
+      MOODLE_USERNAME: secret.username,
+      MOODLE_PASSWORD: secret.password,
+      MOODLE_DASHBOARD_URL: dashboardUrl,
+      MOODLE_BASE_URL: connection.displayOrigin,
+      MOODLE_LOGIN_ALLOWED_ORIGINS: connection.allowedOrigins.join(","),
+    };
+  };
 
   const resolveEmailAccess = async (
     sourceId: string,
@@ -662,6 +698,7 @@ export function createStudyBuddySourcePlatform(
   return {
     email,
     getInventory,
+    resolveWorkflowEnvironment,
     createSource,
     updateSource,
     deleteSource,
