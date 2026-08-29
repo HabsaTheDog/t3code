@@ -215,8 +215,9 @@ export function terminateWorkflowTree(
   return () => clearTimeout(escalation);
 }
 
-function spawnWorkflow(
+export function spawnWorkflow(
   invocation: StudyBuddyWorkflowInvocation,
+  signal?: AbortSignal,
 ): Promise<StudyBuddyWorkflowResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(invocation.command, [...invocation.args], {
@@ -232,21 +233,36 @@ function spawnWorkflow(
     let capturedBytes = 0;
     let outputLimitExceeded = false;
     let cancelKillEscalation: (() => void) | undefined;
+    let closed = false;
+    const terminate = () => {
+      if (closed || cancelKillEscalation) return;
+      cancelKillEscalation = terminateWorkflowTree(child);
+    };
+    const cleanup = () => {
+      closed = true;
+      signal?.removeEventListener("abort", terminate);
+      cancelKillEscalation?.();
+    };
+    signal?.addEventListener("abort", terminate, { once: true });
+    if (signal?.aborted) terminate();
     const capture = (target: Buffer[], chunk: Buffer) => {
       capturedBytes += chunk.length;
       if (capturedBytes > MAX_CAPTURE_BYTES) {
         if (outputLimitExceeded) return;
         outputLimitExceeded = true;
-        cancelKillEscalation = terminateWorkflowTree(child);
+        terminate();
         return;
       }
       target.push(chunk);
     };
     child.stdout.on("data", (chunk: Buffer) => capture(stdout, chunk));
     child.stderr.on("data", (chunk: Buffer) => capture(stderr, chunk));
-    child.once("error", reject);
+    child.once("error", (error) => {
+      cleanup();
+      reject(error);
+    });
     child.once("close", (code) => {
-      cancelKillEscalation?.();
+      cleanup();
       resolve({
         exitCode: outputLimitExceeded ? 1 : (code ?? 1),
         stdout: Buffer.concat(stdout).toString("utf8"),
@@ -313,7 +329,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
         }
 
         const outcome = yield* Effect.tryPromise({
-          try: async () => {
+          try: async (signal) => {
             const input = decodeRequest(body.value);
             const workspace = await realpath(path.resolve(input.workspace));
             if (!(await stat(workspace)).isDirectory()) {
@@ -355,7 +371,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                   sourcePlatform.resolveWorkflowEnvironment(selection),
                 stageQuizPermissionRequest: (permission) =>
                   stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
-                spawnWorkflow,
+                spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
               },
             );
           },

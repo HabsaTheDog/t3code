@@ -6,7 +6,11 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { stageQuizPermissionRequest, terminateWorkflowTree } from "./workflowBrokerHttp.ts";
+import {
+  spawnWorkflow,
+  stageQuizPermissionRequest,
+  terminateWorkflowTree,
+} from "./workflowBrokerHttp.ts";
 
 describe("Study Buddy workflow broker process termination", () => {
   it("uses taskkill tree termination on Windows", () => {
@@ -49,6 +53,23 @@ describe("Study Buddy workflow broker process termination", () => {
     expect(kill).not.toHaveBeenCalled();
     cancelEscalation?.();
     vi.useRealTimers();
+  });
+
+  it("terminates a running workflow when its broker request is aborted", async () => {
+    const controller = new AbortController();
+    const result = spawnWorkflow(
+      {
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1_000)"],
+        cwd: process.cwd(),
+        environment: process.env,
+      },
+      controller.signal,
+    );
+
+    controller.abort();
+
+    await expect(result).resolves.toMatchObject({ exitCode: 1 });
   });
 });
 
