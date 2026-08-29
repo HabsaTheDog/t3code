@@ -34,7 +34,8 @@ const REJECTED_OVERRIDE_OPTIONS = new Set([
   "--source-file",
   "--source-run-dir",
 ]);
-const SERVER_SELECTED_SOURCE_OPTIONS = new Set(["--calendar-url", "--cis-url", "--url"]);
+const SERVER_SELECTED_SOURCE_OPTIONS = new Set(["--cis-url", "--url"]);
+const STRIPPED_PRIVATE_SOURCE_OPTIONS = new Set(["--calendar-url"]);
 
 export interface StudyBuddyWorkflowRequest {
   readonly args: readonly string[];
@@ -119,7 +120,17 @@ async function sanitizeArgumentOverrides(
     if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
       throw new Error(`Study Buddy workflow may not override ${option}.`);
     }
+    if (STRIPPED_PRIVATE_SOURCE_OPTIONS.has(option)) {
+      if (inlineValue === undefined) index += 1;
+      continue;
+    }
     if (SERVER_SELECTED_SOURCE_OPTIONS.has(option)) {
+      const candidate = inlineValue ?? input.args[index + 1];
+      if (!candidate || (!inlineValue && candidate.startsWith("--"))) {
+        throw new Error(`Study Buddy workflow option ${option} requires a URL.`);
+      }
+      const trustedUrl = validateSelectedSourceUrl(option, candidate, workflowEnvironment);
+      sanitized.push(option, trustedUrl);
       if (inlineValue === undefined) index += 1;
       continue;
     }
@@ -143,6 +154,44 @@ async function sanitizeArgumentOverrides(
     sanitized.push(argument);
   }
   return sanitized;
+}
+
+function validateSelectedSourceUrl(
+  option: string,
+  candidate: string,
+  workflowEnvironment: Readonly<Record<string, string>>,
+): string {
+  const url = new URL(candidate);
+  if (url.username || url.password) {
+    throw new Error(`Study Buddy workflow option ${option} may not contain URL credentials.`);
+  }
+  const values =
+    option === "--url"
+      ? [
+          workflowEnvironment.STUDY_BUDDY_MOODLE_URL,
+          workflowEnvironment.MOODLE_BASE_URL,
+          workflowEnvironment.MOODLE_DASHBOARD_URL,
+          ...(workflowEnvironment.MOODLE_LOGIN_ALLOWED_ORIGINS ?? "").split(","),
+        ]
+      : [
+          workflowEnvironment.STUDY_BUDDY_CIS_URL,
+          workflowEnvironment.CIS_BASE_URL,
+          workflowEnvironment.CIS_DASHBOARD_URL,
+          ...(workflowEnvironment.CIS_LOGIN_ALLOWED_ORIGINS ?? "").split(","),
+        ];
+  const allowedOrigins = new Set(
+    values.flatMap((value) => {
+      try {
+        return value?.trim() ? [new URL(value.trim()).origin] : [];
+      } catch {
+        return [];
+      }
+    }),
+  );
+  if (!allowedOrigins.has(url.origin)) {
+    throw new Error(`Study Buddy workflow option ${option} is outside the selected source.`);
+  }
+  return url.toString();
 }
 
 function validateRejectedArgumentOverrides(input: StudyBuddyWorkflowRequest): void {

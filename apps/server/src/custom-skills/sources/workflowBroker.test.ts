@@ -138,8 +138,11 @@ describe("Study Buddy workflow broker", () => {
     },
   );
 
-  it("uses a direct URL only for server-side source selection and strips it from the child", async () => {
-    const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
+  it("forwards a direct URL only after matching it to the server-selected source", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({
+      MOODLE_PASSWORD: "not-used",
+      STUDY_BUDDY_MOODLE_URL: "https://moodle.example.test/my/",
+    }));
     let invocation: StudyBuddyWorkflowInvocation | undefined;
     const spawnWorkflow = vi.fn(async (input: StudyBuddyWorkflowInvocation) => {
       invocation = input;
@@ -166,7 +169,32 @@ describe("Study Buddy workflow broker", () => {
       path.resolve("/application/resources/study-buddy-runtime/bin/study_buddy_task.mjs"),
       "prompt",
       "test",
+      "--url",
+      "https://moodle.example.test/course/1",
     ]);
+  });
+
+  it("rejects a direct URL outside the server-selected source", async () => {
+    const spawnWorkflow = vi.fn();
+
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: ["doc", "test", "--url", "https://attacker.example.test/course/1"],
+          workspace: path.resolve("/workspace"),
+        },
+        {
+          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+          baseEnvironment: {},
+          resolveWorkflowEnvironment: async () => ({
+            STUDY_BUDDY_MOODLE_URL: "https://moodle.example.test/my/",
+          }),
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow("outside the selected source");
+    expect(spawnWorkflow).not.toHaveBeenCalled();
   });
 
   it("rejects path-valued approval inputs outside the workspace", async () => {
