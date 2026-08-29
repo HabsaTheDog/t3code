@@ -1,15 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned workflow process boundary.
-import { realpath } from "node:fs/promises";
 import path from "node:path";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
   "prompt",
   "combined",
   "doc",
-  "extract",
-  "render",
   "interactive-study-guide",
-  "interactive-study-guide-resume",
   "cheat-sheet",
   "assignment-brief",
   "diagnose",
@@ -29,22 +25,17 @@ const REJECTED_OVERRIDE_OPTIONS = new Set([
   "--codex-path",
   "--deliver-to",
   "--out",
-  "--request-name",
-  "--run-dir",
-  "--url",
-]);
-
-// These inputs are legitimate for explicit resume/approval flows, but must
-// resolve to an existing object within the active registered workspace.
-const CONTAINED_PATH_OPTIONS = new Set([
   "--approve-assignment-request",
   "--approve-quiz-request",
   "--asset",
   "--assignment-file",
+  "--request-name",
   "--resume-extraction-run-dir",
   "--resume-run-dir",
+  "--run-dir",
   "--source-file",
   "--source-run-dir",
+  "--url",
 ]);
 
 export interface StudyBuddyWorkflowRequest {
@@ -110,49 +101,16 @@ function redact(value: string, secrets: readonly string[]): string {
     );
 }
 
-async function sanitizePathArguments(input: StudyBuddyWorkflowRequest): Promise<string[]> {
-  const [command, , runPath] = input.args;
-  const workspace = path.resolve(input.workspace);
-  const sanitizedArgs = [...input.args];
-
-  const resolveContained = async (candidate: string): Promise<string> => {
-    const resolved = await realpath(path.resolve(workspace, candidate));
-    const relative = path.relative(workspace, resolved);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      throw new Error("Study Buddy workflow path must stay inside the active workspace.");
-    }
-    return resolved;
-  };
-
-  if (runPath && (command === "render" || command === "interactive-study-guide-resume")) {
-    sanitizedArgs[2] = await resolveContained(runPath);
-  }
-
-  const optionStart = command === "render" || command === "interactive-study-guide-resume" ? 3 : 2;
-  for (let index = optionStart; index < input.args.length; index += 1) {
+function validateArgumentOverrides(input: StudyBuddyWorkflowRequest): void {
+  for (let index = 2; index < input.args.length; index += 1) {
     const argument = input.args[index] ?? "";
     const separator = argument.indexOf("=");
     const option = separator >= 0 ? argument.slice(0, separator) : argument;
-    const inlineValue = separator >= 0 ? argument.slice(separator + 1) : undefined;
 
     if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
       throw new Error(`Study Buddy workflow may not override ${option}.`);
     }
-    if (!CONTAINED_PATH_OPTIONS.has(option)) continue;
-
-    const candidate = inlineValue ?? input.args[index + 1];
-    if (!candidate || (!inlineValue && candidate.startsWith("--"))) {
-      throw new Error(`Study Buddy workflow option ${option} requires a path.`);
-    }
-    const resolved = await resolveContained(candidate);
-    if (inlineValue === undefined) {
-      sanitizedArgs[index + 1] = resolved;
-      index += 1;
-    } else {
-      sanitizedArgs[index] = `${option}=${resolved}`;
-    }
   }
-  return sanitizedArgs;
 }
 
 export async function executeStudyBuddyWorkflow(
@@ -160,14 +118,14 @@ export async function executeStudyBuddyWorkflow(
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
   validateRequest(input);
-  const sanitizedArgs = await sanitizePathArguments(input);
+  validateArgumentOverrides(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
-    args: sanitizedArgs,
+    args: input.args,
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
   });
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
-    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...sanitizedArgs],
+    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...input.args],
     cwd: input.workspace,
     environment: {
       ...dependencies.baseEnvironment,

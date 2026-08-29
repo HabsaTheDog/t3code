@@ -524,6 +524,10 @@ function watchdogArguments(runDir, pid, environment = process.env) {
   ];
 }
 
+export function shouldDetachWorkflow(environment = process.env, platform = process.platform) {
+  return platform !== "win32" && environment.STUDY_BUDDY_BROKER_EXECUTION !== "1";
+}
+
 function spawnWorkflow(scriptName, args, runDir) {
   const { entry, staticArgs } = resolveScript(scriptName);
   const tsx = path.join(packagedRoot, "node_modules", "tsx", "dist", "cli.mjs");
@@ -531,7 +535,7 @@ function spawnWorkflow(scriptName, args, runDir) {
     cwd: packagedRoot,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     stdio: "inherit",
-    detached: process.platform !== "win32",
+    detached: shouldDetachWorkflow(),
     windowsHide: true,
   });
   if (!child.pid) throw new Error(`Could not start packaged Study Buddy script: ${scriptName}`);

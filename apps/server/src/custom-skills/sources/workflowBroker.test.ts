@@ -1,6 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native path fixtures validate cross-platform argv.
-import { mkdtemp, mkdir, realpath, rm, symlink } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -91,7 +89,7 @@ describe("Study Buddy workflow broker", () => {
     expect(spawnWorkflow).not.toHaveBeenCalled();
   });
 
-  it("rejects resume paths outside the registered workspace before resolving secrets", async () => {
+  it("rejects path-bearing continuation commands before resolving secrets", async () => {
     const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
     const spawnWorkflow = vi.fn();
 
@@ -109,12 +107,12 @@ describe("Study Buddy workflow broker", () => {
           spawnWorkflow,
         },
       ),
-    ).rejects.toThrow("must stay inside the active workspace");
+    ).rejects.toThrow("Unsupported Study Buddy workflow command");
     expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
     expect(spawnWorkflow).not.toHaveBeenCalled();
   });
 
-  it.each(["prompt", "combined", "doc", "extract", "interactive-study-guide"])(
+  it.each(["prompt", "combined", "doc", "interactive-study-guide"])(
     "rejects wrapper-owned run directory overrides for %s",
     async (command) => {
       const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
@@ -181,46 +179,9 @@ describe("Study Buddy workflow broker", () => {
           spawnWorkflow,
         },
       ),
-    ).rejects.toThrow("must stay inside the active workspace");
+    ).rejects.toThrow("may not override --assignment-file");
     expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
     expect(spawnWorkflow).not.toHaveBeenCalled();
-  });
-
-  it("passes a canonical path even if an in-workspace symlink is retargeted after validation", async () => {
-    const workspace = await mkdtemp(path.join(os.tmpdir(), "study-buddy-broker-workspace-"));
-    const canonicalRun = path.join(workspace, "canonical-run");
-    const link = path.join(workspace, "resume-link");
-    await mkdir(canonicalRun);
-    await symlink(canonicalRun, link, "dir");
-    let invocation: StudyBuddyWorkflowInvocation | undefined;
-
-    try {
-      await executeStudyBuddyWorkflow(
-        {
-          args: ["interactive-study-guide-resume", "continue", link],
-          workspace,
-        },
-        {
-          packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
-          nodeExecutable: path.resolve("/application/study-buddy-t3code"),
-          baseEnvironment: {},
-          resolveWorkflowEnvironment: async () => {
-            await rm(link);
-            await symlink(process.cwd(), link, "dir");
-            return {};
-          },
-          spawnWorkflow: async (input) => {
-            invocation = input;
-            return { exitCode: 0, stdout: "", stderr: "" };
-          },
-        },
-      );
-
-      expect(invocation?.args[3]).toBe(await realpath(canonicalRun));
-      expect(invocation?.args[3]).not.toBe(link);
-    } finally {
-      await rm(workspace, { recursive: true, force: true });
-    }
   });
 
   it("redacts even one-character credentials from workflow output", async () => {
