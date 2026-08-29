@@ -12,6 +12,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { resolveStudyBuddyCodexPolicyPaths } from "../../provider/setup/studyBuddyCodexPolicy.ts";
 import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
@@ -146,6 +147,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
     const config = yield* ServerConfig;
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
     const sourcePlatform = createStudyBuddySourcePlatform(config, secretStore);
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const codexHome = resolveStudyBuddyCodexPolicyPaths(config).codexHome;
 
     return HttpRouter.add(
@@ -186,11 +188,34 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
           );
         }
 
+        const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(Effect.option);
+        if (Option.isNone(snapshot)) {
+          return HttpServerResponse.jsonUnsafe(
+            { message: "Study Buddy could not verify the requested workspace." },
+            { status: 503 },
+          );
+        }
+
         const outcome = yield* Effect.tryPromise({
           try: async () => {
             const input = decodeRequest(body.value);
             const workspace = await realpath(path.resolve(input.workspace));
             if (!(await stat(workspace)).isDirectory()) {
+              throw new StudyBuddyWorkflowBrokerRequestError({});
+            }
+            const allowedWorkspaceRoots = [
+              ...snapshot.value.projects
+                .filter((project) => project.deletedAt === null)
+                .map((project) => project.workspaceRoot),
+              ...snapshot.value.threads
+                .filter((thread) => thread.deletedAt === null && thread.worktreePath)
+                .map((thread) => thread.worktreePath!),
+            ];
+            if (
+              !allowedWorkspaceRoots.some(
+                (allowedRoot) => path.relative(path.resolve(allowedRoot), workspace) === "",
+              )
+            ) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
             }
             return executeStudyBuddyWorkflow(

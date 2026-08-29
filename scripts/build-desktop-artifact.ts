@@ -551,7 +551,17 @@ const NODE_SHIM = `#!/usr/bin/env sh
 set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
-STUDY_BUDDY_NODE_EXECUTABLE=\${STUDY_BUDDY_NODE_EXECUTABLE:-"$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
 export STUDY_BUDDY_ROOT
 if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
   echo "Study Buddy could not locate its packaged application executable." >&2
@@ -564,7 +574,17 @@ const NPM_SHIM = `#!/usr/bin/env sh
 set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
-STUDY_BUDDY_NODE_EXECUTABLE=\${STUDY_BUDDY_NODE_EXECUTABLE:-"$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
 export STUDY_BUDDY_ROOT
 if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
   echo "Study Buddy could not locate its packaged application executable." >&2
@@ -577,7 +597,17 @@ const PACKAGED_TASK_SHIM = `#!/usr/bin/env sh
 set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 STUDY_BUDDY_ROOT=\${STUDY_BUDDY_ROOT:-"$(dirname -- "$SCRIPT_DIR")"}
-STUDY_BUDDY_NODE_EXECUTABLE=\${STUDY_BUDDY_NODE_EXECUTABLE:-"$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"}
+if [ -z "\${STUDY_BUDDY_NODE_EXECUTABLE:-}" ]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    STUDY_BUDDY_CONTENTS_DIR=$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")
+    for name in "Study Buddy" "Study Buddy (Alpha)" "Study Buddy (Beta)" "Study Buddy (Nightly)" "study-buddy-t3code"; do
+      candidate="$STUDY_BUDDY_CONTENTS_DIR/MacOS/$name"
+      if [ -x "$candidate" ]; then STUDY_BUDDY_NODE_EXECUTABLE="$candidate"; break; fi
+    done
+  else
+    STUDY_BUDDY_NODE_EXECUTABLE="$(dirname -- "$(dirname -- "$STUDY_BUDDY_ROOT")")/study-buddy-t3code"
+  fi
+fi
 export STUDY_BUDDY_ROOT
 if [ ! -x "$STUDY_BUDDY_NODE_EXECUTABLE" ]; then
   echo "Study Buddy could not locate its packaged application executable." >&2

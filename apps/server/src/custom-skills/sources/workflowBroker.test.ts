@@ -113,4 +113,34 @@ describe("Study Buddy workflow broker", () => {
     expect(JSON.stringify(result)).not.toContain('"u"');
     expect(JSON.stringify(result)).not.toContain('"p"');
   });
+
+  it("accepts legacy stable source IDs and redacts private calendar URLs", async () => {
+    const calendarUrl = "https://calendar.example.edu/private/token";
+    const resolveWorkflowEnvironment = vi.fn(async () => ({ CIS_CALENDAR_URL: calendarUrl }));
+    const result = await executeStudyBuddyWorkflow(
+      {
+        args: ["combined", "tomorrow"],
+        workspace: path.resolve("/workspace"),
+        sourceIds: ["legacy-calendar"],
+      },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment,
+        spawnWorkflow: async () => ({
+          exitCode: 1,
+          stdout: `calendar=${calendarUrl}`,
+          stderr: "",
+        }),
+      },
+    );
+
+    expect(resolveWorkflowEnvironment).toHaveBeenCalledWith({
+      args: ["combined", "tomorrow"],
+      sourceIds: ["legacy-calendar"],
+    });
+    expect(result.stdout).toBe("calendar=[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain(calendarUrl);
+  });
 });

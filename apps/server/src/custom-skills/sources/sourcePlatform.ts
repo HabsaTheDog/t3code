@@ -245,13 +245,17 @@ export function createStudyBuddySourcePlatform(
     }
 
     const cis = requested(
-      candidates.filter(
-        ({ source, connection }) =>
-          (source.kind === "website" || source.kind === "resource-portal") &&
-          (source.id === "legacy-cis" ||
-            connection?.adapterId === "legacy-cis" ||
-            /\bcis\b|student|administrative/iu.test(`${source.label} ${connection?.label ?? ""}`)),
-      ),
+      candidates.filter(({ source, connection }) => {
+        if ((source.kind !== "website" && source.kind !== "resource-portal") || !connection) {
+          return false;
+        }
+        const hostname = new URL(connection.displayOrigin).hostname.toLowerCase();
+        return (
+          source.id === "legacy-cis" ||
+          connection.adapterId === "legacy-cis" ||
+          hostname.split(".").includes("cis")
+        );
+      }),
     );
     if (cis?.connection) {
       const secret = await getSecret(config, secrets, cis.connection.id);

@@ -68,7 +68,7 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
   ) {
     throw new Error("Study Buddy workflow contains an invalid argument.");
   }
-  if (input.sourceIds?.some((sourceId) => !/^source-[a-f0-9-]+$/i.test(sourceId))) {
+  if (input.sourceIds?.some((sourceId) => !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(sourceId))) {
     throw new Error("Study Buddy workflow contains an invalid source identifier.");
   }
 }
@@ -104,7 +104,9 @@ export async function executeStudyBuddyWorkflow(
     },
   });
   const secretValues = Object.entries(workflowEnvironment).flatMap(([name, value]) =>
-    /(USERNAME|PASSWORD|PASSCODE|TOKEN|SECRET|API_KEY)$/i.test(name) ? [value] : [],
+    /(USERNAME|PASSWORD|PASSCODE|TOKEN|SECRET|API_KEY|CALENDAR_URL|BEARER_URL)$/i.test(name)
+      ? [value]
+      : [],
   );
   return {
     exitCode: result.exitCode,
