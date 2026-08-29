@@ -88,4 +88,29 @@ describe("Study Buddy workflow broker", () => {
     expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
     expect(spawnWorkflow).not.toHaveBeenCalled();
   });
+
+  it("redacts even one-character credentials from workflow output", async () => {
+    const result = await executeStudyBuddyWorkflow(
+      { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => ({
+          MOODLE_USERNAME: "u",
+          MOODLE_PASSWORD: "p",
+        }),
+        spawnWorkflow: async () => ({
+          exitCode: 1,
+          stdout: "username=u password=p",
+          stderr: "credentials u/p rejected",
+        }),
+      },
+    );
+
+    expect(result.stdout).toBe("[REDACTED]sername=[REDACTED] [REDACTED]assword=[REDACTED]");
+    expect(result.stderr).toBe("credentials [REDACTED]/[REDACTED] rejected");
+    expect(JSON.stringify(result)).not.toContain('"u"');
+    expect(JSON.stringify(result)).not.toContain('"p"');
+  });
 });

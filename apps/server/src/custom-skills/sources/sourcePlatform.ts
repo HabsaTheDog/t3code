@@ -151,6 +151,7 @@ export interface StudyBuddySourcePlatform {
   getInventory(): Promise<StudyBuddySourceInventory>;
   resolveWorkflowEnvironment(input?: {
     readonly sourceIds?: readonly string[];
+    readonly args?: readonly string[];
   }): Promise<Record<string, string>>;
   createSource(input: StudyBuddyCreateSourceInput): Promise<StudyBuddySourceInventory>;
   updateSource(input: StudyBuddyUpdateSourceInput): Promise<StudyBuddySourceInventory>;
@@ -201,34 +202,77 @@ export function createStudyBuddySourcePlatform(
   const resolveWorkflowEnvironment = async (
     input: {
       readonly sourceIds?: readonly string[];
+      readonly args?: readonly string[];
     } = {},
   ): Promise<Record<string, string>> => {
     const document = await materializedDocument(config, registryPath, secrets);
     const selectedIds = input.sourceIds ? new Set(input.sourceIds) : null;
-    const selected = document.sources
-      .filter(
-        (source) =>
-          source.enabled &&
-          source.kind === "moodle-course" &&
-          (!selectedIds || selectedIds.has(source.id)),
-      )
-      .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
-    const source = selected[0];
-    if (!source) return {};
-    const connection = document.connections.find((entry) => entry.id === source.connectionId);
-    if (!connection) throw sourceError("internal", "Moodle source connection is missing.");
-    const secret = await getSecret(config, secrets, connection.id);
-    if (secret?.type !== "password") {
-      throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+    const requestText = (input.args ?? []).join("\n").toLowerCase();
+    const candidates = document.sources
+      .filter((source) => source.enabled && (!selectedIds || selectedIds.has(source.id)))
+      .map((source) => ({
+        source,
+        connection: document.connections.find((entry) => entry.id === source.connectionId),
+      }))
+      .filter((entry) => Boolean(entry.connection));
+    const requested = <T extends (typeof candidates)[number]>(
+      entries: readonly T[],
+    ): T | undefined =>
+      entries.find(({ connection }) => {
+        if (!connection || !requestText) return false;
+        const target = new URL(connection.entryPath || "/", connection.displayOrigin).href;
+        return (
+          requestText.includes(connection.displayOrigin.toLowerCase()) ||
+          requestText.includes(target.toLowerCase())
+        );
+      }) ?? entries[0];
+    const environment: Record<string, string> = {};
+
+    const moodle = requested(candidates.filter(({ source }) => source.kind === "moodle-course"));
+    if (moodle?.connection) {
+      const secret = await getSecret(config, secrets, moodle.connection.id);
+      if (secret?.type !== "password") {
+        throw sourceError("unavailable", "Moodle sign-in details are not configured.");
+      }
+      environment.MOODLE_USERNAME = secret.username;
+      environment.MOODLE_PASSWORD = secret.password;
+      environment.MOODLE_DASHBOARD_URL = new URL(
+        moodle.connection.entryPath || "/",
+        moodle.connection.displayOrigin,
+      ).href;
+      environment.MOODLE_BASE_URL = moodle.connection.displayOrigin;
+      environment.MOODLE_LOGIN_ALLOWED_ORIGINS = moodle.connection.allowedOrigins.join(",");
     }
-    const dashboardUrl = new URL(connection.entryPath || "/", connection.displayOrigin).href;
-    return {
-      MOODLE_USERNAME: secret.username,
-      MOODLE_PASSWORD: secret.password,
-      MOODLE_DASHBOARD_URL: dashboardUrl,
-      MOODLE_BASE_URL: connection.displayOrigin,
-      MOODLE_LOGIN_ALLOWED_ORIGINS: connection.allowedOrigins.join(","),
-    };
+
+    const cis = requested(
+      candidates.filter(
+        ({ source, connection }) =>
+          (source.kind === "website" || source.kind === "resource-portal") &&
+          (source.id === "legacy-cis" ||
+            connection?.adapterId === "legacy-cis" ||
+            /\bcis\b|student|administrative/iu.test(`${source.label} ${connection?.label ?? ""}`)),
+      ),
+    );
+    if (cis?.connection) {
+      const secret = await getSecret(config, secrets, cis.connection.id);
+      if (secret?.type === "password") {
+        const target = new URL(cis.connection.entryPath || "/", cis.connection.displayOrigin).href;
+        environment.CIS_USERNAME = secret.username;
+        environment.CIS_PASSWORD = secret.password;
+        environment.CIS_URLS = target;
+        environment.CIS_DASHBOARD_URL = target;
+        environment.CIS_BASE_URL = cis.connection.displayOrigin;
+        environment.CIS_LOGIN_ALLOWED_ORIGINS = cis.connection.allowedOrigins.join(",");
+      }
+    }
+
+    const calendar = requested(candidates.filter(({ source }) => source.kind === "calendar"));
+    if (calendar?.connection) {
+      const secret = await getSecret(config, secrets, calendar.connection.id);
+      if (secret?.type === "bearer-url") environment.CIS_CALENDAR_URL = secret.value;
+    }
+
+    return environment;
   };
 
   const resolveEmailAccess = async (

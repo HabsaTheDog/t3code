@@ -323,6 +323,56 @@ describe("Study Buddy source inventory", () => {
     expect(persisted).not.toContain(password);
     expect(JSON.stringify(await platform.getInventory())).not.toContain(password);
   });
+
+  it("honors explicit source selection and exposes CIS credentials to brokered workflows", async () => {
+    const { platform } = await harness();
+    let inventory = await platform.createSource({
+      expectedRevision: 0,
+      kind: "moodle-course",
+      label: "First Moodle",
+      url: "https://first-moodle.example.edu/my/",
+      enabled: true,
+      auth: { operation: "set-password", username: "first-user", password: "first-password" },
+    });
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "moodle-course",
+      label: "Selected Moodle",
+      url: "https://selected-moodle.example.edu/my/",
+      enabled: true,
+      auth: {
+        operation: "set-password",
+        username: "selected-user",
+        password: "selected-password",
+      },
+    });
+    const selectedMoodleId = inventory.sources.at(-1)!.id;
+    inventory = await platform.createSource({
+      expectedRevision: inventory.revision,
+      kind: "website",
+      label: "CIS student portal",
+      url: "https://cis.example.edu/cis.php/",
+      enabled: true,
+      auth: { operation: "set-password", username: "cis-user", password: "cis-password" },
+    });
+    const cisId = inventory.sources.at(-1)!.id;
+
+    const environment = await platform.resolveWorkflowEnvironment({
+      sourceIds: [selectedMoodleId, cisId],
+      args: ["combined", "Use https://selected-moodle.example.edu/my/ and CIS"],
+    });
+
+    expect(environment).toMatchObject({
+      MOODLE_USERNAME: "selected-user",
+      MOODLE_PASSWORD: "selected-password",
+      MOODLE_DASHBOARD_URL: "https://selected-moodle.example.edu/my/",
+      CIS_USERNAME: "cis-user",
+      CIS_PASSWORD: "cis-password",
+      CIS_DASHBOARD_URL: "https://cis.example.edu/cis.php/",
+    });
+    expect(JSON.stringify(environment)).not.toContain("first-password");
+  });
+
   it("migrates a legacy plaintext source secret only after verified encryption", async () => {
     const { platform, secretValues } = await harness();
     const username = "legacy-user-canary";

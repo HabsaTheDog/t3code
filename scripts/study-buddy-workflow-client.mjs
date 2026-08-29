@@ -16,6 +16,29 @@ const BROKERED_COMMANDS = new Set([
   "source-runtime-probe",
 ]);
 
+function brokerSelection(args, environment) {
+  const forwardedArgs = [];
+  const sourceIds = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--study-buddy-source-id") {
+      const sourceId = args[index + 1];
+      if (sourceId) sourceIds.push(sourceId);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--study-buddy-source-id=")) {
+      sourceIds.push(argument.slice("--study-buddy-source-id=".length));
+      continue;
+    }
+    forwardedArgs.push(argument);
+  }
+  for (const sourceId of (environment.STUDY_BUDDY_SOURCE_IDS || "").split(",")) {
+    if (sourceId.trim()) sourceIds.push(sourceId.trim());
+  }
+  return { forwardedArgs, sourceIds: [...new Set(sourceIds)] };
+}
+
 function validRuntimeState(value) {
   return (
     value &&
@@ -42,6 +65,7 @@ export async function maybeRunBrokeredWorkflow(
   if (environment.STUDY_BUDDY_BROKER_EXECUTION === "1" || !BROKERED_COMMANDS.has(args[0])) {
     return null;
   }
+  const selection = brokerSelection(args, environment);
   const configRoot = environment.STUDY_BUDDY_CONFIG_ROOT?.trim();
   if (!configRoot) return null;
 
@@ -68,11 +92,12 @@ export async function maybeRunBrokeredWorkflow(
           "x-study-buddy-workflow-token": runtimeState.workflowToken,
         },
         body: JSON.stringify({
-          args,
+          args: selection.forwardedArgs,
           workspace: environment.STUDY_BUDDY_WORKSPACE || cwd,
           ...(environment.STUDY_BUDDY_THREAD_ID || environment.CODEX_THREAD_ID
             ? { threadId: environment.STUDY_BUDDY_THREAD_ID || environment.CODEX_THREAD_ID }
             : {}),
+          ...(selection.sourceIds.length > 0 ? { sourceIds: selection.sourceIds } : {}),
         }),
       },
     );

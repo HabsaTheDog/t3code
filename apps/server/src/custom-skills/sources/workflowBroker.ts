@@ -45,6 +45,7 @@ export interface StudyBuddyWorkflowBrokerDependencies {
   readonly baseEnvironment: NodeJS.ProcessEnv;
   readonly resolveWorkflowEnvironment: (input: {
     readonly sourceIds?: readonly string[];
+    readonly args?: readonly string[];
   }) => Promise<Record<string, string>>;
   readonly spawnWorkflow: (
     invocation: StudyBuddyWorkflowInvocation,
@@ -74,7 +75,7 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
 
 function redact(value: string, secrets: readonly string[]): string {
   return secrets.reduce(
-    (output, secret) => (secret.length >= 3 ? output.split(secret).join("[REDACTED]") : output),
+    (output, secret) => (secret.length > 0 ? output.split(secret).join("[REDACTED]") : output),
     value,
   );
 }
@@ -84,9 +85,10 @@ export async function executeStudyBuddyWorkflow(
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
   validateRequest(input);
-  const workflowEnvironment = await dependencies.resolveWorkflowEnvironment(
-    input.sourceIds ? { sourceIds: input.sourceIds } : {},
-  );
+  const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
+    args: input.args,
+    ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+  });
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
     args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...input.args],

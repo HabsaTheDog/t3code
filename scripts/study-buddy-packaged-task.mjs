@@ -95,6 +95,32 @@ function fail(message, code = 1) {
   return code;
 }
 
+export function sourceRuntimeProbe(environment = process.env, runtimeRoot = packagedRoot) {
+  const required = [
+    "MOODLE_USERNAME",
+    "MOODLE_PASSWORD",
+    "MOODLE_DASHBOARD_URL",
+    "MOODLE_BASE_URL",
+    "MOODLE_LOGIN_ALLOWED_ORIGINS",
+  ];
+  const missing = required.filter((name) => !environment[name]?.trim());
+  const checks = {
+    brokerExecution: environment.STUDY_BUDDY_BROKER_EXECUTION === "1",
+    packagedRoot: existsSync(path.join(runtimeRoot, "canonical-package.json")),
+    sourceEnvironment: missing.length === 0,
+  };
+  const success = Object.values(checks).every(Boolean);
+  return {
+    exitCode: success ? 0 : 1,
+    payload: {
+      schemaVersion: 1,
+      status: success ? "success" : "failed",
+      checks,
+      missing,
+    },
+  };
+}
+
 function nonEmptyFile(filePath) {
   try {
     const linkStats = lstatSync(filePath);
@@ -961,27 +987,9 @@ async function main(argv = process.argv.slice(2)) {
   if (action === "checkpoint") return checkpoint(args[0] ?? "");
   if (action === "wait") return waitRun(args[0] ?? "", Number(args[1] ?? 900));
   if (action === "source-runtime-probe") {
-    const required = [
-      "MOODLE_USERNAME",
-      "MOODLE_PASSWORD",
-      "MOODLE_DASHBOARD_URL",
-      "MOODLE_BASE_URL",
-      "MOODLE_LOGIN_ALLOWED_ORIGINS",
-    ];
-    const missing = required.filter((name) => !process.env[name]?.trim());
-    console.log(
-      JSON.stringify({
-        schemaVersion: 1,
-        status: missing.length === 0 ? "success" : "failed",
-        checks: {
-          brokerExecution: process.env.STUDY_BUDDY_BROKER_EXECUTION === "1",
-          packagedRoot: existsSync(path.join(packagedRoot, "canonical-package.json")),
-          sourceEnvironment: missing.length === 0,
-        },
-        missing,
-      }),
-    );
-    return missing.length === 0 ? 0 : 1;
+    const result = sourceRuntimeProbe();
+    console.log(JSON.stringify(result.payload));
+    return result.exitCode;
   }
 
   const prompt = requirePrompt(args);

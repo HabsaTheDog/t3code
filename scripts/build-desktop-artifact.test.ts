@@ -57,6 +57,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "https://cis.technikum-wien.at/cis.php/",
     ]);
     assert.deepStrictEqual(adapter.extractSourceArgsFor("Erkläre den Regelkreis"), ["--no-cis"]);
+    const sourceEnvironment = {
+      STUDY_BUDDY_BROKER_EXECUTION: "1",
+      MOODLE_USERNAME: "test",
+      MOODLE_PASSWORD: "test",
+      MOODLE_DASHBOARD_URL: "https://moodle.example.edu/my/",
+      MOODLE_BASE_URL: "https://moodle.example.edu",
+      MOODLE_LOGIN_ALLOWED_ORIGINS: "https://moodle.example.edu",
+    };
+    assert.equal(adapter.sourceRuntimeProbe(sourceEnvironment, "/missing").exitCode, 1);
+    assert.isFalse(
+      adapter.sourceRuntimeProbe(sourceEnvironment, "/missing").payload.checks.packagedRoot,
+    );
     assert.deepStrictEqual(adapter.watchdogArguments("/tmp/run", 42, {}), [
       "--run-dir",
       "/tmp/run",

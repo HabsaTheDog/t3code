@@ -63,4 +63,34 @@ describe("packaged Study Buddy workflow client", () => {
     ).resolves.toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("passes explicit source selections to the broker without forwarding private flags", async () => {
+    const fetchImpl = vi.fn(
+      async (_input: unknown, _init?: RequestInit) =>
+        new Response(JSON.stringify({ exitCode: 0, stdout: "", stderr: "" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    await maybeRunBrokeredWorkflow(
+      ["prompt", "test", "--study-buddy-source-id", "source-aabb-1234"],
+      {
+        environment: {
+          STUDY_BUDDY_CONFIG_ROOT: path.resolve("/private/state"),
+          STUDY_BUDDY_WORKSPACE: path.resolve("/workspace"),
+        },
+        readRuntimeState: async () =>
+          JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
+        fetchImpl,
+      },
+    );
+    const request = fetchImpl.mock.calls[0]![1];
+    expect(request).toBeDefined();
+    if (!request) throw new Error("Broker request was not captured.");
+    expect(JSON.parse(String(request.body))).toEqual({
+      args: ["prompt", "test"],
+      workspace: path.resolve("/workspace"),
+      sourceIds: ["source-aabb-1234"],
+    });
+  });
 });
