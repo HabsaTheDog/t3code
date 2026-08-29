@@ -55,6 +55,7 @@ export const persistServerRuntimeState = (input: {
   writeFileStringAtomically({
     filePath: input.path,
     contents: `${JSON.stringify(input.state)}\n`,
+    mode: 0o600,
   });
 
 export const clearPersistedServerRuntimeState = (path: string) =>

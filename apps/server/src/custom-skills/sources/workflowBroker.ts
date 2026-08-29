@@ -75,10 +75,12 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
 }
 
 function redact(value: string, secrets: readonly string[]): string {
-  return secrets.reduce(
-    (output, secret) => (secret.length > 0 ? output.split(secret).join("[REDACTED]") : output),
-    value,
-  );
+  return [...new Set(secrets)]
+    .sort((left, right) => right.length - left.length)
+    .reduce(
+      (output, secret) => (secret.length > 0 ? output.split(secret).join("[REDACTED]") : output),
+      value,
+    );
 }
 
 async function validatePathArguments(input: StudyBuddyWorkflowRequest): Promise<void> {

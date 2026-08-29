@@ -137,6 +137,25 @@ describe("Study Buddy workflow broker", () => {
     expect(JSON.stringify(result)).not.toContain('"p"');
   });
 
+  it("redacts longer overlapping credentials before their substrings", async () => {
+    const result = await executeStudyBuddyWorkflow(
+      { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },
+      {
+        packagedRoot: path.resolve("/application/resources/study-buddy-runtime"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => ({
+          MOODLE_USERNAME: "alice",
+          MOODLE_PASSWORD: "alice123",
+        }),
+        spawnWorkflow: async () => ({ exitCode: 1, stdout: "alice123", stderr: "" }),
+      },
+    );
+
+    expect(result.stdout).toBe("[REDACTED]");
+    expect(result.stdout).not.toContain("123");
+  });
+
   it("accepts legacy stable source IDs and redacts private calendar URLs", async () => {
     const calendarUrl = "https://calendar.example.edu/private/token";
     const resolveWorkflowEnvironment = vi.fn(async () => ({ CIS_CALENDAR_URL: calendarUrl }));
