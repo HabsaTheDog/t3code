@@ -63,7 +63,11 @@ class StudyBuddyWorkflowBrokerRequestError extends Data.TaggedError(
   "StudyBuddyWorkflowBrokerRequestError",
 )<{ readonly cause?: unknown }> {}
 
-function safeBaseEnvironment(source: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+export function safeBaseEnvironment(
+  source: NodeJS.ProcessEnv,
+  codexHome: string,
+  stateDir: string,
+): NodeJS.ProcessEnv {
   return {
     ...Object.fromEntries(
       Object.entries(source).filter(
@@ -72,6 +76,7 @@ function safeBaseEnvironment(source: NodeJS.ProcessEnv, codexHome: string): Node
       ),
     ),
     CODEX_HOME: codexHome,
+    STUDY_BUDDY_SOURCE_CACHE_ROOT: path.join(stateDir, "study-buddy-data", "cache", "sources"),
   };
 }
 
@@ -381,7 +386,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
             return executeStudyBuddyWorkflow(createBrokerExecutionRequest(input, workspace), {
               packagedRoot,
               nodeExecutable,
-              baseEnvironment: safeBaseEnvironment(process.env, codexHome),
+              baseEnvironment: safeBaseEnvironment(process.env, codexHome, config.stateDir),
               resolveWorkflowEnvironment: (selection) =>
                 sourcePlatform.resolveWorkflowEnvironment(selection),
               stageQuizPermissionRequest: (permission) =>
