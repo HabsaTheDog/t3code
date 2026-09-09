@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,6 +21,7 @@ import { resolveStudyBuddyCodexPolicyPaths } from "../../provider/setup/studyBud
 import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
 import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
+import { bindWorkflowReply, saveWorkflowReply } from "./workflowReply.ts";
 import {
   executeStudyBuddyWorkflow,
   type StudyBuddyWorkflowInvocation,
@@ -350,6 +352,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
           );
         }
 
+        const startedAt = yield* Clock.currentTimeMillis;
         const outcome = yield* Effect.tryPromise({
           try: async (signal) => {
             const input = decodeRequest(body.value);
@@ -383,16 +386,29 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
             ) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
             }
-            return executeStudyBuddyWorkflow(createBrokerExecutionRequest(input, workspace), {
-              packagedRoot,
-              nodeExecutable,
-              baseEnvironment: safeBaseEnvironment(process.env, codexHome, config.stateDir),
-              resolveWorkflowEnvironment: (selection) =>
-                sourcePlatform.resolveWorkflowEnvironment(selection),
-              stageQuizPermissionRequest: (permission) =>
-                stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
-              spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
-            });
+            const binding = bindWorkflowReply(snapshot.value, input, workspace);
+            const result = await executeStudyBuddyWorkflow(
+              createBrokerExecutionRequest(input, workspace),
+              {
+                packagedRoot,
+                nodeExecutable,
+                baseEnvironment: safeBaseEnvironment(process.env, codexHome, config.stateDir),
+                resolveWorkflowEnvironment: (selection) =>
+                  sourcePlatform.resolveWorkflowEnvironment(selection),
+                stageQuizPermissionRequest: (permission) =>
+                  stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
+                spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
+              },
+            );
+            if (binding)
+              await saveWorkflowReply({
+                stateDir: config.stateDir,
+                workspace,
+                startedAt,
+                binding,
+                result,
+              });
+            return result;
           },
           catch: (cause) => new StudyBuddyWorkflowBrokerRequestError({ cause }),
         }).pipe(Effect.result);
