@@ -162,13 +162,18 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
-        APP_VERSION: environment.appVersion,
+        // Unpackaged Electron reports its runtime version (for example 41.10.3),
+        // not the app package version. Let the development server use its own
+        // package fallback so it stays aligned with the Vite client version.
+        APP_VERSION: environment.isDevelopment ? undefined : environment.appVersion,
         STUDY_BUDDY_ROOT: environment.studyBuddyRoot,
         STUDY_BUDDY_T3_ROOT: environment.appRoot,
         STUDY_BUDDY_CONFIG_ROOT: environment.isPackaged
           ? environment.stateDir
           : environment.studyBuddyRoot,
+        STUDY_BUDDY_RUNTIME_STATE_ROOT: environment.stateDir,
         STUDY_BUDDY_TASK_WRAPPER: environment.studyBuddyTaskWrapperPath,
+        STUDY_BUDDY_TASK_MODULE: environment.studyBuddyTaskModulePath,
         STUDY_BUDDY_NODE_EXECUTABLE: process.execPath,
         PATH: `${environment.studyBuddyRuntimeBinPath}${pathSeparator}${process.env.PATH ?? ""}`,
         ...(browserExecutablePath

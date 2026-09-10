@@ -304,6 +304,19 @@ describe("buildTurnStartParams", () => {
       /Never invoke the wrapper with an unassigned shell expansion such as `"\$SB_PROMPT"`/,
     );
     assert.match(instructions, /zero-length prompt must fail before any run directory/i);
+    assert.match(
+      instructions,
+      /`answer\.md` is the canonical user-facing answer[\s\S]*do not independently recompute, shift, broaden, or contradict/i,
+    );
+    assert.match(
+      instructions,
+      /absence of a matching calendar event never proves that no task is due/,
+    );
+    assert.match(instructions, /workflow supervisor owns idle and runtime limits/);
+    assert.match(
+      instructions,
+      /If no canonical answer exists after failure or cancellation[\s\S]*do not claim that nothing is due/,
+    );
   });
 
   it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {

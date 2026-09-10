@@ -69,6 +69,31 @@ describe("Study Buddy workflow broker", () => {
     });
   });
 
+  it("uses a trusted development task module without changing the workflow root", async () => {
+    let invocation: StudyBuddyWorkflowInvocation | undefined;
+    await executeStudyBuddyWorkflow(
+      { args: ["diagnose", "test"], workspace: path.resolve("/workspace") },
+      {
+        packagedRoot: path.resolve("/study-buddy"),
+        taskModulePath: path.resolve("/t3code-fork/scripts/study-buddy-packaged-task.mjs"),
+        nodeExecutable: path.resolve("/application/study-buddy-t3code"),
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => ({}),
+        spawnWorkflow: async (input) => {
+          invocation = input;
+          return { exitCode: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    expect(invocation?.args).toEqual([
+      path.resolve("/t3code-fork/scripts/study-buddy-packaged-task.mjs"),
+      "diagnose",
+      "test",
+    ]);
+    expect(invocation?.environment.STUDY_BUDDY_ROOT).toBe(path.resolve("/study-buddy"));
+  });
+
   it("rejects commands outside the packaged workflow allowlist before resolving secrets", async () => {
     const resolveWorkflowEnvironment = vi.fn(async () => ({ MOODLE_PASSWORD: "not-used" }));
     const spawnWorkflow = vi.fn();

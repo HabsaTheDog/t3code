@@ -1,10 +1,12 @@
+// @effect-diagnostics globalTimers:off -- Test the dependency-free Node HTTP client against delayed native response headers.
 // @effect-diagnostics nodeBuiltinImport:off - This test exercises the dependency-free packaged Node client directly.
 import path from "node:path";
+import { createServer } from "node:http";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
 // @ts-expect-error The shipped client intentionally stays dependency-free JavaScript.
-import { maybeRunBrokeredWorkflow } from "./study-buddy-workflow-client.mjs";
+import { maybeRunBrokeredWorkflow, requestBroker } from "./study-buddy-workflow-client.mjs";
 
 describe("packaged Study Buddy workflow client", () => {
   it("routes workflow commands to the loopback broker without source credentials", async () => {
@@ -51,6 +53,35 @@ describe("packaged Study Buddy workflow client", () => {
     expect(request.body).not.toContain("MOODLE_PASSWORD");
     expect(stdout).toHaveBeenCalledWith("run-dir\n");
     expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it("reads broker state from a dedicated runtime root in development", async () => {
+    const readRuntimeState = vi.fn(async () =>
+      JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
+    );
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ exitCode: 0, stdout: "", stderr: "" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    await expect(
+      maybeRunBrokeredWorkflow(["prompt", "test"], {
+        environment: {
+          STUDY_BUDDY_CONFIG_ROOT: path.resolve("/workflow/config"),
+          STUDY_BUDDY_RUNTIME_STATE_ROOT: path.resolve("/desktop/state"),
+          STUDY_BUDDY_WORKSPACE: path.resolve("/workspace"),
+        },
+        readRuntimeState,
+        fetchImpl,
+      }),
+    ).resolves.toBe(0);
+
+    expect(readRuntimeState).toHaveBeenCalledWith(
+      path.resolve("/desktop/state/server-runtime.json"),
+    );
   });
 
   it("bypasses the broker for the server-owned child execution", async () => {
@@ -131,5 +162,34 @@ describe("packaged Study Buddy workflow client", () => {
 
     expect(exitCode).toBe(0);
     expect(stdoutDrained).toBe(true);
+  });
+});
+
+describe("long-running workflow broker transport", () => {
+  it("waits for delayed response headers without the global fetch header deadline", async () => {
+    const server = createServer((_request, response) => {
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ exitCode: 0, stdout: "finished" }));
+      }, 40);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("headers timeout"));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("No test server port");
+      const response = await requestBroker(`http://127.0.0.1:${address.port}/workflow`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(await response.json()).toMatchObject({ exitCode: 0, stdout: "finished" });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      fetch.mockRestore();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });

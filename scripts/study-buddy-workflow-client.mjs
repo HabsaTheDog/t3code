@@ -1,5 +1,29 @@
 import { readFile } from "node:fs/promises";
+import { request } from "node:http";
 import path from "node:path";
+
+// A broker responds when its supervised workflow finishes. Node fetch's implicit
+// five-minute header deadline would disconnect and cancel a healthy long run.
+// Workflow idle/runtime watchdogs and explicit user cancellation own its lifetime.
+export function requestBroker(url, init) {
+  return new Promise((resolve, reject) => {
+    const client = request(url, { method: init.method, headers: init.headers }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.once("error", reject);
+      response.once("aborted", () => reject(new Error("Workflow response interrupted")));
+      response.once("end", () => {
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          json: async () => JSON.parse(Buffer.concat(chunks).toString("utf8")),
+        });
+      });
+    });
+    client.setTimeout(0);
+    client.once("error", reject);
+    client.end(init.body);
+  });
+}
 
 const BROKERED_COMMANDS = new Set([
   "prompt",
@@ -56,7 +80,7 @@ export async function maybeRunBrokeredWorkflow(
     environment = process.env,
     cwd = process.cwd(),
     readRuntimeState = (filePath) => readFile(filePath, "utf8"),
-    fetchImpl = globalThis.fetch,
+    fetchImpl = requestBroker,
     writeStdout = (value) => new Promise((resolve) => process.stdout.write(value, resolve)),
     writeStderr = (value) => new Promise((resolve) => process.stderr.write(value, resolve)),
   } = {},
@@ -64,7 +88,10 @@ export async function maybeRunBrokeredWorkflow(
   if (environment.STUDY_BUDDY_BROKER_EXECUTION === "1") {
     return null;
   }
-  if (BLOCKED_PATH_COMMANDS.has(args[0]) && environment.STUDY_BUDDY_CONFIG_ROOT?.trim()) {
+  const runtimeStateRoot =
+    environment.STUDY_BUDDY_RUNTIME_STATE_ROOT?.trim() ||
+    environment.STUDY_BUDDY_CONFIG_ROOT?.trim();
+  if (BLOCKED_PATH_COMMANDS.has(args[0]) && runtimeStateRoot) {
     await writeStderr(
       "This path-bearing continuation is unavailable in the packaged app. Use the atomic doc or interactive-study-guide workflow instead.\n",
     );
@@ -72,12 +99,13 @@ export async function maybeRunBrokeredWorkflow(
   }
   if (!BROKERED_COMMANDS.has(args[0])) return null;
   const selection = brokerSelection(args, environment);
-  const configRoot = environment.STUDY_BUDDY_CONFIG_ROOT?.trim();
-  if (!configRoot) return null;
+  if (!runtimeStateRoot) return null;
 
   let runtimeState;
   try {
-    runtimeState = JSON.parse(await readRuntimeState(path.join(configRoot, "server-runtime.json")));
+    runtimeState = JSON.parse(
+      await readRuntimeState(path.join(runtimeStateRoot, "server-runtime.json")),
+    );
   } catch {
     await writeStderr(
       "Study Buddy's local workflow service is not ready. Restart the app and retry.\n",

@@ -133,7 +133,9 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.env.APP_VERSION, "1.2.3");
         assert.equal(first.env.STUDY_BUDDY_ROOT, environment.studyBuddyRoot);
         assert.equal(first.env.STUDY_BUDDY_CONFIG_ROOT, environment.stateDir);
+        assert.equal(first.env.STUDY_BUDDY_RUNTIME_STATE_ROOT, environment.stateDir);
         assert.equal(first.env.STUDY_BUDDY_TASK_WRAPPER, environment.studyBuddyTaskWrapperPath);
+        assert.equal(first.env.STUDY_BUDDY_TASK_MODULE, environment.studyBuddyTaskModulePath);
         assert.equal(first.env.STUDY_BUDDY_NODE_EXECUTABLE, process.execPath);
         assert.include(first.env.PATH ?? "", environment.studyBuddyRuntimeBinPath);
         assert.isUndefined(first.env.T3CODE_PORT);
@@ -207,8 +209,12 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolve;
         assert.equal(config.captureOutput, true);
+        assert.isUndefined(config.env.APP_VERSION);
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         assert.equal(config.env.STUDY_BUDDY_CONFIG_ROOT, environment.studyBuddyRoot);
+        assert.equal(config.env.STUDY_BUDDY_RUNTIME_STATE_ROOT, environment.stateDir);
+        assert.equal(config.env.STUDY_BUDDY_TASK_WRAPPER, environment.studyBuddyTaskWrapperPath);
+        assert.equal(config.env.STUDY_BUDDY_TASK_MODULE, environment.studyBuddyTaskModulePath);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(

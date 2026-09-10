@@ -55,6 +55,7 @@ export interface DesktopEnvironmentShape {
   readonly backendCwd: string;
   readonly studyBuddyRoot: string;
   readonly studyBuddyTaskWrapperPath: string;
+  readonly studyBuddyTaskModulePath: string;
   readonly studyBuddyRuntimeBinPath: string;
   readonly preloadPath: string;
   readonly appUpdateYmlPath: string;
@@ -211,7 +212,14 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
           studyBuddyRuntimeBinPath,
           input.platform === "win32" ? "study_buddy_task.cmd" : "study_buddy_task",
         )
-      : path.join(homeDirectory, ".agents/skills/study-buddy/scripts/study_buddy_task.sh"),
+      : path.join(
+          appRoot,
+          "scripts",
+          input.platform === "win32" ? "study-buddy-dev-task.cmd" : "study-buddy-dev-task",
+        ),
+    studyBuddyTaskModulePath: input.isPackaged
+      ? path.join(studyBuddyRuntimeBinPath, "study_buddy_task.mjs")
+      : path.join(appRoot, "scripts", "study-buddy-packaged-task.mjs"),
     studyBuddyRuntimeBinPath,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     appUpdateYmlPath: input.isPackaged
