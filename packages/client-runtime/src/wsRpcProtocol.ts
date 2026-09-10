@@ -276,7 +276,10 @@ export function createWsRpcProtocolLayer(
     Effect.map(
       RpcClient.makeProtocolSocket({
         retryPolicy,
-        retryTransientErrors: true,
+        // Heartbeat timeouts are SocketOpenError too. Notify pending RPCs so
+        // the existing stream retry loop recreates server subscriptions;
+        // reconnecting only the socket leaves those streams silently waiting.
+        retryTransientErrors: false,
       }),
       (protocol) => ({
         ...protocol,

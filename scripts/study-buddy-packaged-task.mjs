@@ -106,7 +106,9 @@ export function sourceRuntimeProbe(environment = process.env, runtimeRoot = pack
   const missing = required.filter((name) => !environment[name]?.trim());
   const checks = {
     brokerExecution: environment.STUDY_BUDDY_BROKER_EXECUTION === "1",
-    packagedRoot: existsSync(path.join(runtimeRoot, "canonical-package.json")),
+    packagedRoot:
+      existsSync(path.join(runtimeRoot, "canonical-package.json")) ||
+      existsSync(path.join(runtimeRoot, "package.json")),
     sourceEnvironment: missing.length === 0,
   };
   const success = Object.values(checks).every(Boolean);
@@ -499,7 +501,12 @@ function prepareRunDir(prompt) {
 }
 
 function resolveScript(scriptName) {
-  const pkg = readJson(path.join(packagedRoot, "canonical-package.json"));
+  const canonicalPackagePath = path.join(packagedRoot, "canonical-package.json");
+  const pkg = readJson(
+    existsSync(canonicalPackagePath)
+      ? canonicalPackagePath
+      : path.join(packagedRoot, "package.json"),
+  );
   const command = pkg.scripts?.[scriptName];
   const match = typeof command === "string" ? command.match(/^tsx\s+([^\s]+)(?:\s+(.*))?$/u) : null;
   if (!match?.[1]) throw new Error(`Unsupported packaged Study Buddy script: ${scriptName}`);

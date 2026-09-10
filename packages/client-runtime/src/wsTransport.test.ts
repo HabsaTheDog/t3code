@@ -585,6 +585,58 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("restores stream delivery after a heartbeat timeout reconnects the socket", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const listener = vi.fn();
+    const onResubscribe = vi.fn();
+    const unsubscribe = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      listener,
+      { onResubscribe },
+    );
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    const first = getSocket();
+    first.open();
+    const request = (socket: MockWebSocket) =>
+      socket.sent
+        .map((message) => JSON.parse(message) as { _tag: string; id: string; tag: string })
+        .find((message) => message._tag === "Request");
+    await waitFor(() => expect(request(first)).toBeDefined());
+    const event = (sequence: number) => ({
+      version: 1,
+      sequence,
+      type: "welcome",
+      payload: {
+        environment: {
+          environmentId: "environment-local",
+          label: "Local environment",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        },
+        cwd: "/tmp/heartbeat",
+        projectName: "heartbeat",
+      },
+    });
+    first.serverMessage(
+      JSON.stringify({ _tag: "Chunk", requestId: request(first)!.id, values: [event(1)] }),
+    );
+    await waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    // Deliberately omit Pong. A fresh socket alone must not count as stream recovery.
+    await waitFor(() => expect(sockets).toHaveLength(2), 13_000);
+    const second = getSocket();
+    second.open();
+    await waitFor(() => expect(request(second)).toBeDefined(), 2_000);
+    expect(request(second)!.tag).toBe(WS_METHODS.subscribeServerLifecycle);
+    expect(onResubscribe).toHaveBeenCalled();
+    second.serverMessage(
+      JSON.stringify({ _tag: "Chunk", requestId: request(second)!.id, values: [event(2)] }),
+    );
+    await waitFor(() => expect(listener).toHaveBeenLastCalledWith(event(2)));
+    unsubscribe();
+    await transport.dispose();
+  }, 18_000);
+
   it("re-subscribes live stream listeners after an explicit transport reconnect", async () => {
     const transport = createTransport("ws://localhost:3020");
     const listener = vi.fn();

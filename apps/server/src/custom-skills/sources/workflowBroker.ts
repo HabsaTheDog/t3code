@@ -59,6 +59,7 @@ export interface StudyBuddyWorkflowResult {
 
 export interface StudyBuddyWorkflowBrokerDependencies {
   readonly packagedRoot: string;
+  readonly taskModulePath?: string;
   readonly nodeExecutable: string;
   readonly baseEnvironment: NodeJS.ProcessEnv;
   readonly resolveWorkflowEnvironment: (input: {
@@ -220,7 +221,11 @@ export async function executeStudyBuddyWorkflow(
   const sanitizedArgs = await sanitizeArgumentOverrides(input, dependencies, workflowEnvironment);
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
-    args: [path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"), ...sanitizedArgs],
+    args: [
+      dependencies.taskModulePath ??
+        path.join(dependencies.packagedRoot, "bin", "study_buddy_task.mjs"),
+      ...sanitizedArgs,
+    ],
     cwd: input.workspace,
     environment: {
       ...dependencies.baseEnvironment,

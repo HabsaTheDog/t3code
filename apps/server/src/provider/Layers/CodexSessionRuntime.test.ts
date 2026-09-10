@@ -304,6 +304,19 @@ describe("buildTurnStartParams", () => {
       /Never invoke the wrapper with an unassigned shell expansion such as `"\$SB_PROMPT"`/,
     );
     assert.match(instructions, /zero-length prompt must fail before any run directory/i);
+    assert.match(
+      instructions,
+      /`answer\.md` is the canonical user-facing answer[\s\S]*do not independently recompute, shift, broaden, or contradict/i,
+    );
+    assert.match(
+      instructions,
+      /absence of a matching calendar event never proves that no task is due/,
+    );
+    assert.match(instructions, /workflow supervisor owns idle and runtime limits/);
+    assert.match(
+      instructions,
+      /If no canonical answer exists after failure or cancellation[\s\S]*do not claim that nothing is due/,
+    );
   });
 
   it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {
@@ -461,7 +474,11 @@ describe("openCodexThread", () => {
 
       assert.equal(payload?.approvalPolicy, expectedApprovalPolicy);
       assert.equal(payload?.approvalsReviewer, "user");
-      assert.deepStrictEqual(payload?.config, { default_permissions: expectedProfile });
+      assert.deepStrictEqual(payload?.config, {
+        default_permissions: expectedProfile,
+        "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": `local-${runtimeMode}`,
+        "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": "/tmp/project",
+      });
       assert.equal(payload?.sandbox, undefined);
     }
   });
@@ -495,7 +512,11 @@ describe("openCodexThread", () => {
 
     assert.equal(payload?.approvalPolicy, "never");
     assert.equal(payload?.sandbox, undefined);
-    assert.deepStrictEqual(payload?.config, { default_permissions: ":danger-full-access" });
+    assert.deepStrictEqual(payload?.config, {
+      default_permissions: ":danger-full-access",
+      "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": "thread-secure",
+      "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": "/tmp/project",
+    });
   });
 
   it("falls back to thread/start when resume fails recoverably", async () => {

@@ -34,6 +34,8 @@ describe("parseLinuxDesktopEnvironment", () => {
         [
           "DISPLAY=:0",
           "WAYLAND_DISPLAY=wayland-0",
+          "XDG_CURRENT_DESKTOP=GNOME",
+          "DESKTOP_SESSION=gnome",
           "XDG_SESSION_TYPE=wayland",
           "XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.test",
           "UNRELATED_SECRET=do-not-copy",
@@ -43,6 +45,8 @@ describe("parseLinuxDesktopEnvironment", () => {
     ).toEqual({
       DISPLAY: ":0",
       WAYLAND_DISPLAY: "wayland-0",
+      XDG_CURRENT_DESKTOP: "GNOME",
+      DESKTOP_SESSION: "gnome",
       XDG_SESSION_TYPE: "wayland",
       XAUTHORITY: "/run/user/1000/.mutter-Xwaylandauth.test",
     });
@@ -61,6 +65,8 @@ describe("mergeMissingLinuxDesktopEnvironment", () => {
         {
           DISPLAY: ":0",
           WAYLAND_DISPLAY: "wayland-0",
+          XDG_CURRENT_DESKTOP: "GNOME",
+          DESKTOP_SESSION: "gnome",
           XDG_SESSION_TYPE: "wayland",
         },
         "linux",
@@ -68,6 +74,8 @@ describe("mergeMissingLinuxDesktopEnvironment", () => {
     ).toEqual({
       DISPLAY: ":7",
       WAYLAND_DISPLAY: "wayland-0",
+      XDG_CURRENT_DESKTOP: "GNOME",
+      DESKTOP_SESSION: "gnome",
       XDG_SESSION_TYPE: "wayland",
       PATH: "/bin",
     });

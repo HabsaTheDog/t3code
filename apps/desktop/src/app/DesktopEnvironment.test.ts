@@ -66,6 +66,11 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
       assert.equal(environment.studyBuddyRoot, "/");
+      assert.equal(environment.studyBuddyTaskWrapperPath, "/repo/scripts/study-buddy-dev-task");
+      assert.equal(
+        environment.studyBuddyTaskModulePath,
+        "/repo/scripts/study-buddy-packaged-task.mjs",
+      );
       assert.equal(environment.appUserModelId, "com.studybuddy.t3code.dev");
       assert.equal(environment.linuxDesktopEntryName, "study-buddy-t3code-dev.desktop");
       assert.equal(environment.linuxWmClass, "study-buddy-t3code-dev");
@@ -118,6 +123,10 @@ describe("DesktopEnvironment", () => {
         environment.studyBuddyTaskWrapperPath,
         "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime/bin/study_buddy_task",
       );
+      assert.equal(
+        environment.studyBuddyTaskModulePath,
+        "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime/bin/study_buddy_task.mjs",
+      );
     }),
   );
 
@@ -130,6 +139,21 @@ describe("DesktopEnvironment", () => {
         "/Applications/T3 Code.app/Contents/Resources/study-buddy-runtime/bin/study_buddy_task.cmd",
       );
       assert.notInclude(environment.studyBuddyTaskWrapperPath, ".sh");
+    }),
+  );
+
+  it.effect("selects the repository broker bridge for Windows development", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { platform: "win32" },
+        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+      );
+
+      assert.equal(environment.studyBuddyTaskWrapperPath, "/repo/scripts/study-buddy-dev-task.cmd");
+      assert.equal(
+        environment.studyBuddyTaskModulePath,
+        "/repo/scripts/study-buddy-packaged-task.mjs",
+      );
     }),
   );
 
