@@ -32,6 +32,9 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
+import { ServerConfig } from "../../config.ts";
+import { readWorkflowReply } from "../../custom-skills/sources/workflowReply.ts";
+
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -941,6 +944,7 @@ function runtimeEventToActivities(
 }
 
 const make = Effect.gen(function* () {
+  const workflowConfig = yield* Effect.serviceOption(ServerConfig);
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -2068,6 +2072,27 @@ const make = Effect.gen(function* () {
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
+          // The workflow broker binds validated output to this exact turn. Apply it
+          // only at successful terminal delivery, after all streamed segments.
+          if (event.payload.state === "completed" && Option.isSome(workflowConfig)) {
+            const text = yield* Effect.promise(() =>
+              readWorkflowReply(workflowConfig.value.stateDir, thread.id, turnId),
+            );
+            if (text !== null) {
+              const finalMessage = messages.findLast(
+                (message) => message.role === "assistant" && message.turnId === turnId,
+              );
+              yield* orchestrationEngine.dispatch({
+                type: "thread.message.assistant.complete",
+                commandId: yield* providerCommandId(event, "workflow-answer-complete"),
+                threadId: thread.id,
+                messageId: finalMessage?.id ?? MessageId.make(`assistant:workflow:${turnId}`),
+                turnId,
+                text,
+                createdAt: now,
+              });
+            }
+          }
           yield* clearAssistantMessageIdsForTurn(thread.id, turnId);
           yield* clearAssistantSegmentStateForTurn(thread.id, turnId);
 

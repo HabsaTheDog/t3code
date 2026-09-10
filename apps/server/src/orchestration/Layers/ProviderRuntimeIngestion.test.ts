@@ -47,6 +47,7 @@ import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { saveWorkflowReply } from "../../custom-skills/sources/workflowReply.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -191,7 +192,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | ServerConfig,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -217,7 +221,10 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
+  async function createHarness(options?: {
+    serverSettings?: Partial<ServerSettings>;
+    isolatedState?: boolean;
+  }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
@@ -239,7 +246,12 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(
+        ServerConfig.layerTest(
+          process.cwd(),
+          options?.isolatedState ? makeTempDir("workflow-state-") : process.cwd(),
+        ),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -309,7 +321,10 @@ describe("ProviderRuntimeIngestion", () => {
       updatedAt: createdAt,
     });
 
+    const config = await runtime.runPromise(Effect.service(ServerConfig));
     return {
+      stateDir: config.stateDir,
+      workspaceRoot,
       engine,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
@@ -317,6 +332,77 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+
+  it.each(["completed", "failed", "interrupted", "cancelled"] as const)(
+    "delivers the full validated reply only on successful completion (%s)",
+    async (state) => {
+      const harness = await createHarness({ isolatedState: true });
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const common = {
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("workflow-turn"),
+        createdAt,
+      };
+      harness.emit({ ...common, type: "turn.started", eventId: asEventId("workflow-start") });
+      await waitForThread(harness.readModel, (t) => t.session?.activeTurnId === common.turnId);
+      const source = path.join(harness.workspaceRoot, "study-buddy-data", "run", "answer.json");
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      const text = "Frist: 23:45.\n\nUnbekannte Frist: [Aufgabe](https://example.org/task).";
+      fs.writeFileSync(
+        source,
+        JSON.stringify({
+          schemaVersion: 1,
+          kind: "quick_answer",
+          prompt: "Fristen",
+          answer: text,
+          status: "partial",
+          generatedAt: createdAt,
+        }),
+      );
+      fs.writeFileSync(path.join(path.dirname(source), "answer.md"), text);
+      expect(
+        await saveWorkflowReply({
+          stateDir: harness.stateDir,
+          workspace: harness.workspaceRoot,
+          startedAt: 0,
+          binding: { threadId: common.threadId, turnId: common.turnId, prompt: "Fristen" },
+          result: { exitCode: 0, stdout: `Wrote answer data: ${source}\n`, stderr: "" },
+        }),
+      ).toBe(true);
+      harness.emit({
+        ...common,
+        type: "content.delta",
+        eventId: asEventId("workflow-short-delta"),
+        itemId: asItemId("workflow-final"),
+        payload: { streamKind: "assistant_text", delta: "Shortened answer" },
+      });
+      harness.emit({
+        ...common,
+        type: "item.completed",
+        eventId: asEventId("workflow-short-complete"),
+        itemId: asItemId("workflow-final"),
+        payload: { itemType: "assistant_message", status: "completed" },
+      });
+      await harness.drain();
+      let thread = (await harness.readModel()).threads[0]!;
+      expect(thread.messages.findLast((m) => m.role === "assistant")?.text).toBe(
+        "Shortened answer",
+      );
+      harness.emit({
+        ...common,
+        type: "turn.completed",
+        eventId: asEventId("workflow-end"),
+        payload: { state },
+      });
+      await harness.drain();
+      thread = (await harness.readModel()).threads[0]!;
+      const replies = thread.messages.filter((m) => m.role === "assistant");
+      expect(replies).toHaveLength(1);
+      expect(replies[0]?.text).toBe(state === "completed" ? text : "Shortened answer");
+      expect(replies[0]?.streaming).toBe(false);
+    },
+  );
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();
