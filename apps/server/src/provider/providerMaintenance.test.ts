@@ -524,6 +524,120 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect("bypasses Study Buddy's packaged npm shim for npm-managed providers", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("study-buddy-provider-maintenance-npm");
+      const runtimeRoot = path.join(tempDir, "study-buddy-runtime");
+      const runtimeBinDir = path.join(runtimeRoot, "bin");
+      const nvmBinDir = path.join(tempDir, ".nvm", "versions", "node", "v24", "bin");
+      const packageBinDir = path.join(
+        tempDir,
+        ".nvm",
+        "versions",
+        "node",
+        "v24",
+        "lib",
+        "node_modules",
+        "@example",
+        "package-tool",
+        "bin",
+      );
+      mkdirSync(runtimeBinDir, { recursive: true });
+      mkdirSync(nvmBinDir, { recursive: true });
+      mkdirSync(packageBinDir, { recursive: true });
+
+      const packagedNpmShim = path.join(runtimeBinDir, "npm");
+      const externalNpm = path.join(nvmBinDir, "npm");
+      const packageBinPath = path.join(packageBinDir, "package-tool.js");
+      const packageSymlink = path.join(nvmBinDir, "package-tool");
+      for (const executablePath of [packagedNpmShim, externalNpm, packageBinPath]) {
+        writeFileSync(executablePath, "#!/bin/sh\n");
+        chmodSync(executablePath, 0o755);
+      }
+      symlinkSync(packageBinPath, packageSymlink);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: packageSymlink,
+        platform: "linux",
+        env: {
+          PATH: `${runtimeBinDir}:${nvmBinDir}`,
+          STUDY_BUDDY_ROOT: runtimeRoot,
+        },
+      });
+
+      expect(capabilities).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        update: {
+          command: "npm install -g @example/package-tool@latest",
+          executable: externalNpm,
+          args: ["install", "-g", "@example/package-tool@latest"],
+          lockKey: "npm-global",
+        },
+      });
+    }),
+  );
+
+  it.effect("disables one-click updates when only the packaged npm shim is available", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("study-buddy-provider-maintenance-shim-only");
+      const runtimeRoot = path.join(tempDir, "study-buddy-runtime");
+      const runtimeBinDir = path.join(runtimeRoot, "bin");
+      mkdirSync(runtimeBinDir, { recursive: true });
+      const packagedNpmShim = path.join(runtimeBinDir, "npm");
+      writeFileSync(packagedNpmShim, "#!/bin/sh\n");
+      chmodSync(packagedNpmShim, 0o755);
+
+      expect(
+        packageToolUpdate.resolve({
+          platform: "linux",
+          env: {
+            PATH: runtimeBinDir,
+            STUDY_BUDDY_ROOT: runtimeRoot,
+          },
+        }),
+      ).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        update: null,
+      });
+    }),
+  );
+
+  it.effect("bypasses the packaged npm.cmd shim on Windows", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("study-buddy-provider-maintenance-windows-npm");
+      const runtimeRoot = path.join(tempDir, "study-buddy-runtime");
+      const runtimeBinDir = path.join(runtimeRoot, "bin");
+      const userNpmBinDir = path.join(tempDir, "AppData", "Roaming", "npm");
+      mkdirSync(runtimeBinDir, { recursive: true });
+      mkdirSync(userNpmBinDir, { recursive: true });
+      writeFileSync(path.join(runtimeBinDir, "npm.cmd"), "@echo off\r\n");
+      const externalNpm = path.join(userNpmBinDir, "npm.cmd");
+      writeFileSync(externalNpm, "@echo off\r\n");
+
+      expect(
+        packageToolUpdate.resolve({
+          platform: "win32",
+          env: {
+            PATH: `${runtimeBinDir};${userNpmBinDir}`,
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            STUDY_BUDDY_ROOT: runtimeRoot,
+          },
+        }),
+      ).toEqual({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        update: {
+          command: "npm install -g @example/package-tool@latest",
+          executable: externalNpm,
+          args: ["install", "-g", "@example/package-tool@latest"],
+          lockKey: "npm-global",
+        },
+      });
+    }),
+  );
+
   it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");

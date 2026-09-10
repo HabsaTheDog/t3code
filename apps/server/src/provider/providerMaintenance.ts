@@ -76,6 +76,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly updateExecutable: string | null;
+  readonly updateCommandExecutable?: string;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
 }): ProviderMaintenanceCapabilities {
@@ -83,7 +84,10 @@ export function makeProviderMaintenanceCapabilities(input: {
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: [
+            input.updateCommandExecutable ?? input.updateExecutable,
+            ...input.updateArgs,
+          ].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -108,56 +112,155 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   });
 }
 
+function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
+  return platform === "win32" ? ";" : ":";
+}
+
+function normalizePathForComparison(value: string, platform: NodeJS.Platform): string {
+  const unquoted = value.trim().replace(/^(["'])(.*)\1$/, "$2");
+  const normalized = unquoted.replaceAll("\\", "/").replace(/\/+$/, "");
+  return platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function studyBuddyRuntimeBinPaths(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): ReadonlySet<string> {
+  const roots = [env.STUDY_BUDDY_ROOT, env.STUDY_BUDDY_T3_ROOT]
+    .map(nonEmptyString)
+    .filter((root): root is string => root !== null);
+  return new Set(roots.map((root) => normalizePathForComparison(`${root}/bin`, platform)));
+}
+
+function isStudyBuddyRuntimeCommand(
+  commandPath: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): boolean {
+  const normalizedCommandPath = normalizePathForComparison(commandPath, platform);
+  const commandDirectory = normalizedCommandPath.slice(0, normalizedCommandPath.lastIndexOf("/"));
+  return studyBuddyRuntimeBinPaths(env, platform).has(commandDirectory);
+}
+
+function environmentWithoutStudyBuddyRuntimeBin(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  const pathValue = env.PATH ?? env.Path ?? env.path ?? "";
+  const runtimeBinPaths = studyBuddyRuntimeBinPaths(env, platform);
+  const filteredPath = pathValue
+    .split(pathDelimiterForPlatform(platform))
+    .filter((entry) => !runtimeBinPaths.has(normalizePathForComparison(entry, platform)))
+    .join(pathDelimiterForPlatform(platform));
+  return {
+    ...env,
+    PATH: filteredPath,
+  };
+}
+
+/**
+ * Study Buddy prepends a deliberately restricted npm shim for packaged workflow
+ * scripts. Provider maintenance must never mistake that shim for the user's
+ * package manager. Preserve the normal bare command everywhere else, but pin an
+ * external executable when the packaged runtime shadows it.
+ */
+function resolveExternalMaintenanceExecutable(
+  executable: string,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
+): string | null {
+  const platform = options?.platform ?? process.platform;
+  const env = options?.env ?? process.env;
+  const resolvedExecutable = resolveCommandPath(executable, { platform, env });
+  if (!resolvedExecutable || !isStudyBuddyRuntimeCommand(resolvedExecutable, env, platform)) {
+    return executable;
+  }
+
+  return resolveCommandPath(executable, {
+    platform,
+    env: environmentWithoutStudyBuddyRuntimeBin(env, platform),
+  });
+}
+
+function makePackageManagerProviderMaintenanceCapabilities(input: {
+  readonly definition: PackageManagedProviderMaintenanceDefinition;
+  readonly options: ProviderMaintenanceCapabilityResolutionOptions | undefined;
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+  readonly lockKey: string;
+}): ProviderMaintenanceCapabilities {
+  const updateExecutable = resolveExternalMaintenanceExecutable(input.executable, input.options);
+  if (!updateExecutable) {
+    return makeManualOnlyProviderMaintenanceCapabilities({
+      provider: input.definition.provider,
+      packageName: input.definition.npmPackageName,
+    });
+  }
+
+  return makeProviderMaintenanceCapabilities({
+    provider: input.definition.provider,
+    packageName: input.definition.npmPackageName,
+    updateExecutable,
+    updateCommandExecutable: input.executable,
+    updateArgs: input.args,
+    updateLockKey: input.lockKey,
+  });
+}
+
 function makeNpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-    updateExecutable: "npm",
-    updateArgs: ["install", "-g", `${definition.npmPackageName}@latest`],
-    updateLockKey: "npm-global",
+  return makePackageManagerProviderMaintenanceCapabilities({
+    definition,
+    options,
+    executable: "npm",
+    args: ["install", "-g", `${definition.npmPackageName}@latest`],
+    lockKey: "npm-global",
   });
 }
 
 function makeBunGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-    updateExecutable: "bun",
-    updateArgs: ["i", "-g", `${definition.npmPackageName}@latest`],
-    updateLockKey: "bun-global",
+  return makePackageManagerProviderMaintenanceCapabilities({
+    definition,
+    options,
+    executable: "bun",
+    args: ["i", "-g", `${definition.npmPackageName}@latest`],
+    lockKey: "bun-global",
   });
 }
 
 function makePnpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-    updateExecutable: "pnpm",
-    updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
-    updateLockKey: "pnpm-global",
+  return makePackageManagerProviderMaintenanceCapabilities({
+    definition,
+    options,
+    executable: "pnpm",
+    args: ["add", "-g", `${definition.npmPackageName}@latest`],
+    lockKey: "pnpm-global",
   });
 }
 
 function makeVitePlusGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-    updateExecutable: "vp",
-    updateArgs: ["i", "-g", definition.npmPackageName],
-    updateLockKey: "vite-plus-global",
+  return makePackageManagerProviderMaintenanceCapabilities({
+    definition,
+    options,
+    executable: "vp",
+    args: ["i", "-g", definition.npmPackageName],
+    lockKey: "vite-plus-global",
   });
 }
 
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  options?: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
   if (!definition.homebrewFormula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
@@ -166,12 +269,12 @@ function makeHomebrewProviderMaintenanceCapabilities(
     });
   }
 
-  return makeProviderMaintenanceCapabilities({
-    provider: definition.provider,
-    packageName: definition.npmPackageName,
-    updateExecutable: "brew",
-    updateArgs: ["upgrade", definition.homebrewFormula],
-    updateLockKey: "homebrew",
+  return makePackageManagerProviderMaintenanceCapabilities({
+    definition,
+    options,
+    executable: "brew",
+    args: ["upgrade", definition.homebrewFormula],
+    lockKey: "homebrew",
   });
 }
 
@@ -247,7 +350,7 @@ export function resolvePackageManagedProviderMaintenance(
 ): ProviderMaintenanceCapabilities {
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    return makeNpmGlobalProviderMaintenanceCapabilities(definition, options);
   }
 
   const resolvedCommandPath =
@@ -269,28 +372,28 @@ export function resolvePackageManagedProviderMaintenance(
     ) {
       return (
         makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
+        makeNpmGlobalProviderMaintenanceCapabilities(definition, options)
       );
     }
     if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition);
+      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition, options);
     }
     if (commandPaths.some(isBunGlobalCommandPath)) {
-      return makeBunGlobalProviderMaintenanceCapabilities(definition);
+      return makeBunGlobalProviderMaintenanceCapabilities(definition, options);
     }
     if (commandPaths.some(isPnpmGlobalCommandPath)) {
-      return makePnpmGlobalProviderMaintenanceCapabilities(definition);
+      return makePnpmGlobalProviderMaintenanceCapabilities(definition, options);
     }
     if (commandPaths.some(isNpmGlobalCommandPath)) {
-      return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+      return makeNpmGlobalProviderMaintenanceCapabilities(definition, options);
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      return makeHomebrewProviderMaintenanceCapabilities(definition, options);
     }
   }
 
   if (!hasPathSeparator(binaryPath)) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    return makeNpmGlobalProviderMaintenanceCapabilities(definition, options);
   }
 
   return makeManualOnlyProviderMaintenanceCapabilities({
