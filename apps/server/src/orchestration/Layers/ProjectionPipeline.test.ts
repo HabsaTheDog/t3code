@@ -2286,3 +2286,115 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+it.layer(BaseTestLayer)("whole-turn duration", (it) => {
+  it.effect("keeps completed commentary running until the provider session finishes", () =>
+    Effect.gen(function* () {
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const store = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("duration-thread");
+      const turnId = TurnId.make("duration-turn");
+      const started = "2026-09-12T10:00:00.000Z";
+      const completed = "2026-09-12T10:05:00.000Z";
+      const base = {
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      };
+      yield* store
+        .append({
+          ...base,
+          type: "thread.created",
+          eventId: EventId.make("duration-created"),
+          occurredAt: started,
+          payload: {
+            threadId,
+            projectId: ProjectId.make("duration-project"),
+            title: "Duration",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: started,
+            updatedAt: started,
+          },
+        })
+        .pipe(Effect.flatMap(pipeline.projectEvent));
+      yield* store
+        .append({
+          ...base,
+          type: "thread.session-set",
+          eventId: EventId.make("duration-start"),
+          occurredAt: started,
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: started,
+            },
+          },
+        })
+        .pipe(Effect.flatMap(pipeline.projectEvent));
+      yield* store
+        .append({
+          ...base,
+          type: "thread.message-sent",
+          eventId: EventId.make("duration-commentary"),
+          occurredAt: "2026-09-12T10:00:05.000Z",
+          payload: {
+            threadId,
+            turnId,
+            messageId: MessageId.make("duration-message"),
+            role: "assistant",
+            text: "Checking sources.",
+            streaming: false,
+            createdAt: "2026-09-12T10:00:05.000Z",
+            updatedAt: "2026-09-12T10:00:05.000Z",
+          },
+        })
+        .pipe(Effect.flatMap(pipeline.projectEvent));
+      const running = yield* sql<{
+        state: string;
+        completed_at: string | null;
+      }>`SELECT state, completed_at FROM projection_turns WHERE turn_id = ${turnId}`;
+      assert.deepEqual(running, [{ state: "running", completed_at: null }]);
+      yield* store
+        .append({
+          ...base,
+          type: "thread.session-set",
+          eventId: EventId.make("duration-end"),
+          occurredAt: completed,
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: completed,
+            },
+          },
+        })
+        .pipe(Effect.flatMap(pipeline.projectEvent));
+      const final = yield* sql<{
+        state: string;
+        started_at: string;
+        completed_at: string;
+      }>`SELECT state, started_at, completed_at FROM projection_turns WHERE turn_id = ${turnId}`;
+      assert.deepEqual(final, [
+        { state: "completed", started_at: started, completed_at: completed },
+      ]);
+    }),
+  );
+});

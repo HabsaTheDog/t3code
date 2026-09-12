@@ -1435,6 +1435,9 @@ function applyEnvironmentOrchestrationEvent(
                 event.payload.messageId,
               )
             : thread.turnDiffSummaries;
+        const turnStillRunning =
+          thread.session?.status === "running" &&
+          thread.session.activeTurnId === event.payload.turnId;
         const latestTurn: Thread["latestTurn"] =
           event.payload.role === "assistant" &&
           event.payload.turnId !== null &&
@@ -1442,13 +1445,14 @@ function applyEnvironmentOrchestrationEvent(
             ? buildLatestTurn({
                 previous: thread.latestTurn,
                 turnId: event.payload.turnId,
-                state: event.payload.streaming
-                  ? "running"
-                  : thread.latestTurn?.state === "interrupted"
-                    ? "interrupted"
-                    : thread.latestTurn?.state === "error"
-                      ? "error"
-                      : "completed",
+                state:
+                  event.payload.streaming || turnStillRunning
+                    ? "running"
+                    : thread.latestTurn?.state === "interrupted"
+                      ? "interrupted"
+                      : thread.latestTurn?.state === "error"
+                        ? "error"
+                        : "completed",
                 requestedAt:
                   thread.latestTurn?.turnId === event.payload.turnId
                     ? thread.latestTurn.requestedAt
@@ -1458,11 +1462,13 @@ function applyEnvironmentOrchestrationEvent(
                     ? (thread.latestTurn.startedAt ?? event.payload.createdAt)
                     : event.payload.createdAt,
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
-                completedAt: event.payload.streaming
-                  ? thread.latestTurn?.turnId === event.payload.turnId
-                    ? (thread.latestTurn.completedAt ?? null)
-                    : null
-                  : event.payload.updatedAt,
+                completedAt: turnStillRunning
+                  ? null
+                  : event.payload.streaming
+                    ? thread.latestTurn?.turnId === event.payload.turnId
+                      ? (thread.latestTurn.completedAt ?? null)
+                      : null
+                    : event.payload.updatedAt,
                 assistantMessageId: event.payload.messageId,
               })
             : thread.latestTurn;
@@ -1501,7 +1507,20 @@ function applyEnvironmentOrchestrationEvent(
                     : null,
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
-            : thread.latestTurn,
+            : event.payload.session.activeTurnId === null &&
+                ["ready", "stopped", "error"].includes(event.payload.session.status) &&
+                thread.latestTurn?.state === "running"
+              ? {
+                  ...thread.latestTurn,
+                  state:
+                    event.payload.session.status === "error"
+                      ? "error"
+                      : event.payload.session.status === "stopped"
+                        ? "interrupted"
+                        : "completed",
+                  completedAt: event.payload.session.updatedAt,
+                }
+              : thread.latestTurn,
         updatedAt: event.occurredAt,
       }));
 

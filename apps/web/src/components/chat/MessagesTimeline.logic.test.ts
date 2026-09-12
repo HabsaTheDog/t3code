@@ -727,3 +727,33 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
   });
 });
+
+it("uses the final evidence timestamp when an old turn stored its first commentary as completion", () => {
+  const rows = deriveMessagesTimelineRows({
+    timelineEntries: [
+      messageEntry("user-history", "user", "Weekly work?", null, "2026-09-10T19:57:53.089Z"),
+      workEntry("work-history", "turn-history", "2026-09-10T19:58:00Z"),
+      messageEntry(
+        "answer-history",
+        "assistant",
+        "The answer",
+        "turn-history",
+        "2026-09-10T20:03:51.181Z",
+        "2026-09-10T20:03:51.181Z",
+      ),
+    ],
+    latestTurn: {
+      turnId: "turn-history" as never,
+      state: "completed",
+      startedAt: "2026-09-10T19:57:53.089Z",
+      completedAt: "2026-09-10T19:57:58.438Z",
+    },
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaryByAssistantMessageId: new Map(),
+    revertTurnCountByUserMessageId: new Map(),
+  });
+  expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+    label: "Worked for 5m 58s",
+  });
+});

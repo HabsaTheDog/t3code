@@ -261,7 +261,10 @@ function deriveTurnFolds(input: {
       input.latestTurn?.turnId === turnId &&
       input.latestTurn.startedAt &&
       input.latestTurn.completedAt
-        ? computeElapsedMs(input.latestTurn.startedAt, input.latestTurn.completedAt)
+        ? computeElapsedMs(
+            group.startBoundary ?? input.latestTurn.startedAt,
+            maxIsoTimestamp(input.latestTurn.completedAt, lastEntryEnd) ?? lastEntryEnd,
+          )
         : computeElapsedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.completedAt ?? null, lastEntryEnd) ??

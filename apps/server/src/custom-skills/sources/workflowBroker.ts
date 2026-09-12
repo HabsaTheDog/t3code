@@ -3,6 +3,7 @@ import path from "node:path";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
   "prompt",
+  "source-evidence",
   "combined",
   "doc",
   "extract",

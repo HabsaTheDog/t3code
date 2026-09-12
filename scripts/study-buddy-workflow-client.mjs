@@ -3,6 +3,7 @@ import path from "node:path";
 
 const BROKERED_COMMANDS = new Set([
   "prompt",
+  "source-evidence",
   "combined",
   "doc",
   "extract",

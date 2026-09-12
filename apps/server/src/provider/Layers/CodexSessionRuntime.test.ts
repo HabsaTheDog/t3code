@@ -304,6 +304,11 @@ describe("buildTurnStartParams", () => {
       /Never invoke the wrapper with an unassigned shell expansion such as `"\$SB_PROMPT"`/,
     );
     assert.match(instructions, /zero-length prompt must fail before any run directory/i);
+    assert.match(instructions, /source-evidence/);
+    assert.match(
+      instructions,
+      /answer the complete original user request in your own words[\s\S]*native evidence handoff/i,
+    );
   });
 
   it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {

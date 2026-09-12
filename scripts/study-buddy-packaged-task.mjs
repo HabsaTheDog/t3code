@@ -24,6 +24,7 @@ const brokeredExitCode = await maybeRunBrokeredWorkflow(process.argv.slice(2));
 if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 
 const USAGE = `Usage:
+  study_buddy_task source-evidence "<prompt>" [extra args]
   study_buddy_task prompt "<natural language prompt>" [extra args]
   study_buddy_task combined "<natural language prompt>" [extra args]
   study_buddy_task doc "<prompt>" [extra args]
@@ -1053,6 +1054,8 @@ async function main(argv = process.argv.slice(2)) {
   }
 
   const runDir = prepareRunDir(prompt);
+  if (action === "source-evidence")
+    return runAgentInDir(prompt, runDir, ["--source-evidence-only", ...extra]);
   if (action === "combined")
     return runAgentInDir(prompt, runDir, ["--cis-url", defaultCisUrl, ...extra]);
   if (action === "extract")
