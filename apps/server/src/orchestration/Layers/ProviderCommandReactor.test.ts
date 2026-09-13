@@ -520,6 +520,92 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
   });
 
+  it.each([
+    { label: "voice only", text: "", transcripts: ["Explain how a heat pump works."] },
+    {
+      label: "typed text and voice",
+      text: "Help me understand this topic.",
+      transcripts: ["Explain how a heat pump works."],
+    },
+    {
+      label: "multiple voice notes",
+      text: "",
+      transcripts: ["Explain how a heat pump works.", "Include the role of the compressor."],
+    },
+  ])("names the first turn from the full provider input: $label", async ({ text, transcripts }) => {
+    const harness = await createHarness();
+    const titleSeed = text || "Voice input";
+    const providerInput = [
+      text,
+      ...transcripts.map(
+        (transcript, index) =>
+          `[Voice Input ${index + 1} — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]\n${transcript}`,
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    const attachments = transcripts.map((_, index) => ({
+      type: "voice" as const,
+      id: `voice-${index + 1}`,
+      durationMs: 5000,
+    }));
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "How heat pumps work" }));
+    harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: "heat-pump-explanation" }));
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-voice-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: titleSeed,
+        branch: "t3code/1234abcd",
+        worktreePath: harness.projectWorktreeRoot,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-voice-turn-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-voice"),
+          role: "user",
+          text,
+          attachments,
+        },
+        providerInput,
+        titleSeed,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+      message: providerInput,
+    });
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({ message: providerInput });
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: providerInput });
+    await waitFor(async () => {
+      const snapshot = await harness.readModel();
+      return (
+        snapshot.threads.find((thread) => thread.id === "thread-1")?.title === "How heat pumps work"
+      );
+    });
+    const snapshot = await harness.readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.messages.find((message) => message.id === "user-message-voice")).toMatchObject({
+      text,
+      attachments,
+    });
+    for (const transcript of transcripts) {
+      expect(JSON.stringify(thread)).not.toContain(transcript);
+    }
+  });
+
   it("does not overwrite an existing custom thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

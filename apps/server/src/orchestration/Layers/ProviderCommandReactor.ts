@@ -773,7 +773,8 @@ const make = Effect.gen(function* () {
           projects: project ? [project] : [],
         }) ?? process.cwd();
       const generationInput = {
-        messageText: message.text || "Voice note",
+        // Voice transcripts live in providerInput, not the visible message text.
+        messageText: providerMessageText || "Voice note",
         ...(message.attachments !== undefined
           ? { attachments: message.attachments.filter((attachment) => attachment.type === "image") }
           : {}),
