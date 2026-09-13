@@ -4132,7 +4132,7 @@ export default function ChatView(props: ChatViewProps) {
                     />
                   </div>
                 </div>
-                {isGitRepo && (
+                {isGitRepo && activeProject?.projectKind !== "quick-chat" && (
                   <BranchToolbar
                     environmentId={activeThread.environmentId}
                     threadId={activeThread.id}

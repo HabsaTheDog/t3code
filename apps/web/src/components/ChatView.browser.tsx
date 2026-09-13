@@ -2016,6 +2016,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
     document.body.innerHTML = "";
   });
 
+  it.each([
+    { viewport: DEFAULT_VIEWPORT, draft: false },
+    { viewport: DEFAULT_VIEWPORT, draft: true },
+    { viewport: COMPACT_FOOTER_VIEWPORT, draft: false },
+    { viewport: COMPACT_FOOTER_VIEWPORT, draft: true },
+  ])(
+    "hides checkout and branch controls in Quick Chats ($viewport.width, draft=$draft)",
+    async ({ viewport, draft }) => {
+      if (draft) setQuickChatDraftReservation();
+      const mounted = await mountChatView({
+        viewport,
+        snapshot: draft ? createSnapshotWithUnpromptedQuickChat() : createSnapshotWithQuickChat(),
+        initialPath: draft
+          ? `/draft/${QUICK_CHAT_DRAFT_ID}`
+          : serverThreadPath(QUICK_CHAT_THREAD_ID),
+      });
+
+      try {
+        await waitForComposerEditor();
+        expect(document.body.textContent).not.toContain("Local checkout");
+        expect(findButtonByText("Current checkout")).toBeNull();
+        expect(findButtonByText("main")).toBeNull();
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
+
+  it.each([DEFAULT_VIEWPORT, COMPACT_FOOTER_VIEWPORT])(
+    "keeps checkout and branch controls in project chats ($width)",
+    async (viewport) => {
+      const mounted = await mountChatView({
+        viewport,
+        snapshot: createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-checkout" as MessageId,
+          targetText: "project checkout controls",
+        }),
+      });
+
+      try {
+        await waitForComposerEditor();
+        await waitForButtonByText("main");
+        expect(document.body.textContent).toContain("Local checkout");
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
+
   it("renders locked single-environment mobile run context as a static workspace label", async () => {
     const mounted = await mountChatView({
       viewport: COMPACT_FOOTER_VIEWPORT,
