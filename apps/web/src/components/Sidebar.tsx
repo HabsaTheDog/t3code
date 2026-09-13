@@ -166,6 +166,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   getSidebarThreadIdsToPrewarm,
+  getNextQuickChatVisibleCount,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   resolveProjectStatusIndicator,
@@ -174,6 +175,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   getQuickChatThreadSections,
+  QUICK_CHAT_PAGE_SIZE,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -205,6 +207,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
+import { SidebarSectionSplitPane } from "./sidebar/SidebarSectionSplitPane";
 
 function captureThreadFavoriteChange(favorite: boolean, scope: "project" | "quick_chat"): void {
   const properties = {
@@ -2666,7 +2669,6 @@ const QuickChatSection = memo(function QuickChatSection({
   navigateToThread,
   archiveThread,
   deleteThread,
-  threadPreviewCount,
   attachThreadListAutoAnimateRef,
 }: {
   quickChatThreads: readonly SidebarThreadSummary[];
@@ -2676,10 +2678,9 @@ const QuickChatSection = memo(function QuickChatSection({
   navigateToThread: (threadRef: ScopedThreadRef) => void;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
-  threadPreviewCount: SidebarThreadPreviewCount;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [visibleThreadCount, setVisibleThreadCount] = useState(QUICK_CHAT_PAGE_SIZE);
   const { isMobile, setOpenMobile } = useSidebar();
   const confirmThreadDelete = useSettings<boolean>((settings) => settings.confirmThreadDelete);
   const confirmThreadArchive = useSettings<boolean>((settings) => settings.confirmThreadArchive);
@@ -2730,13 +2731,46 @@ const QuickChatSection = memo(function QuickChatSection({
     },
   });
   const quickChatButtonRender = useMemo(() => <button type="button" />, []);
-  const toggleButtonRender = useMemo(() => <button type="button" />, []);
-  const { previewThreads, overflowThreads } = useMemo(
-    () => getQuickChatThreadSections(quickChatThreads, threadPreviewCount),
-    [quickChatThreads, threadPreviewCount],
+  const quickChatScrollRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const minimumVisibleThreadCount = useMemo(() => {
+    const activeThreadIndex = quickChatThreads.findIndex(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+    );
+    return Math.max(QUICK_CHAT_PAGE_SIZE, activeThreadIndex + 1);
+  }, [quickChatThreads, routeThreadKey]);
+  const { previewThreads: renderedThreads, overflowThreads } = useMemo(
+    () =>
+      getQuickChatThreadSections(
+        quickChatThreads,
+        Math.max(visibleThreadCount, minimumVisibleThreadCount),
+      ),
+    [minimumVisibleThreadCount, quickChatThreads, visibleThreadCount],
   );
-  const renderedThreads = isExpanded ? quickChatThreads : previewThreads;
-  const hasOverflowingThreads = overflowThreads.length > 0;
+  const hasMoreThreads = overflowThreads.length > 0;
+
+  useEffect(() => {
+    if (!hasMoreThreads) return;
+    const root = quickChatScrollRef.current;
+    const sentinel = loadMoreSentinelRef.current;
+    if (!root || !sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisibleThreadCount((currentCount) =>
+          getNextQuickChatVisibleCount(
+            Math.max(currentCount, minimumVisibleThreadCount),
+            quickChatThreads.length,
+          ),
+        );
+      },
+      { root, rootMargin: "0px 0px 48px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMoreThreads, minimumVisibleThreadCount, quickChatThreads.length, renderedThreads.length]);
 
   const handleCreateQuickChat = useCallback(() => {
     void createQuickChat()
@@ -2755,10 +2789,6 @@ const QuickChatSection = memo(function QuickChatSection({
         );
       });
   }, [createQuickChat, isMobile, setOpenMobile]);
-
-  const handleToggle = useCallback(() => {
-    setIsExpanded((current) => !current);
-  }, []);
 
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
@@ -2924,8 +2954,8 @@ const QuickChatSection = memo(function QuickChatSection({
   );
 
   return (
-    <SidebarGroup className="px-2 pb-2 pt-0">
-      <SidebarMenu>
+    <SidebarGroup className="h-full min-h-0 px-2 pb-1 pt-0">
+      <SidebarMenu className="shrink-0">
         <SidebarMenuItem>
           <SidebarMenuButton
             render={quickChatButtonRender}
@@ -2941,52 +2971,48 @@ const QuickChatSection = memo(function QuickChatSection({
             <span className="min-w-0 flex-1 truncate text-left text-xs">Quick Chat</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        {quickChatThreads.length > 0 && (
-          <SidebarMenuItem>
-            <SidebarMenuSub
-              ref={attachThreadListAutoAnimateRef}
-              className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
-            >
-              {renderedThreads.map((thread) => (
-                <QuickChatThreadRow
-                  key={scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}
-                  thread={thread}
-                  routeThreadKey={routeThreadKey}
-                  navigateToThread={navigateToThread}
-                  handleThreadContextMenu={handleThreadContextMenu}
-                  appSettingsConfirmThreadArchive={confirmThreadArchive}
-                  renamingThreadKey={renamingThreadKey}
-                  renamingTitle={renamingTitle}
-                  setRenamingTitle={setRenamingTitle}
-                  renamingInputRef={renamingInputRef}
-                  renamingCommittedRef={renamingCommittedRef}
-                  confirmingArchiveThreadKey={confirmingArchiveThreadKey}
-                  setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
-                  confirmArchiveButtonRefs={confirmArchiveButtonRefs}
-                  commitRename={commitRename}
-                  cancelRename={cancelRename}
-                  attemptArchiveThread={attemptArchiveThread}
-                />
-              ))}
-              {hasOverflowingThreads && (
-                <SidebarMenuSubItem className="w-full">
-                  <SidebarMenuSubButton
-                    render={toggleButtonRender}
-                    data-thread-selection-safe
-                    size="sm"
-                    className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                    aria-expanded={isExpanded}
-                    data-testid="quick-chat-list-toggle"
-                    onClick={handleToggle}
-                  >
-                    <span>{isExpanded ? "Show less" : "Show more"}</span>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-              )}
-            </SidebarMenuSub>
-          </SidebarMenuItem>
-        )}
       </SidebarMenu>
+      {quickChatThreads.length > 0 && (
+        <div
+          ref={quickChatScrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          data-testid="quick-chat-scroll-pane"
+        >
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuSub
+                ref={attachThreadListAutoAnimateRef}
+                className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
+              >
+                {renderedThreads.map((thread) => (
+                  <QuickChatThreadRow
+                    key={scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))}
+                    thread={thread}
+                    routeThreadKey={routeThreadKey}
+                    navigateToThread={navigateToThread}
+                    handleThreadContextMenu={handleThreadContextMenu}
+                    appSettingsConfirmThreadArchive={confirmThreadArchive}
+                    renamingThreadKey={renamingThreadKey}
+                    renamingTitle={renamingTitle}
+                    setRenamingTitle={setRenamingTitle}
+                    renamingInputRef={renamingInputRef}
+                    renamingCommittedRef={renamingCommittedRef}
+                    confirmingArchiveThreadKey={confirmingArchiveThreadKey}
+                    setConfirmingArchiveThreadKey={setConfirmingArchiveThreadKey}
+                    confirmArchiveButtonRefs={confirmArchiveButtonRefs}
+                    commitRename={commitRename}
+                    cancelRename={cancelRename}
+                    attemptArchiveThread={attemptArchiveThread}
+                  />
+                ))}
+                {hasMoreThreads ? (
+                  <div ref={loadMoreSentinelRef} className="h-px w-full" aria-hidden />
+                ) : null}
+              </SidebarMenuSub>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </div>
+      )}
     </SidebarGroup>
   );
 });
@@ -3104,7 +3130,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   );
 
   return (
-    <SidebarContent className="gap-0">
+    <SidebarContent className="h-full min-h-0 gap-0 overflow-hidden">
       <SidebarGroup className="px-2 pt-2 pb-1">
         <SidebarMenu>
           <SidebarMenuItem>
@@ -3151,131 +3177,146 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </Alert>
         </SidebarGroup>
       ) : null}
-      <QuickChatSection
-        quickChatThreads={quickChatThreads}
-        routeThreadKey={routeThreadKey}
-        isCreatingQuickChat={isCreatingQuickChat}
-        createQuickChat={createQuickChat}
-        navigateToThread={navigateToThread}
-        archiveThread={archiveThread}
-        deleteThread={deleteThread}
-        threadPreviewCount={threadPreviewCount}
-        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-      />
-      <SidebarGroup className="px-2 py-2">
-        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-            Projects
-          </span>
-          <div className="flex items-center gap-1">
-            <ProjectSortMenu
-              projectSortOrder={projectSortOrder}
-              threadSortOrder={threadSortOrder}
-              projectGroupingMode={projectGroupingMode}
-              threadPreviewCount={threadPreviewCount}
-              onProjectSortOrderChange={handleProjectSortOrderChange}
-              onThreadSortOrderChange={handleThreadSortOrderChange}
-              onProjectGroupingModeChange={handleProjectGroupingModeChange}
-              onThreadPreviewCountChange={handleThreadPreviewCountChange}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Add project"
-                    data-testid="sidebar-add-project-trigger"
-                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
-                  />
-                }
-              >
-                <FolderPlusIcon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
-            </Tooltip>
-          </div>
-        </div>
-
-        {isManualProjectSorting ? (
-          <DndContext
-            sensors={projectDnDSensors}
-            collisionDetection={projectCollisionDetection}
-            modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-            onDragStart={handleProjectDragStart}
-            onDragEnd={handleProjectDragEnd}
-            onDragCancel={handleProjectDragCancel}
-          >
-            <SidebarMenu>
-              <SortableContext
-                items={sortedProjects.map((project) => project.projectKey)}
-                strategy={verticalListSortingStrategy}
-              >
-                {sortedProjects.map((project) => (
-                  <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
-                    {(dragHandleProps) => (
-                      <SidebarProjectItem
-                        project={project}
-                        isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                        activeRouteThreadKey={
-                          activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                        }
-                        newThreadShortcutLabel={newThreadShortcutLabel}
-                        handleNewThread={handleNewThread}
-                        archiveThread={archiveThread}
-                        deleteThread={deleteThread}
-                        threadJumpLabelByKey={threadJumpLabelByKey}
-                        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                        expandThreadListForProject={expandThreadListForProject}
-                        collapseThreadListForProject={collapseThreadListForProject}
-                        dragInProgressRef={dragInProgressRef}
-                        suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                        suppressProjectClickForContextMenuRef={
-                          suppressProjectClickForContextMenuRef
-                        }
-                        isManualProjectSorting={isManualProjectSorting}
-                        dragHandleProps={dragHandleProps}
+      <SidebarSectionSplitPane
+        quickChats={
+          <QuickChatSection
+            quickChatThreads={quickChatThreads}
+            routeThreadKey={routeThreadKey}
+            isCreatingQuickChat={isCreatingQuickChat}
+            createQuickChat={createQuickChat}
+            navigateToThread={navigateToThread}
+            archiveThread={archiveThread}
+            deleteThread={deleteThread}
+            attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+          />
+        }
+        projects={
+          <SidebarGroup className="h-full min-h-0 px-2 py-1">
+            <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Projects
+              </span>
+              <div className="flex items-center gap-1">
+                <ProjectSortMenu
+                  projectSortOrder={projectSortOrder}
+                  threadSortOrder={threadSortOrder}
+                  projectGroupingMode={projectGroupingMode}
+                  threadPreviewCount={threadPreviewCount}
+                  onProjectSortOrderChange={handleProjectSortOrderChange}
+                  onThreadSortOrderChange={handleThreadSortOrderChange}
+                  onProjectGroupingModeChange={handleProjectGroupingModeChange}
+                  onThreadPreviewCountChange={handleThreadPreviewCountChange}
+                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Add project"
+                        data-testid="sidebar-add-project-trigger"
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                        onClick={openAddProject}
                       />
-                    )}
-                  </SortableProjectItem>
-                ))}
-              </SortableContext>
-            </SidebarMenu>
-          </DndContext>
-        ) : (
-          <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-            {sortedProjects.map((project) => (
-              <SidebarProjectListRow
-                key={project.projectKey}
-                project={project}
-                isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                activeRouteThreadKey={
-                  activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                }
-                newThreadShortcutLabel={newThreadShortcutLabel}
-                handleNewThread={handleNewThread}
-                archiveThread={archiveThread}
-                deleteThread={deleteThread}
-                threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                expandThreadListForProject={expandThreadListForProject}
-                collapseThreadListForProject={collapseThreadListForProject}
-                dragInProgressRef={dragInProgressRef}
-                suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
-                dragHandleProps={null}
-              />
-            ))}
-          </SidebarMenu>
-        )}
+                    }
+                  >
+                    <FolderPlusIcon className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipPopup side="right">Add project</TooltipPopup>
+                </Tooltip>
+              </div>
+            </div>
 
-        {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            No projects yet
-          </div>
-        )}
-      </SidebarGroup>
+            <div
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              data-testid="projects-scroll-pane"
+            >
+              {isManualProjectSorting ? (
+                <DndContext
+                  sensors={projectDnDSensors}
+                  collisionDetection={projectCollisionDetection}
+                  modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+                  onDragStart={handleProjectDragStart}
+                  onDragEnd={handleProjectDragEnd}
+                  onDragCancel={handleProjectDragCancel}
+                >
+                  <SidebarMenu>
+                    <SortableContext
+                      items={sortedProjects.map((project) => project.projectKey)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {sortedProjects.map((project) => (
+                        <SortableProjectItem
+                          key={project.projectKey}
+                          projectId={project.projectKey}
+                        >
+                          {(dragHandleProps) => (
+                            <SidebarProjectItem
+                              project={project}
+                              isThreadListExpanded={expandedThreadListsByProject.has(
+                                project.projectKey,
+                              )}
+                              activeRouteThreadKey={
+                                activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                              }
+                              newThreadShortcutLabel={newThreadShortcutLabel}
+                              handleNewThread={handleNewThread}
+                              archiveThread={archiveThread}
+                              deleteThread={deleteThread}
+                              threadJumpLabelByKey={threadJumpLabelByKey}
+                              attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                              expandThreadListForProject={expandThreadListForProject}
+                              collapseThreadListForProject={collapseThreadListForProject}
+                              dragInProgressRef={dragInProgressRef}
+                              suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                              suppressProjectClickForContextMenuRef={
+                                suppressProjectClickForContextMenuRef
+                              }
+                              isManualProjectSorting={isManualProjectSorting}
+                              dragHandleProps={dragHandleProps}
+                            />
+                          )}
+                        </SortableProjectItem>
+                      ))}
+                    </SortableContext>
+                  </SidebarMenu>
+                </DndContext>
+              ) : (
+                <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+                  {sortedProjects.map((project) => (
+                    <SidebarProjectListRow
+                      key={project.projectKey}
+                      project={project}
+                      isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+                      activeRouteThreadKey={
+                        activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                      }
+                      newThreadShortcutLabel={newThreadShortcutLabel}
+                      handleNewThread={handleNewThread}
+                      archiveThread={archiveThread}
+                      deleteThread={deleteThread}
+                      threadJumpLabelByKey={threadJumpLabelByKey}
+                      attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                      expandThreadListForProject={expandThreadListForProject}
+                      collapseThreadListForProject={collapseThreadListForProject}
+                      dragInProgressRef={dragInProgressRef}
+                      suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                      suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+                      isManualProjectSorting={isManualProjectSorting}
+                      dragHandleProps={null}
+                    />
+                  ))}
+                </SidebarMenu>
+              )}
+
+              {projectsLength === 0 && (
+                <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
+                  No projects yet
+                </div>
+              )}
+            </div>
+          </SidebarGroup>
+        }
+      />
     </SidebarContent>
   );
 });

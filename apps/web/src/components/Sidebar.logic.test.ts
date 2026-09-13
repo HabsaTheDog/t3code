@@ -3,6 +3,10 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  clampSidebarQuickChatPaneRatio,
+  DEFAULT_SIDEBAR_QUICK_CHAT_PANE_RATIO,
+  getNextQuickChatVisibleCount,
+  getSidebarQuickChatPaneRatioFromPointer,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -87,6 +91,45 @@ describe("getQuickChatThreadSections", () => {
       previewThreads: threads,
       overflowThreads: [],
     });
+  });
+});
+
+describe("Quick Chat pane sizing", () => {
+  it("clamps persisted ratios to keep both sidebar panes usable", () => {
+    expect(clampSidebarQuickChatPaneRatio(0.05)).toBe(0.2);
+    expect(clampSidebarQuickChatPaneRatio(0.55)).toBe(0.55);
+    expect(clampSidebarQuickChatPaneRatio(0.95)).toBe(0.75);
+    expect(clampSidebarQuickChatPaneRatio(Number.NaN)).toBe(DEFAULT_SIDEBAR_QUICK_CHAT_PANE_RATIO);
+  });
+
+  it("converts a divider pointer position into a bounded pane ratio", () => {
+    expect(
+      getSidebarQuickChatPaneRatioFromPointer({
+        clientY: 300,
+        containerTop: 100,
+        containerHeight: 500,
+      }),
+    ).toBe(0.4);
+    expect(
+      getSidebarQuickChatPaneRatioFromPointer({
+        clientY: 90,
+        containerTop: 100,
+        containerHeight: 500,
+      }),
+    ).toBe(0.2);
+    expect(
+      getSidebarQuickChatPaneRatioFromPointer({
+        clientY: 600,
+        containerTop: 100,
+        containerHeight: 500,
+      }),
+    ).toBe(0.75);
+  });
+
+  it("reveals Quick Chats in bounded pages", () => {
+    expect(getNextQuickChatVisibleCount(10, 37)).toBe(20);
+    expect(getNextQuickChatVisibleCount(30, 37)).toBe(37);
+    expect(getNextQuickChatVisibleCount(0, 4)).toBe(4);
   });
 });
 

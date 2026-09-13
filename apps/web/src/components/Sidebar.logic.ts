@@ -15,6 +15,10 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
+export const QUICK_CHAT_PAGE_SIZE = 10;
+export const DEFAULT_SIDEBAR_QUICK_CHAT_PANE_RATIO = 0.4;
+export const MIN_SIDEBAR_QUICK_CHAT_PANE_RATIO = 0.2;
+export const MAX_SIDEBAR_QUICK_CHAT_PANE_RATIO = 0.75;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
@@ -277,6 +281,40 @@ export function getQuickChatThreadSections<TThread>(
     previewThreads: threads.slice(0, safePreviewCount),
     overflowThreads: threads.slice(safePreviewCount),
   };
+}
+
+export function clampSidebarQuickChatPaneRatio(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_SIDEBAR_QUICK_CHAT_PANE_RATIO;
+  }
+  return Math.min(
+    MAX_SIDEBAR_QUICK_CHAT_PANE_RATIO,
+    Math.max(MIN_SIDEBAR_QUICK_CHAT_PANE_RATIO, value),
+  );
+}
+
+export function getSidebarQuickChatPaneRatioFromPointer(input: {
+  clientY: number;
+  containerTop: number;
+  containerHeight: number;
+}): number {
+  if (!Number.isFinite(input.containerHeight) || input.containerHeight <= 0) {
+    return DEFAULT_SIDEBAR_QUICK_CHAT_PANE_RATIO;
+  }
+  return clampSidebarQuickChatPaneRatio(
+    (input.clientY - input.containerTop) / input.containerHeight,
+  );
+}
+
+export function getNextQuickChatVisibleCount(
+  currentCount: number,
+  totalCount: number,
+  pageSize = QUICK_CHAT_PAGE_SIZE,
+): number {
+  const safeTotalCount = Math.max(0, Math.floor(totalCount));
+  const safeCurrentCount = Math.max(0, Math.floor(currentCount));
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+  return Math.min(safeTotalCount, safeCurrentCount + safePageSize);
 }
 
 export function resolveAdjacentThreadId<T>(input: {
