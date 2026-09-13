@@ -2038,6 +2038,38 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(document.body.textContent).not.toContain("Local checkout");
         expect(findButtonByText("Current checkout")).toBeNull();
         expect(findButtonByText("main")).toBeNull();
+        const composer = document.querySelector<HTMLElement>('[data-chat-composer-form="true"]')!;
+        const quickChatBottom = composer.getBoundingClientRect().bottom;
+
+        await mounted.router.navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: LOCAL_ENVIRONMENT_ID, threadId: THREAD_ID },
+        });
+        await waitForButtonByText("main");
+        await waitForLayout();
+        const projectBottom = document
+          .querySelector<HTMLElement>('[data-chat-composer-form="true"]')!
+          .getBoundingClientRect().bottom;
+        expect(Math.abs(projectBottom - quickChatBottom)).toBeLessThanOrEqual(1);
+
+        if (draft) {
+          await mounted.router.navigate({
+            to: "/draft/$draftId",
+            params: { draftId: QUICK_CHAT_DRAFT_ID },
+          });
+        } else {
+          await mounted.router.navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId: LOCAL_ENVIRONMENT_ID, threadId: QUICK_CHAT_THREAD_ID },
+          });
+        }
+        await waitForComposerEditor();
+        await waitForLayout();
+        expect(document.body.textContent).not.toContain("Local checkout");
+        const returnedBottom = document
+          .querySelector<HTMLElement>('[data-chat-composer-form="true"]')!
+          .getBoundingClientRect().bottom;
+        expect(Math.abs(returnedBottom - projectBottom)).toBeLessThanOrEqual(1);
       } finally {
         await mounted.cleanup();
       }

@@ -4132,7 +4132,10 @@ export default function ChatView(props: ChatViewProps) {
                     />
                   </div>
                 </div>
-                {isGitRepo && activeProject?.projectKind !== "quick-chat" && (
+                {activeProject?.projectKind === "quick-chat" ? (
+                  // Match the toolbar's responsive control height and vertical padding.
+                  <div aria-hidden="true" className="h-11 shrink-0 sm:h-10" />
+                ) : isGitRepo ? (
                   <BranchToolbar
                     environmentId={activeThread.environmentId}
                     threadId={activeThread.id}
@@ -4155,7 +4158,7 @@ export default function ChatView(props: ChatViewProps) {
                     {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
                     availableEnvironments={logicalProjectEnvironments}
                   />
-                )}
+                ) : null}
               </div>
 
               {pullRequestDialogState ? (
