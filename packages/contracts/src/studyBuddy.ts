@@ -177,6 +177,9 @@ export const StudyBuddyExecutionProfileDefinition = Schema.Struct({
   kind: Schema.Literals(["built-in", "custom"]),
   icon: Schema.optionalKey(StudyBuddyProfileIcon),
   roles: StudyBuddyProfileRoles,
+  taskOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString.check(Schema.isMaxLength(80)), StudyBuddyWorkerRole),
+  ),
 });
 export type StudyBuddyExecutionProfileDefinition = typeof StudyBuddyExecutionProfileDefinition.Type;
 
@@ -187,6 +190,9 @@ export const StudyBuddyCustomExecutionProfile = Schema.Struct({
   kind: Schema.Literal("custom"),
   icon: Schema.optionalKey(StudyBuddyProfileIcon),
   roles: StudyBuddyProfileRoles,
+  taskOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString.check(Schema.isMaxLength(80)), StudyBuddyWorkerRole),
+  ),
 });
 export type StudyBuddyCustomExecutionProfile = typeof StudyBuddyCustomExecutionProfile.Type;
 

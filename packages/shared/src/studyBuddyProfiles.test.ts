@@ -1,8 +1,13 @@
+import * as Schema from "effect/Schema";
+import { StudyBuddyCustomExecutionProfile } from "@t3tools/contracts";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   allStudyBuddyProfiles,
+  duplicateStudyBuddyProfile,
+  resolveStudyBuddyTask,
+  studyBuddyProfileOverrides,
   resolveStudyBuddyProfile,
   resolveStudyBuddyProfileForModelSelection,
   STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID,
@@ -49,19 +54,19 @@ describe("Study Buddy execution profiles", () => {
     });
     expect(balanced?.roles).toMatchObject({
       coordinator: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
-      contentAnalyzer: { model: "gpt-5.6-terra", reasoningEffort: "high" },
+      contentAnalyzer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
       quizSolver: { model: "gpt-5.6-terra", reasoningEffort: "high" },
       artifactPlanner: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
       artifactBuilder: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
-      qualityReviewer: { model: "gpt-5.6-sol", reasoningEffort: "high" },
+      qualityReviewer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
     });
     expect(quality?.roles).toMatchObject({
       coordinator: { model: "gpt-5.6-sol", reasoningEffort: "high" },
-      contentAnalyzer: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
+      contentAnalyzer: { model: "gpt-5.6-terra", retryReasoningEffort: "medium" },
       quizSolver: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
       artifactPlanner: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
       artifactBuilder: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
-      qualityReviewer: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
+      qualityReviewer: { model: "gpt-5.6-terra", retryReasoningEffort: "high" },
     });
   });
 
@@ -138,5 +143,68 @@ describe("Study Buddy execution profiles", () => {
     );
 
     expect(resolved.id).toBe("quality");
+  });
+});
+
+describe("task assignments", () => {
+  it("inherits roles, honors specialized overrides, and resets without changing sibling tasks", () => {
+    const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "custom-test");
+    const specialized = {
+      ...profile.roles.contentAnalyzer,
+      model: "gpt-solutions",
+      retryModel: "gpt-verify",
+    };
+    const changed = {
+      ...profile,
+      taskOverrides: { ...profile.taskOverrides, solution_generation: specialized },
+    };
+    expect(resolveStudyBuddyTask(changed, "solution_generation")).toEqual({
+      policy: specialized,
+      source: "Task override",
+    });
+    expect(resolveStudyBuddyTask(changed, "content_extraction").policy).toEqual(
+      profile.roles.contentAnalyzer,
+    );
+    const { solution_generation: _removed, ...remaining } = changed.taskOverrides;
+    const reset = { ...changed, taskOverrides: remaining };
+    expect(resolveStudyBuddyTask(reset, "solution_generation").policy).toEqual(
+      profile.roles.contentAnalyzer,
+    );
+    expect(resolveStudyBuddyTask(changed, "learning_content_repair").policy).toEqual(
+      profile.taskOverrides!.content_repair,
+    );
+    expect(profile.taskOverrides).not.toBe(STUDY_BUDDY_BUILT_IN_PROFILES[1]!.taskOverrides);
+    expect(profile.taskOverrides!.content_repair).not.toBe(
+      STUDY_BUDDY_BUILT_IN_PROFILES[1]!.taskOverrides!.content_repair,
+    );
+  });
+
+  it("hands off built-in search/repair settings and custom task settings", () => {
+    const profile = STUDY_BUDDY_BUILT_IN_PROFILES[0]!;
+    expect(studyBuddyProfileOverrides(profile)).toMatchObject({
+      content_analyzer: profile.roles.contentAnalyzer,
+      source_search: profile.taskOverrides!.source_search,
+      content_repair: profile.taskOverrides!.content_repair,
+      artifact_repair: profile.taskOverrides!.artifact_repair,
+    });
+  });
+});
+
+describe("profile persistence", () => {
+  it("decodes old profiles and round-trips overrides without flattening inherited tasks", () => {
+    const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "custom-schema");
+    const { taskOverrides: _overrides, ...legacy } = profile;
+    const decode = Schema.decodeUnknownSync(StudyBuddyCustomExecutionProfile);
+    expect(decode(legacy).taskOverrides).toBeUndefined();
+    const changed = {
+      ...legacy,
+      taskOverrides: {
+        solution_generation: { ...legacy.roles.contentAnalyzer, model: "gpt-specialist" },
+      },
+    };
+    expect(decode(JSON.parse(JSON.stringify(changed)))).toEqual(changed);
+    expect(() =>
+      decode({ ...changed, taskOverrides: { solution_generation: { model: "" } } }),
+    ).toThrow();
   });
 });

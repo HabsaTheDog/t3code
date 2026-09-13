@@ -71,6 +71,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./studyBuddyModelTasks": {
+      "types": "./src/studyBuddyModelTasks.ts",
+      "import": "./src/studyBuddyModelTasks.ts"
+    },
     "./studyBuddyProfiles": {
       "types": "./src/studyBuddyProfiles.ts",
       "import": "./src/studyBuddyProfiles.ts"

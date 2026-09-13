@@ -1,9 +1,11 @@
+import { STUDY_BUDDY_MODEL_TASKS } from "@t3tools/shared/studyBuddyModelTasks";
 import type {
   StudyBuddyCustomExecutionProfile,
   StudyBuddyExecutionProfileDefinition,
   StudyBuddyProfileIcon,
   StudyBuddyProfileRoles,
   StudyBuddyReasoningEffort,
+  StudyBuddyWorkerRole,
 } from "@t3tools/contracts";
 import { ProviderInstanceId, STUDY_BUDDY_MAX_CUSTOM_PROFILES } from "@t3tools/contracts";
 import {
@@ -11,6 +13,7 @@ import {
   baseExecutionProfile,
   duplicateStudyBuddyProfile,
   resolveStudyBuddyProfileFromSettings,
+  resolveStudyBuddyTask,
   STUDY_BUDDY_BUILT_IN_PROFILES,
 } from "@t3tools/shared/studyBuddyProfiles";
 import {
@@ -311,7 +314,10 @@ function ProfileButton(props: {
 }
 
 function isCompleteProfile(profile: StudyBuddyCustomExecutionProfile): boolean {
-  const workers = WORKER_ROLES.map((role) => profile.roles[role.key]);
+  const workers = [
+    ...WORKER_ROLES.map((role) => profile.roles[role.key]),
+    ...Object.values(profile.taskOverrides ?? {}),
+  ];
   return (
     profile.name.trim().length > 0 &&
     profile.roles.coordinator.model.trim().length > 0 &&
@@ -579,7 +585,115 @@ function ProfileEditor(props: {
           );
         })}
       </div>
+      <details className="border-t border-border/60">
+        <summary className="cursor-pointer p-4 text-sm font-semibold sm:p-5">
+          Advanced task assignments
+        </summary>
+        <p className="px-5 pb-4 text-xs text-muted-foreground">
+          Tasks inherit their role or repair/search default unless overridden. Each task can use a
+          separate primary and fallback model. Reset an override to follow its default again.
+        </p>
+        {WORKER_ROLES.map((role) => (
+          <details key={role.key} className="border-t border-border/60">
+            <summary className="cursor-pointer px-5 py-3 text-sm font-medium">
+              {role.label} tasks
+            </summary>
+            {STUDY_BUDDY_MODEL_TASKS.filter((task) => task.role === role.key).map((task, index) => {
+              const { policy, source } = resolveStudyBuddyTask(props.profile, task.id);
+              const hasOverride = Boolean(props.profile.taskOverrides?.[task.id]);
+              const setPolicy = (value: StudyBuddyWorkerRole) =>
+                changeProfile({
+                  taskOverrides: { ...props.profile.taskOverrides, [task.id]: value },
+                });
+              return (
+                <div
+                  key={task.id}
+                  role="group"
+                  aria-label={task.label}
+                  className="border-t border-border/40"
+                >
+                  <div className="flex flex-wrap items-center gap-2 px-5 pt-3">
+                    <span className="text-xs text-muted-foreground">{source}</span>
+                    {editable ? (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          if (hasOverride) {
+                            const taskOverrides = { ...props.profile.taskOverrides };
+                            delete taskOverrides[task.id];
+                            changeProfile({ taskOverrides });
+                          } else {
+                            setPolicy({ ...policy });
+                          }
+                        }}
+                      >
+                        {hasOverride ? "Reset to inherited" : "Override task"}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <RoleRow
+                    index={index + 1}
+                    label={task.label}
+                    description={task.description}
+                    primary={
+                      <TaskModelControls
+                        policy={policy}
+                        fallback={false}
+                        editable={Boolean(editable && hasOverride)}
+                        knownModels={props.knownModels}
+                        onChange={setPolicy}
+                      />
+                    }
+                    fallback={
+                      <TaskModelControls
+                        policy={policy}
+                        fallback
+                        editable={Boolean(editable && hasOverride)}
+                        knownModels={props.knownModels}
+                        onChange={setPolicy}
+                      />
+                    }
+                  />
+                </div>
+              );
+            })}
+          </details>
+        ))}
+      </details>
     </section>
+  );
+}
+
+function TaskModelControls(props: {
+  policy: StudyBuddyWorkerRole;
+  fallback: boolean;
+  editable: boolean;
+  knownModels: ReadonlyArray<string>;
+  onChange: (policy: StudyBuddyWorkerRole) => void;
+}) {
+  const modelKey = props.fallback ? "retryModel" : "model";
+  const effortKey = props.fallback ? "retryReasoningEffort" : "reasoningEffort";
+  return (
+    <div className="grid grid-cols-[minmax(0,1.45fr)_minmax(6.5rem,0.75fr)] gap-2">
+      <Field label={props.fallback ? "Fallback model" : "Primary model"}>
+        <ModelControl
+          editable={props.editable}
+          ariaLabel={props.fallback ? "Fallback model" : "Primary model"}
+          value={props.policy[modelKey]}
+          models={[...new Set([props.policy[modelKey], ...props.knownModels])].filter(Boolean)}
+          onChange={(model) => props.onChange({ ...props.policy, [modelKey]: model })}
+        />
+      </Field>
+      <Field label={props.fallback ? "Fallback thinking" : "Primary thinking"}>
+        <ReasoningControl
+          editable={props.editable}
+          ariaLabel={props.fallback ? "Fallback thinking" : "Primary thinking"}
+          value={props.policy[effortKey]}
+          onChange={(effort) => props.onChange({ ...props.policy, [effortKey]: effort })}
+        />
+      </Field>
+    </div>
   );
 }
 
@@ -659,6 +773,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function ModelControl(props: {
+  ariaLabel?: string;
   editable: boolean;
   value: string;
   models: ReadonlyArray<string>;
@@ -668,7 +783,7 @@ function ModelControl(props: {
     return <ReadOnlyValue value={props.value || "Not selected"} icon={<BotIcon />} />;
   return (
     <Select value={props.value || null} onValueChange={(value) => value && props.onChange(value)}>
-      <SelectTrigger size="xs" className="!min-w-0 w-full">
+      <SelectTrigger size="xs" className="!min-w-0 w-full" aria-label={props.ariaLabel}>
         <SelectValue placeholder="Choose model" />
       </SelectTrigger>
       <SelectPopup>
@@ -683,6 +798,7 @@ function ModelControl(props: {
 }
 
 function ReasoningControl(props: {
+  ariaLabel?: string;
   editable: boolean;
   value: StudyBuddyReasoningEffort;
   onChange: (effort: StudyBuddyReasoningEffort) => void;
@@ -701,7 +817,7 @@ function ReasoningControl(props: {
       value={props.value}
       onValueChange={(value) => value && props.onChange(value as StudyBuddyReasoningEffort)}
     >
-      <SelectTrigger size="xs" className="!min-w-0 w-full">
+      <SelectTrigger size="xs" className="!min-w-0 w-full" aria-label={props.ariaLabel}>
         <SelectValue />
       </SelectTrigger>
       <SelectPopup>

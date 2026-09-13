@@ -8,8 +8,15 @@ import {
   type StudyBuddyExecutionProfile,
   type StudyBuddyExecutionProfileDefinition,
   type StudyBuddyProfileRoles,
+  type StudyBuddyWorkerRole,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "./model.ts";
+
+import {
+  STUDY_BUDDY_MODEL_TASKS,
+  STUDY_BUDDY_TASK_ROLES,
+  type StudyBuddyModelOperation,
+} from "./studyBuddyModelTasks.ts";
 
 const codexInstanceId = ProviderInstanceId.make("codex");
 export const STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID = "studyBuddyExecutionProfileId";
@@ -30,6 +37,11 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
     description: "Quick drafts and direct answers with the lowest practical latency.",
     kind: "built-in",
     icon: "zap",
+    taskOverrides: {
+      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
+      content_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
+      artifact_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
+    },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
@@ -37,7 +49,7 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
         reasoningEffort: "low",
         fastMode: true,
       },
-      contentAnalyzer: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
+      contentAnalyzer: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "high"),
       quizSolver: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
       artifactPlanner: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
       artifactBuilder: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
@@ -50,17 +62,22 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
     description: "The normal balance of speed, cost, and dependable study quality.",
     kind: "built-in",
     icon: "gauge",
+    taskOverrides: {
+      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
+      content_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "medium"),
+      artifact_repair: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+    },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
         model: "gpt-5.6-terra",
         reasoningEffort: "medium",
       },
-      contentAnalyzer: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
+      contentAnalyzer: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
       quizSolver: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
       artifactPlanner: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
       artifactBuilder: worker("gpt-5.6-sol", "medium", "gpt-5.6-sol", "high"),
-      qualityReviewer: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+      qualityReviewer: worker("gpt-5.6-terra", "medium", "gpt-5.6-terra", "medium"),
     },
   },
   {
@@ -69,17 +86,22 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
     description: "Deeper planning, construction, and review for final or difficult work.",
     kind: "built-in",
     icon: "gem",
+    taskOverrides: {
+      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
+      content_repair: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+      artifact_repair: worker("gpt-5.6-sol", "xhigh", "gpt-5.6-sol", "xhigh"),
+    },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
         model: "gpt-5.6-sol",
         reasoningEffort: "high",
       },
-      contentAnalyzer: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+      contentAnalyzer: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "medium"),
       quizSolver: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
       artifactPlanner: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
       artifactBuilder: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
-      qualityReviewer: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+      qualityReviewer: worker("gpt-5.6-terra", "high", "gpt-5.6-terra", "high"),
     },
   },
 ];
@@ -210,6 +232,9 @@ export function duplicateStudyBuddyProfile(
     description: source.description,
     kind: "custom",
     ...(source.icon ? { icon: source.icon } : {}),
+    taskOverrides: Object.fromEntries(
+      Object.entries(source.taskOverrides ?? {}).map(([key, value]) => [key, { ...value }]),
+    ),
     roles: {
       coordinator: { ...source.roles.coordinator },
       contentAnalyzer: { ...source.roles.contentAnalyzer },
@@ -218,5 +243,44 @@ export function duplicateStudyBuddyProfile(
       artifactBuilder: { ...source.roles.artifactBuilder },
       qualityReviewer: { ...source.roles.qualityReviewer },
     },
+  };
+}
+
+export function resolveStudyBuddyTask(
+  profile: StudyBuddyExecutionProfileDefinition,
+  id: StudyBuddyModelOperation,
+): {
+  policy: StudyBuddyWorkerRole;
+  source: string;
+} {
+  const task = STUDY_BUDDY_MODEL_TASKS.find((entry) => entry.id === id)!;
+  const explicit = profile.taskOverrides?.[id];
+  if (explicit) return { policy: explicit, source: "Task override" };
+  const parent = profile.taskOverrides?.[task.task];
+  if (parent) {
+    const label =
+      STUDY_BUDDY_MODEL_TASKS.find((entry) => entry.id === task.task)?.label ?? task.task;
+    return { policy: parent, source: `Inherited from ${label}` };
+  }
+  return {
+    policy: profile.roles[task.role],
+    source: `Inherited from ${{ contentAnalyzer: "Content analyst", quizSolver: "Quiz solver", artifactPlanner: "Artifact planner", artifactBuilder: "Artifact builder", qualityReviewer: "Quality reviewer" }[task.role]}`,
+  };
+}
+
+/** Only explicit policies cross the CLI boundary; task inheritance stays inspectable. */
+export function studyBuddyProfileOverrides(
+  profile: StudyBuddyExecutionProfileDefinition,
+): Record<string, StudyBuddyWorkerRole> {
+  return {
+    ...Object.fromEntries(
+      Object.entries(STUDY_BUDDY_TASK_ROLES)
+        .filter(
+          ([task]) =>
+            task !== "source_search" && task !== "content_repair" && task !== "artifact_repair",
+        )
+        .map(([task, role]) => [task, profile.roles[role]]),
+    ),
+    ...profile.taskOverrides,
   };
 }

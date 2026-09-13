@@ -48,7 +48,9 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 
 vi.mock("~/rpc/serverState", () => ({
-  useServerProviders: () => [],
+  useServerProviders: () => [
+    { driver: "codex", models: [{ slug: "gpt-specialist" }, { slug: "gpt-retry" }] },
+  ],
 }));
 
 import { ExecutionProfilesSettingsPanel } from "./ExecutionProfilesSettings";
@@ -80,5 +82,79 @@ describe("execution profile settings", () => {
     });
 
     await mounted.unmount();
+  });
+});
+
+const initialSettings = structuredClone(harness.settings);
+
+describe("advanced task assignments (browser-diagnostic)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    harness.updateSettings.mockClear();
+    harness.settings = structuredClone(initialSettings);
+  });
+
+  it("saves separate primary/fallback settings and resets a task to its role", async () => {
+    const mounted = await render(<ExecutionProfilesSettingsPanel />);
+    const applySavedSettings = async () => {
+      Object.assign(harness.settings, harness.updateSettings.mock.lastCall![0]);
+      await mounted.rerender(<ExecutionProfilesSettingsPanel />);
+    };
+    await page.getByText("Advanced task assignments", { exact: true }).click();
+    await page.getByText("Content analyst tasks", { exact: true }).click();
+    const task = page.getByRole("group", { name: "Solution generation", exact: true });
+    await expect
+      .element(task.getByText("Inherited from Content analyst", { exact: true }))
+      .toBeVisible();
+    await task.getByRole("button", { name: "Override task", exact: true }).click();
+    await applySavedSettings();
+    await task.getByRole("combobox", { name: "Primary model", exact: true }).click();
+    await page.getByRole("option", { name: "gpt-specialist", exact: true }).click();
+    await applySavedSettings();
+    await task.getByRole("combobox", { name: "Fallback model", exact: true }).click();
+    await page.getByRole("option", { name: "gpt-retry", exact: true }).click();
+    await applySavedSettings();
+    expect(harness.updateSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        studyBuddyCustomExecutionProfiles: [
+          expect.objectContaining({
+            taskOverrides: {
+              solution_generation: expect.objectContaining({
+                model: "gpt-specialist",
+                retryModel: "gpt-retry",
+              }),
+            },
+          }),
+        ],
+      }),
+    );
+    await task.getByRole("button", { name: "Reset to inherited", exact: true }).click();
+    await applySavedSettings();
+    await expect
+      .element(task.getByText("Inherited from Content analyst", { exact: true }))
+      .toBeVisible();
+    await applySavedSettings();
+    expect(harness.updateSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        studyBuddyCustomExecutionProfiles: [expect.objectContaining({ taskOverrides: {} })],
+      }),
+    );
+    await mounted.unmount();
+  });
+
+  it("shows built-in search and repair choices read-only at a narrow viewport", async () => {
+    await page.viewport(390, 844);
+    const mounted = await render(<ExecutionProfilesSettingsPanel />);
+    await page.getByRole("button", { name: "Balanced", exact: true }).click();
+    await page.getByText("Advanced task assignments", { exact: true }).click();
+    await page.getByText("Content analyst tasks", { exact: true }).click();
+    const task = page.getByRole("group", { name: "Source search", exact: true });
+    await expect.element(task.getByText("gpt-5.6-luna", { exact: true })).toBeVisible();
+    await expect
+      .element(task.getByRole("button", { name: "Override task" }))
+      .not.toBeInTheDocument();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
+    await mounted.unmount();
+    await page.viewport(1280, 900);
   });
 });

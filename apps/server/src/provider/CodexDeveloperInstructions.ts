@@ -1,3 +1,4 @@
+import { studyBuddyProfileOverrides } from "@t3tools/shared/studyBuddyProfiles";
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -165,15 +166,8 @@ function shellSingleQuote(value: string): string {
 function profileOverridesArgument(
   profile: StudyBuddyExecutionProfileDefinition | undefined,
 ): string {
-  if (!profile || profile.kind !== "custom") return "";
-  const roles = profile.roles;
-  const json = JSON.stringify({
-    content_analyzer: roles.contentAnalyzer,
-    quiz_solver: roles.quizSolver,
-    artifact_planner: roles.artifactPlanner,
-    artifact_builder: roles.artifactBuilder,
-    quality_reviewer: roles.qualityReviewer,
-  });
+  if (!profile) return "";
+  const json = JSON.stringify(studyBuddyProfileOverrides(profile));
   return ` --profile-overrides-json ${shellSingleQuote(json)}`;
 }
 
@@ -200,7 +194,8 @@ export function buildStudyBuddyDeveloperInstructions(
   const model = trimEnv(input.model) ?? trimEnv(environment.STUDY_BUDDY_CODEX_MODEL);
   const executionProfile = input.executionProfile ?? "balanced";
   const profileName = input.executionProfileConfig?.name ?? executionProfile;
-  const profileArgument = ` --execution-profile "${executionProfile}"${profileOverridesArgument(input.executionProfileConfig)}`;
+  const profileArgument = ` --execution-profile "${executionProfile}"`;
+  const taskPolicyArgument = profileOverridesArgument(input.executionProfileConfig);
   const webLayoutCommand = studyBuddyRoot
     ? `cd ${shellSingleQuote(studyBuddyRoot)} && npm run web-layout:agent --`
     : "npm run web-layout:agent --";
@@ -229,7 +224,7 @@ Pass the latest user message as a non-empty, safely quoted literal in the same w
 
 ## Routing
 
-- Weekly preparation, tasks, mini-tests and self-study overviews: \`${command} source-evidence "<exact user prompt>"${profileArgument}\`. This read-only acquisition command returns a source handoff, not a final answer. Use its course list to inspect relevant \`course-activities-*.json\` files and \`answer-evidence.json\` entries with small local reads/searches; plan those reads yourself, then answer every part in your own words. Never dump the entire evidence catalogue into context when targeted reads suffice.
+${taskPolicyArgument ? `Append this exact task-policy argument to every Study Buddy wrapper and web-layout command below (including search and recovery):\n\n\`${taskPolicyArgument.trim()}\`\n\n` : ""}- Weekly preparation, tasks, mini-tests and self-study overviews: \`${command} source-evidence "<exact user prompt>"${profileArgument}\`. This read-only acquisition command returns a source handoff, not a final answer. Use its course list to inspect relevant \`course-activities-*.json\` files and \`answer-evidence.json\` entries with small local reads/searches; plan those reads yourself, then answer every part in your own words. Never dump the entire evidence catalogue into context when targeted reads suffice.
 - Broad Moodle requests: \`${command} prompt "<user prompt>"${profileArgument}${model ? ` --codex-model "${model}"` : ""}\`
 - Moodle + CIS requests: \`${command} combined "<user prompt>"${profileArgument}${model ? ` --codex-model "${model}"` : ""}\`
 - Study documents, Zusammenfassungen, Lernzettel, Stoffuebersichten: \`${command} doc "<exact user prompt>"${profileArgument}${model ? ` --codex-model "${model}"` : ""}\`. This is the only PDF orchestration route; pass a previously confirmed direct course URL with \`--url\` when available, but never replace \`doc\` with separate manual \`extract\` and \`render\` commands.
