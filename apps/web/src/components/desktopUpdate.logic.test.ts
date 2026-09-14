@@ -5,6 +5,7 @@ import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
+  getDesktopUpdateErrorMessage,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateNotificationKey,
@@ -154,6 +155,23 @@ describe("getDesktopUpdateActionError", () => {
       },
     };
     expect(getDesktopUpdateActionError(result)).toBeNull();
+  });
+});
+
+describe("getDesktopUpdateErrorMessage", () => {
+  it("preserves updater strings returned from action results", () => {
+    expect(getDesktopUpdateErrorMessage(" checksum mismatch ", "fallback")).toBe(
+      "checksum mismatch",
+    );
+  });
+
+  it("preserves serialized IPC errors with a message", () => {
+    expect(getDesktopUpdateErrorMessage({ message: "HTTP 403" }, "fallback")).toBe("HTTP 403");
+  });
+
+  it("uses the fallback for missing or empty messages", () => {
+    expect(getDesktopUpdateErrorMessage({ message: "  " }, "fallback")).toBe("fallback");
+    expect(getDesktopUpdateErrorMessage(null, "fallback")).toBe("fallback");
   });
 });
 

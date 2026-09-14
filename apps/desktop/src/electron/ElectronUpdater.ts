@@ -10,13 +10,44 @@ type AutoUpdater = typeof autoUpdater;
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
 
+function sanitizeUpdaterMessage(message: string): string {
+  return message.replace(/https?:\/\/[^\s?#]+(?:\?[^\s#]*)?(?:#[^\s]*)?/g, (value) => {
+    try {
+      const url = new URL(value);
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    } catch {
+      return value;
+    }
+  });
+}
+
+export function getElectronUpdaterCauseMessage(cause: unknown): string | null {
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : typeof cause === "string"
+        ? cause
+        : typeof cause === "object" && cause !== null && "message" in cause
+          ? (cause as { readonly message?: unknown }).message
+          : null;
+  if (typeof message !== "string" || message.trim().length === 0) return null;
+  return sanitizeUpdaterMessage(message.trim());
+}
+
+function updaterFailureMessage(summary: string, cause: unknown): string {
+  const detail = getElectronUpdaterCauseMessage(cause);
+  return detail ? `${summary} ${detail}` : summary;
+}
+
 export class ElectronUpdaterCheckForUpdatesError extends Data.TaggedError(
   "ElectronUpdaterCheckForUpdatesError",
 )<{
   readonly cause: unknown;
 }> {
   override get message() {
-    return "Electron updater failed to check for updates.";
+    return updaterFailureMessage("Electron updater failed to check for updates.", this.cause);
   }
 }
 
@@ -26,7 +57,7 @@ export class ElectronUpdaterDownloadUpdateError extends Data.TaggedError(
   readonly cause: unknown;
 }> {
   override get message() {
-    return "Electron updater failed to download the update.";
+    return updaterFailureMessage("Electron updater failed to download the update.", this.cause);
   }
 }
 
@@ -36,7 +67,10 @@ export class ElectronUpdaterQuitAndInstallError extends Data.TaggedError(
   readonly cause: unknown;
 }> {
   override get message() {
-    return "Electron updater failed to quit and install the update.";
+    return updaterFailureMessage(
+      "Electron updater failed to quit and install the update.",
+      this.cause,
+    );
   }
 }
 

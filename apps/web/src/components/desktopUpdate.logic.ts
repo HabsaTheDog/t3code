@@ -99,6 +99,18 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
   return message.length > 0 ? message : null;
 }
 
+export function getDesktopUpdateErrorMessage(error: unknown, fallback: string): string {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" && error !== null && "message" in error
+          ? (error as { readonly message?: unknown }).message
+          : null;
+  return typeof message === "string" && message.trim().length > 0 ? message.trim() : fallback;
+}
+
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
 }

@@ -73,6 +73,33 @@ describe("ElectronUpdater", () => {
         const error = Cause.squash(exit.cause);
         assert.instanceOf(error, ElectronUpdater.ElectronUpdaterCheckForUpdatesError);
         assert.equal(error.cause, cause);
+        assert.equal(
+          error.message,
+          "Electron updater failed to check for updates. network unavailable",
+        );
+      }
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("keeps actionable download details while stripping signed URL parameters", () =>
+    Effect.gen(function* () {
+      const cause = new Error(
+        "HTTP 403 for https://release-assets.githubusercontent.com/update.exe?token=secret",
+      );
+      autoUpdaterMock.downloadUpdate.mockImplementationOnce(() => Promise.reject(cause));
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+
+      const exit = yield* Effect.exit(updater.downloadUpdate);
+
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
+        assert.equal(
+          error.message,
+          "Electron updater failed to download the update. HTTP 403 for https://release-assets.githubusercontent.com/update.exe",
+        );
+        assert.notInclude(error.message, "secret");
       }
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );

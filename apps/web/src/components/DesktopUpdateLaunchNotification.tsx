@@ -9,6 +9,7 @@ import {
 } from "../lib/desktopUpdateReactQuery";
 import {
   getDesktopUpdateActionError,
+  getDesktopUpdateErrorMessage,
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateNotificationKey,
   resolveDesktopUpdateButtonAction,
@@ -21,10 +22,6 @@ type DesktopUpdateToastId = ReturnType<typeof toastManager.add>;
 interface ActiveDesktopUpdateToast {
   readonly key: string;
   readonly toastId: DesktopUpdateToastId;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An unexpected updater error occurred.";
 }
 
 export function DesktopUpdateLaunchNotification() {
@@ -44,7 +41,7 @@ export function DesktopUpdateLaunchNotification() {
         stackedThreadToast({
           type: "error",
           title,
-          description: errorMessage(error),
+          description: getDesktopUpdateErrorMessage(error, "An unexpected updater error occurred."),
           timeout: 0,
           data: { hideCopyButton: true },
         }),
