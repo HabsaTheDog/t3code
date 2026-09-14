@@ -606,6 +606,96 @@ describe("ProviderCommandReactor", () => {
     }
   });
 
+  it("falls back to the voice transcript when title generation fails", async () => {
+    const harness = await createHarness();
+    const providerInput =
+      "[Voice Input 1 — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]\nHey, what assignments are due this week?";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-voice-fallback-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Voice input",
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-voice-fallback-turn-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-voice-fallback"),
+          role: "user",
+          text: "",
+          attachments: [{ type: "voice", id: "voice-fallback", durationMs: 6000 }],
+        },
+        providerInput,
+        titleSeed: "Voice input",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(async () => {
+      const snapshot = await harness.readModel();
+      return (
+        snapshot.threads.find((thread) => thread.id === "thread-1")?.title ===
+        "Hey, what assignments are due this week?"
+      );
+    });
+    expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: providerInput });
+    const snapshot = await harness.readModel();
+    const message = snapshot.threads
+      .find((thread) => thread.id === "thread-1")
+      ?.messages.find((entry) => entry.id === "user-message-voice-fallback");
+    expect(JSON.stringify(message)).not.toContain("assignments are due this week");
+  });
+
+  it("falls back to the voice transcript when title generation returns a placeholder", async () => {
+    const harness = await createHarness();
+    const providerInput =
+      "[Voice Input 1 — automatic transcription; may contain misheard words or transcription errors. Interpret it in context.]\nSummarize the thermodynamics lecture.";
+    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "New thread" }));
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-voice-placeholder-title-seed"),
+        threadId: ThreadId.make("thread-1"),
+        title: "Voice input",
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-voice-placeholder-turn-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-voice-placeholder"),
+          role: "user",
+          text: "",
+          attachments: [{ type: "voice", id: "voice-placeholder", durationMs: 5000 }],
+        },
+        providerInput,
+        titleSeed: "Voice input",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await waitFor(async () => {
+      const snapshot = await harness.readModel();
+      return (
+        snapshot.threads.find((thread) => thread.id === "thread-1")?.title ===
+        "Summarize the thermodynamics lecture."
+      );
+    });
+  });
+
   it("does not overwrite an existing custom thread title on the first turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

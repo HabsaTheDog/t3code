@@ -35,6 +35,7 @@ import { increment, orchestrationEventsProcessedTotal } from "../../observabilit
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import { sanitizeThreadTitle } from "../../textGeneration/TextGenerationUtils.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -103,6 +104,7 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const VOICE_INPUT_THREAD_TITLE = "Voice input";
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -129,6 +131,29 @@ function canReplaceThreadTitle(currentTitle: string, titleSeed?: string): boolea
   return trimmedTitleSeed !== undefined && trimmedTitleSeed.length > 0
     ? trimmedCurrentTitle === trimmedTitleSeed
     : false;
+}
+
+const VOICE_INPUT_METADATA_LINE = /^\[Voice Input \d+\b.*\]$/i;
+
+function isPlaceholderThreadTitle(title: string): boolean {
+  const normalized = title.trim().toLowerCase();
+  return (
+    normalized === DEFAULT_THREAD_TITLE.toLowerCase() ||
+    normalized === VOICE_INPUT_THREAD_TITLE.toLowerCase()
+  );
+}
+
+function fallbackThreadTitleFromProviderInput(messageText: string): string | undefined {
+  const firstContentLine = messageText
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0 && !VOICE_INPUT_METADATA_LINE.test(line));
+  if (!firstContentLine) {
+    return undefined;
+  }
+
+  const title = sanitizeThreadTitle(firstContentLine);
+  return isPlaceholderThreadTitle(title) ? undefined : title;
 }
 
 function findProviderAdapterRequestError(
@@ -704,13 +729,28 @@ const make = Effect.gen(function* () {
         const { textGenerationModelSelection: modelSelection } =
           yield* serverSettingsService.getSettings;
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: input.cwd,
-          message: input.messageText,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          modelSelection,
-        });
-        if (!generated) return;
+        const generatedTitle = yield* textGeneration
+          .generateThreadTitle({
+            cwd: input.cwd,
+            message: input.messageText,
+            ...(attachments.length > 0 ? { attachments } : {}),
+            modelSelection,
+          })
+          .pipe(
+            Effect.map((generated) =>
+              isPlaceholderThreadTitle(generated.title)
+                ? fallbackThreadTitleFromProviderInput(input.messageText)
+                : generated.title,
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider command reactor is using a fallback thread title", {
+                threadId: input.threadId,
+                cwd: input.cwd,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(fallbackThreadTitleFromProviderInput(input.messageText))),
+            ),
+          );
+        if (!generatedTitle) return;
 
         const thread = yield* resolveThread(input.threadId);
         if (!thread) return;
@@ -722,7 +762,7 @@ const make = Effect.gen(function* () {
           type: "thread.meta.update",
           commandId: yield* serverCommandId("thread-title-rename"),
           threadId: input.threadId,
-          title: generated.title,
+          title: generatedTitle,
         });
       }).pipe(
         Effect.catchCause((cause) =>
