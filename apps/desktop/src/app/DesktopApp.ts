@@ -15,6 +15,7 @@ import * as DesktopCloudAuth from "./DesktopCloudAuth.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { DEFAULT_STUDY_BUDDY_DESKTOP_BACKEND_PORT } from "./DesktopPortPolicy.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
@@ -24,7 +25,6 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
-const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_LOOPBACK_PORT_PROBE_HOSTS = ["127.0.0.1"] as const;
 const DESKTOP_NETWORK_PORT_PROBE_HOSTS = ["0.0.0.0"] as const;
@@ -79,7 +79,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
   }
 
   const net = yield* NetService.NetService;
-  for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
+  for (let port = DEFAULT_STUDY_BUDDY_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
     let availableOnEveryHost = true;
 
     for (const host of probeHosts) {
@@ -98,7 +98,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
   }
 
   return yield* new DesktopBackendPortUnavailableError({
-    startPort: DEFAULT_DESKTOP_BACKEND_PORT,
+    startPort: DEFAULT_STUDY_BUDDY_DESKTOP_BACKEND_PORT,
     maxPort: MAX_TCP_PORT,
     hosts: probeHosts,
   });
@@ -165,7 +165,9 @@ const bootstrap = Effect.gen(function* () {
       : "using configured backend port",
     {
       port: backendPort,
-      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
+      ...(backendPortSelection.selectedByScan
+        ? { startPort: DEFAULT_STUDY_BUDDY_DESKTOP_BACKEND_PORT }
+        : {}),
     },
   );
 

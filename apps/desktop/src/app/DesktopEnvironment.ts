@@ -16,6 +16,7 @@ import {
   resolveDefaultDesktopSettings,
 } from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
+import { resolveConfiguredStudyBuddyBackendPort } from "./DesktopPortPolicy.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
@@ -219,7 +220,11 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
       : path.join(input.appPath, "dev-app-update.yml"),
     devServerUrl,
     devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
-    configuredBackendPort: config.configuredBackendPort,
+    configuredBackendPort: resolveConfiguredStudyBuddyBackendPort({
+      isPackaged: input.isPackaged,
+      studyBuddyPort: config.configuredStudyBuddyBackendPort,
+      legacyT3CodePort: config.configuredLegacyBackendPort,
+    }),
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
     otlpExportIntervalMs: config.otlpExportIntervalMs,
