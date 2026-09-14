@@ -16,11 +16,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   DesktopBackendBootstrap,
+  ExecutionEnvironmentDescriptor,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 
@@ -36,6 +37,13 @@ const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
+
+export function isExpectedDesktopBackendVersion(
+  actualServerVersion: string,
+  expectedServerVersion: string | undefined,
+): boolean {
+  return expectedServerVersion === undefined || actualServerVersion === expectedServerVersion;
+}
 
 type BackendProcessLayerServices = ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient;
 
@@ -64,6 +72,15 @@ export class BackendTimeoutError extends Data.TaggedError("BackendTimeoutError")
 }> {
   override get message() {
     return `Timed out waiting for backend readiness at ${this.url.href}.`;
+  }
+}
+
+class BackendVersionMismatchError extends Data.TaggedError("BackendVersionMismatchError")<{
+  readonly expected: string;
+  readonly actual: string;
+}> {
+  override get message() {
+    return `Desktop backend readiness version mismatch: expected ${this.expected}, received ${this.actual}.`;
   }
 }
 
@@ -190,6 +207,7 @@ const closeRun = (
 const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(function* (
   baseUrl: URL,
   timeout: Duration.Duration,
+  expectedServerVersion: string | undefined,
 ): Effect.fn.Return<void, BackendTimeoutError, HttpClient.HttpClient> {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, baseUrl);
   const client = (yield* HttpClient.HttpClient).pipe(
@@ -198,7 +216,22 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
   );
 
   yield* client.get(readinessUrl).pipe(
-    Effect.asVoid,
+    Effect.flatMap((response) =>
+      expectedServerVersion
+        ? HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)(response).pipe(
+            Effect.filterOrFail(
+              (descriptor) =>
+                isExpectedDesktopBackendVersion(descriptor.serverVersion, expectedServerVersion),
+              (descriptor) =>
+                new BackendVersionMismatchError({
+                  expected: expectedServerVersion,
+                  actual: descriptor.serverVersion,
+                }),
+            ),
+            Effect.asVoid,
+          )
+        : Effect.void,
+    ),
     Effect.retry(Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL)),
     Effect.timeout(timeout),
     Effect.mapError(() => new BackendTimeoutError({ url: readinessUrl })),
@@ -280,6 +313,7 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   const waitForReadiness = waitForHttpReady(
     options.httpBaseUrl,
     options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+    options.env.APP_VERSION,
   ).pipe(
     Effect.tap(() => options.onReady?.() ?? Effect.void),
     Effect.tapError((error) => options.onReadinessFailure?.(error) ?? Effect.void),

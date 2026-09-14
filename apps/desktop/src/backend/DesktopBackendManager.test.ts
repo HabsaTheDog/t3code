@@ -38,7 +38,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
   entryPath: "/server/bin.mjs",
   cwd: "/server",
-  env: { ELECTRON_RUN_AS_NODE: "1" },
+  env: { ELECTRON_RUN_AS_NODE: "1", APP_VERSION: "1.2.3" },
   bootstrap: {
     mode: "desktop",
     noBrowser: true,
@@ -84,8 +84,21 @@ function makeProcess(options?: {
 function responseForRequest(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
+  serverVersion = "1.2.3",
 ): HttpClientResponse.HttpClientResponse {
-  return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+  return HttpClientResponse.fromWeb(
+    request,
+    new Response(
+      JSON.stringify({
+        environmentId: "11111111-1111-4111-8111-111111111111",
+        label: "Desktop",
+        platform: { os: "windows", arch: "x64" },
+        serverVersion,
+        capabilities: { repositoryIdentity: true },
+      }),
+      { status, headers: { "content-type": "application/json" } },
+    ),
+  );
 }
 
 function httpClientLayer(
@@ -152,6 +165,18 @@ function makeManagerLayer(input: {
 }
 
 describe("DesktopBackendManager", () => {
+  it("rejects a foreign T3 version on the selected desktop port", () => {
+    assert.isFalse(
+      DesktopBackendManager.isExpectedDesktopBackendVersion(
+        "0.0.41-nightly.20260909.1439",
+        "0.2.2-alpha",
+      ),
+    );
+    assert.isTrue(
+      DesktopBackendManager.isExpectedDesktopBackendVersion("0.2.2-alpha", "0.2.2-alpha"),
+    );
+  });
+
   it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
     Effect.gen(function* () {
       let spawnedCommand: ChildProcess.Command | undefined;
