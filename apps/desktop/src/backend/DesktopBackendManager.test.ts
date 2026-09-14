@@ -165,6 +165,13 @@ function makeManagerLayer(input: {
 }
 
 describe("DesktopBackendManager", () => {
+  it("preserves foreign-backend evidence in the final timeout diagnostic", () => {
+    const error = new DesktopBackendManager.BackendTimeoutError({
+      url: new URL("http://127.0.0.1:13773/"),
+      foreignBackendObserved: true,
+    });
+    assert.include(error.message, "foreign backend version mismatch");
+  });
   it("rejects a foreign T3 version on the selected desktop port", () => {
     assert.isFalse(
       DesktopBackendManager.isExpectedDesktopBackendVersion(

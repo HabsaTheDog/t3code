@@ -18,6 +18,7 @@ import * as Tracer from "effect/Tracer";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { recordDesktopHealthFailure } from "./DesktopHealthJournal.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
@@ -77,8 +78,18 @@ export function makeComponentLogger(component: string): DesktopComponentLogger {
     annotate,
     logDebug: (message, annotations) => annotate(Effect.logDebug(message), annotations),
     logInfo: (message, annotations) => annotate(Effect.logInfo(message), annotations),
-    logWarning: (message, annotations) => annotate(Effect.logWarning(message), annotations),
-    logError: (message, annotations) => annotate(Effect.logError(message), annotations),
+    logWarning: (message, annotations) =>
+      annotate(Effect.logWarning(message), annotations).pipe(
+        Effect.tap(() =>
+          /failed|error|unexpected/i.test(message)
+            ? recordDesktopHealthFailure(component, message, annotations)
+            : Effect.void,
+        ),
+      ),
+    logError: (message, annotations) =>
+      annotate(Effect.logError(message), annotations).pipe(
+        Effect.tap(() => recordDesktopHealthFailure(component, message, annotations)),
+      ),
   };
 }
 

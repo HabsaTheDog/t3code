@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./telemetryHealth": {
+      "types": "./src/telemetryHealth.ts",
+      "import": "./src/telemetryHealth.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

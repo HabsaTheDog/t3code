@@ -25,6 +25,69 @@ function makeOutbox(options?: { maxBytes?: number; now?: number }) {
 }
 
 describe("TelemetryOutbox", () => {
+  it("removes conversation watermarks on revocation without clearing analytics", async () => {
+    const { outbox } = makeOutbox();
+    await outbox.markConversationTurn("private-thread", "private-turn");
+    await outbox.enqueue({
+      category: "analytics",
+      kind: "analytics",
+      event: "app.started",
+      idempotencyKey: "keep",
+      payload: {},
+    });
+    await outbox.clearCategory("conversation");
+    expect(await outbox.hasConversationTurn("private-thread", "private-turn")).toBe(false);
+    expect((await outbox.listDue()).map((item) => item.event)).toEqual(["app.started"]);
+  });
+  it("loads only the requested due batch while retaining the remaining queue", async () => {
+    const { outbox } = makeOutbox();
+    for (let i = 0; i < 12; i++)
+      await outbox.enqueue({
+        category: "analytics",
+        kind: "analytics",
+        event: "app.started",
+        idempotencyKey: `item-${i}`,
+        payload: { safe: i },
+      });
+    expect(await outbox.listDue(3)).toHaveLength(3);
+    expect((await outbox.status()).queuedItems).toBe(12);
+    expect((await outbox.listDue(3))[0]?.payload).toHaveProperty("safe");
+  });
+  it("does not resurrect revoked items when an in-flight upload fails", async () => {
+    const { outbox, setNow } = makeOutbox();
+    await outbox.enqueue({
+      category: "analytics",
+      kind: "analytics",
+      event: "app.started",
+      idempotencyKey: "revoked",
+      payload: {},
+    });
+    const stale = await outbox.listDue();
+    await outbox.clearCategory("analytics");
+    await outbox.markFailed(stale, "late failure");
+    setNow(100_000);
+    expect(await outbox.listDue()).toEqual([]);
+    expect((await outbox.status()).queuedItems).toBe(0);
+  });
+
+  it("checks the consent guard after opening the database", async () => {
+    const { outbox } = makeOutbox();
+    let allowed = true;
+    const pending = outbox.enqueue(
+      {
+        category: "analytics",
+        kind: "analytics",
+        event: "app.started",
+        idempotencyKey: "late",
+        payload: {},
+      },
+      () => allowed,
+    );
+    allowed = false;
+    expect(await pending).toBe("dropped");
+    expect((await outbox.status()).queuedItems).toBe(0);
+  });
+
   it("deduplicates idempotency keys and reports durable diagnostics", async () => {
     const { outbox } = makeOutbox();
     const input = {
@@ -140,6 +203,6 @@ describe("calculateRetryDelay", () => {
   it("uses bounded exponential backoff with jitter", () => {
     expect(calculateRetryDelay(1, 0)).toBe(500);
     expect(calculateRetryDelay(2, 0.5)).toBe(2_000);
-    expect(calculateRetryDelay(30, 1)).toBe(9 * 60 * 60 * 1_000);
+    expect(calculateRetryDelay(30, 1)).toBe(6 * 60 * 60 * 1_000);
   });
 });

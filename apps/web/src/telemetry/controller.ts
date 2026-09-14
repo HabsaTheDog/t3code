@@ -1,4 +1,5 @@
 import { ConversationExporter } from "./conversation";
+import { healthProperties } from "@t3tools/shared/telemetryHealth";
 import { TelemetryOutbox, type TelemetryOutboxOptions } from "./outbox";
 import { BrowserPostHogTelemetryClient, type PostHogTelemetryClient } from "./posthogClient";
 import { privacySafePageviewProperties } from "./pageview";
@@ -21,6 +22,16 @@ export const DEFAULT_POSTHOG_HOST = "https://studybuddyanalytics.habsa.at";
 
 const SEMANTIC_EVENTS = new Set([
   "app.started",
+  "desktop.startup_failed",
+  "desktop.renderer_failed",
+  "desktop.update_failed",
+  "telemetry.health",
+  "provider.install_cancelled",
+  "provider.update_started",
+  "provider.update_completed",
+  "provider.update_failed",
+  "provider.update_unverified",
+  "provider.auth_cancelled",
   "setup.step_viewed",
   "setup.step_completed",
   "setup.step_skipped",
@@ -114,7 +125,7 @@ export class TelemetryController {
     this.#projectToken = options.projectToken?.trim() ?? "";
     this.#configuredSecrets = options.configuredSecrets ?? (() => []);
     this.#contextProperties =
-      options.contextProperties ?? (() => ({ telemetry_schema_version: 7 }));
+      options.contextProperties ?? (() => ({ telemetry_schema_version: 8 }));
     this.#onInstallationIdCreated = options.onInstallationIdCreated;
     this.#createOutbox = options.createOutbox ?? (() => new TelemetryOutbox(options.outboxOptions));
     this.#posthog = options.posthogClient ?? new BrowserPostHogTelemetryClient();
@@ -124,6 +135,7 @@ export class TelemetryController {
 
   async hydrate(settings: TelemetryConsentSnapshot): Promise<void> {
     const revision = ++this.#consentRevision;
+    this.#abortOnConsentChange(settings);
     this.#settings = settings;
     if (!settings.hydrated) return;
     this.#installationId = settings.installationId;
@@ -135,8 +147,16 @@ export class TelemetryController {
       throw new Error("Telemetry consent cannot change before client settings hydrate.");
     }
     const revision = ++this.#consentRevision;
+    this.#abortOnConsentChange(settings);
     const previous = this.#settings;
     this.#settings = settings;
+    if (
+      (previous?.analyticsConsent === "accepted" && settings.analyticsConsent !== "accepted") ||
+      (previous?.conversationConsent === "accepted" && settings.conversationConsent !== "accepted")
+    ) {
+      this.#worker?.stop();
+      this.#worker = null;
+    }
     if (settings.installationId) this.#installationId = settings.installationId;
     if (settings.analyticsConsent !== "accepted") {
       this.#analyticsGeneration += 1;
@@ -194,25 +214,42 @@ export class TelemetryController {
     }
     try {
       const installationId = await this.#ensureInstallationId();
+      const isConsented = () =>
+        this.#settings?.analyticsConsent === "accepted" &&
+        this.#settings.analyticsEnabledAt === settings.analyticsEnabledAt;
+      if (!isConsented()) return false;
       const outbox = this.#ensureOutbox();
       const sessionId = this.#posthog.getSessionId(true);
-      const result = await outbox.enqueue({
-        category: "analytics",
-        kind: "analytics",
-        event: event.event,
-        idempotencyKey: event.idempotencyKey ?? this.#random.uuid(),
-        payload: {
-          ...sanitizeRecord(event.properties ?? {}, this.#configuredSecrets()),
-          ...(trustedNativeEvent ? event.properties : {}),
-          ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
-          ...(sessionId ? { $session_id: sessionId } : {}),
-          distinct_id: installationId,
+      const result = await outbox.enqueue(
+        {
+          ...(event.eventId ? { id: event.eventId } : {}),
+          category: "analytics",
+          kind: "analytics",
+          event: event.event,
+          idempotencyKey: event.idempotencyKey ?? this.#random.uuid(),
+          payload: {
+            ...sanitizeRecord(
+              /^(desktop\.|provider\.(install|auth|update)_|telemetry\.health$)/u.test(event.event)
+                ? healthProperties(event.properties ?? {})
+                : (event.properties ?? {}),
+              this.#configuredSecrets(),
+            ),
+            ...(trustedNativeEvent ? event.properties : {}),
+            ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
+            ...(sessionId ? { $session_id: sessionId } : {}),
+            distinct_id: installationId,
+          },
+          createdAt: timestamp,
         },
-        createdAt: timestamp,
-      });
+        isConsented,
+      );
       if (result === "enqueued") void this.#worker?.flush();
-      return result === "enqueued";
+      return (
+        result === "enqueued" ||
+        (result === "duplicate" && event.idempotencyKey?.startsWith("desktop-health:") === true)
+      );
     } catch {
+      this.#lastLifecycleError = "Failed to queue analytics telemetry.";
       return false;
     }
   }
@@ -316,8 +353,33 @@ export class TelemetryController {
 
   #queueReconcile(revision: number): Promise<void> {
     const reconciliation = this.#reconcileQueue.then(() => this.#reconcile(revision));
-    this.#reconcileQueue = reconciliation.catch(() => undefined);
-    return reconciliation.catch(() => undefined);
+    this.#reconcileQueue = reconciliation.catch(() => {
+      this.#lastLifecycleError = "Failed to initialize or reconcile telemetry.";
+    });
+    return this.#reconcileQueue;
+  }
+
+  #abortOnConsentChange(settings: TelemetryConsentSnapshot): void {
+    const previous = this.#settings;
+    if (
+      previous &&
+      (previous.analyticsConsent !== settings.analyticsConsent ||
+        previous.analyticsEnabledAt !== settings.analyticsEnabledAt)
+    ) {
+      this.#analyticsGeneration += 1;
+      this.#analyticsInitialized = false;
+      this.#posthog.shutdown();
+    }
+    if (
+      previous &&
+      (previous.analyticsConsent !== settings.analyticsConsent ||
+        previous.conversationConsent !== settings.conversationConsent ||
+        previous.analyticsEnabledAt !== settings.analyticsEnabledAt ||
+        previous.conversationEnabledAt !== settings.conversationEnabledAt)
+    ) {
+      this.#worker?.stop();
+      this.#worker = null;
+    }
   }
 
   async #reconcile(revision: number): Promise<void> {
@@ -375,10 +437,22 @@ export class TelemetryController {
           projectToken: this.#projectToken,
         }),
         {
-          shouldUpload: (item) =>
-            item.category === "analytics"
-              ? this.#settings?.analyticsConsent === "accepted"
-              : this.#settings?.conversationConsent === "accepted",
+          shouldUpload: (item) => {
+            const current = this.#settings;
+            const decision =
+              item.category === "analytics"
+                ? current?.analyticsConsent
+                : current?.conversationConsent;
+            const enabledAt =
+              item.category === "analytics"
+                ? current?.analyticsEnabledAt
+                : current?.conversationEnabledAt;
+            return (
+              decision === "accepted" &&
+              typeof enabledAt === "string" &&
+              item.createdAt >= Date.parse(enabledAt)
+            );
+          },
         },
       );
       this.#worker.start();
@@ -387,26 +461,27 @@ export class TelemetryController {
       if (revision !== this.#consentRevision) return;
       const generation = ++this.#analyticsGeneration;
       const isActive = () =>
-        revision === this.#consentRevision &&
-        generation === this.#analyticsGeneration &&
-        this.#settings?.analyticsConsent === "accepted";
+        generation === this.#analyticsGeneration && this.#settings?.analyticsConsent === "accepted";
       const beforeSend = makeBeforeSendSanitizer({
         enqueue: async (event, properties) => {
           if (!isActive()) return;
           try {
-            const result = await outbox.enqueue({
-              category: "analytics",
-              kind: "analytics",
-              event,
-              idempotencyKey: `posthog-sdk:${event}:${this.#random.uuid()}`,
-              payload: {
-                ...properties,
-                ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
-                distinct_id: installationId,
-                sdk_event_source: "posthog-js",
+            const result = await outbox.enqueue(
+              {
+                category: "analytics",
+                kind: "analytics",
+                event,
+                idempotencyKey: `posthog-sdk:${event}:${this.#random.uuid()}`,
+                payload: {
+                  ...properties,
+                  ...sanitizeRecord(this.#contextProperties(), this.#configuredSecrets()),
+                  distinct_id: installationId,
+                  sdk_event_source: "posthog-js",
+                },
+                createdAt: this.#clock.now(),
               },
-              createdAt: this.#clock.now(),
-            });
+              isActive,
+            );
             if (result === "enqueued") void this.#worker?.flush();
           } catch {
             this.#lastLifecycleError = "Failed to queue privacy-filtered PostHog telemetry.";

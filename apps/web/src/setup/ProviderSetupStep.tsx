@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { classifyTelemetryFailure } from "@t3tools/shared/telemetryHealth";
 
 import { ClaudeAI, CursorIcon, OpenAI, OpenCodeIcon, type Icon } from "../components/Icons";
 import { Badge } from "../components/ui/badge";
@@ -269,6 +270,8 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       Partial<Record<ProviderSetupProvider, string>>
     >({});
     const subscriptions = useRef(new Map<string, () => void>());
+    const attemptStartedAt = useRef(new Map<ProviderSetupProvider, number>());
+    const terminalJobs = useRef(new Set<string>());
 
     const loadCapabilities = async () => {
       setLoadError(null);
@@ -375,15 +378,29 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       });
 
       if (terminalEvent(event)) {
+        if (terminalJobs.current.has(event.jobId)) return;
+        terminalJobs.current.add(event.jobId);
         const eventPrefix = event.actionId.includes(".install")
           ? "provider.install"
           : "provider.auth";
         void telemetry.capture({
-          event: event.type === "completed" ? `${eventPrefix}_completed` : `${eventPrefix}_failed`,
+          event: `${eventPrefix}_${event.type}`,
+          idempotencyKey: `provider-setup:${event.jobId}:${event.type}`,
           properties: {
             provider: event.provider,
             action: event.actionId,
             outcome: event.type,
+            duration_ms: Math.max(
+              0,
+              Date.now() - (attemptStartedAt.current.get(event.provider) ?? Date.now()),
+            ),
+            ...(event.type === "failed"
+              ? {
+                  failure_kind: classifyTelemetryFailure(event.message),
+                  failure_stage: event.actionId.includes(".install") ? "install" : "authenticate",
+                  exit_code: event.exitCode,
+                }
+              : {}),
           },
         });
         const unsubscribe = subscriptions.current.get(event.jobId);
@@ -397,6 +414,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
 
     const startAction = async (provider: ProviderSetupProvider, action: ProviderSetupAction) => {
       const secret = secretValues[provider]?.trim();
+      attemptStartedAt.current.set(provider, Date.now());
       setApiKeyDialog(null);
       setJobs((current) => ({
         ...current,
@@ -428,7 +446,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
           updateFromEvent,
         );
         subscriptions.current.set(result.jobId, unsubscribe);
-      } catch {
+      } catch (error) {
         setJobs((current) => ({
           ...current,
           [provider]: {
@@ -440,7 +458,17 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         }));
         void telemetry.capture({
           event: action.kind === "install" ? "provider.install_failed" : "provider.auth_failed",
-          properties: { provider, action: action.id, outcome: "start_failed" },
+          properties: {
+            provider,
+            action: action.id,
+            outcome: "start_failed",
+            failure_kind: classifyTelemetryFailure(error),
+            failure_stage: action.kind === "install" ? "install" : "authenticate",
+            duration_ms: Math.max(
+              0,
+              Date.now() - (attemptStartedAt.current.get(provider) ?? Date.now()),
+            ),
+          },
         });
       }
     };

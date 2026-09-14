@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstrap"]>;
   },
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
+  getHealthEvents: () => ipcRenderer.invoke(IpcChannels.GET_HEALTH_EVENTS_CHANNEL),
+  acknowledgeHealthEvents: (ids) => ipcRenderer.invoke(IpcChannels.ACK_HEALTH_EVENTS_CHANNEL, ids),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
   getSavedEnvironmentRegistry: () =>

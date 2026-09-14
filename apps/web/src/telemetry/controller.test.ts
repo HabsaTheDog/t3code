@@ -47,6 +47,98 @@ afterEach(() => {
 });
 
 describe("TelemetryController consent lifecycle", () => {
+  it("does not upload queued items from an earlier consent epoch", async () => {
+    const outbox = outboxFactory()();
+    await outbox.enqueue({
+      category: "analytics",
+      kind: "analytics",
+      event: "app.started",
+      idempotencyKey: "old-epoch",
+      payload: {},
+      createdAt: Date.parse("2026-06-27T09:59:00.000Z"),
+    });
+    const fetchSpy = vi.fn<typeof fetch>(async () => new Response("", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const controller = new TelemetryController({
+      projectToken: "phc_test",
+      createOutbox: () => outbox,
+      posthogClient: posthogSpy(),
+    });
+    await controller.hydrate(
+      consent({ analyticsConsent: "accepted", analyticsEnabledAt: "2026-06-27T10:00:00.000Z" }),
+    );
+    await controller.flush();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    controller.stop();
+  });
+
+  it("invalidates old SDK callbacks when the analytics consent epoch changes", async () => {
+    const posthog = posthogSpy();
+    const controller = new TelemetryController({
+      projectToken: "phc_test",
+      createOutbox: outboxFactory(),
+      posthogClient: posthog,
+    });
+    await controller.hydrate(
+      consent({ analyticsConsent: "accepted", analyticsEnabledAt: "2026-06-27T10:00:00.000Z" }),
+    );
+    const previous = posthog.initialize.mock.calls[0]![0];
+    await controller.hydrate(
+      consent({ analyticsConsent: "accepted", analyticsEnabledAt: "2026-06-27T10:00:01.000Z" }),
+    );
+    expect(previous.isActive?.()).toBe(false);
+    expect(posthog.initialize.mock.calls[1]![0].isActive?.()).toBe(true);
+    controller.stop();
+  });
+
+  it("keeps SDK callbacks active across identical route hydration", async () => {
+    const posthog = posthogSpy();
+    const controller = new TelemetryController({
+      projectToken: "phc_test",
+      createOutbox: outboxFactory(),
+      posthogClient: posthog,
+    });
+    const settings = consent({
+      analyticsConsent: "accepted",
+      analyticsEnabledAt: "2026-06-27T10:00:00.000Z",
+    });
+    await controller.hydrate(settings);
+    const input = posthog.initialize.mock.calls[0]![0];
+    expect(input.isActive?.()).toBe(true);
+    await controller.hydrate({ ...settings });
+    expect(posthog.initialize).toHaveBeenCalledOnce();
+    expect(input.isActive?.()).toBe(true);
+    await controller.hydrate(consent({ analyticsConsent: "rejected" }));
+    expect(input.isActive?.()).toBe(false);
+    controller.stop();
+  });
+
+  it("enforces a content-free health schema and acknowledges already queued native diagnostics", async () => {
+    const outbox = outboxFactory()();
+    const controller = new TelemetryController({
+      createOutbox: () => outbox,
+      posthogClient: posthogSpy(),
+      clock: { now: () => Date.parse("2026-06-27T10:01:00.000Z") },
+    });
+    await controller.hydrate(
+      consent({ analyticsConsent: "accepted", analyticsEnabledAt: "2026-06-27T10:00:00.000Z" }),
+    );
+    const event = {
+      event: "desktop.startup_failed",
+      eventId: "00000000-0000-4000-8000-000000000001",
+      idempotencyKey: "desktop-health:test",
+      properties: { failure_kind: "port_collision", stderr: "SECRET", message: "PRIVATE" },
+    };
+    expect(await controller.capture(event)).toBe(true);
+    expect(await controller.capture(event)).toBe(true);
+    const items = await outbox.listDue();
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe(event.eventId);
+    expect(items[0]?.payload.failure_kind).toBe("port_collision");
+    expect(JSON.stringify(items)).not.toMatch(/SECRET|PRIVATE/);
+    controller.stop();
+  });
+
   it("accepts every bounded voice lifecycle event after analytics consent", async () => {
     const controller = new TelemetryController({
       createOutbox: outboxFactory(),
@@ -245,12 +337,12 @@ describe("TelemetryController consent lifecycle", () => {
         event: "$$heatmap",
         properties: expect.objectContaining({
           distinct_id: "install-id",
-          telemetry_schema_version: 7,
+          telemetry_schema_version: 8,
           sdk_event_source: "posthog-js",
           $viewport_width: 1440,
           $viewport_height: 900,
           $heatmap_data: {
-            "https://app.t3.codes/_chat/": [{ x: 12, y: 34, type: "click" }],
+            "https://app.study-buddy.invalid/_chat/": [{ x: 12, y: 34, type: "click" }],
           },
         }),
       }),
@@ -303,9 +395,9 @@ describe("TelemetryController consent lifecycle", () => {
           event: "$pageview",
           properties: expect.objectContaining({
             route: "chat",
-            $current_url: "https://app.t3.codes/_chat/",
+            $current_url: "https://app.study-buddy.invalid/_chat/",
             $session_id: "0198a748-305a-7000-8000-000000000001",
-            telemetry_schema_version: 7,
+            telemetry_schema_version: 8,
           }),
         }),
         expect.objectContaining({

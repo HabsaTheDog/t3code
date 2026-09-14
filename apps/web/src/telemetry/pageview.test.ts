@@ -10,7 +10,7 @@ describe("privacy-safe native pageviews", () => {
       ),
     ).toEqual({
       route: "chat",
-      $current_url: "https://app.t3.codes/_chat/",
+      $current_url: "https://app.study-buddy.invalid/_chat/",
     });
   });
 
@@ -20,7 +20,7 @@ describe("privacy-safe native pageviews", () => {
     );
     expect(privacySafePageviewProperties("/settings/private-course/secret")).toEqual({
       route: "/settings",
-      $current_url: "https://app.t3.codes/settings",
+      $current_url: "https://app.study-buddy.invalid/settings",
     });
   });
 
@@ -28,7 +28,7 @@ describe("privacy-safe native pageviews", () => {
     const properties = privacySafePageviewProperties("/private/project/alvaro?key=secret");
     expect(properties).toEqual({
       route: "application",
-      $current_url: "https://app.t3.codes/application",
+      $current_url: "https://app.study-buddy.invalid/application",
     });
     expect(JSON.stringify(properties)).not.toContain("alvaro");
     expect(JSON.stringify(properties)).not.toContain("secret");

@@ -69,9 +69,10 @@ interface BackendProcessExit {
 
 export class BackendTimeoutError extends Data.TaggedError("BackendTimeoutError")<{
   readonly url: URL;
+  readonly foreignBackendObserved?: boolean;
 }> {
   override get message() {
-    return `Timed out waiting for backend readiness at ${this.url.href}.`;
+    return `Timed out waiting for backend readiness at ${this.url.href}.${this.foreignBackendObserved ? " A foreign backend version mismatch was observed." : ""}`;
   }
 }
 
@@ -210,6 +211,7 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
   expectedServerVersion: string | undefined,
 ): Effect.fn.Return<void, BackendTimeoutError, HttpClient.HttpClient> {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, baseUrl);
+  const foreignBackendObserved = yield* Ref.make(false);
   const client = (yield* HttpClient.HttpClient).pipe(
     HttpClient.filterStatusOk,
     HttpClient.transformResponse(Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
@@ -232,9 +234,22 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
           )
         : Effect.void,
     ),
+    Effect.tapError((error) =>
+      error instanceof BackendVersionMismatchError
+        ? Ref.set(foreignBackendObserved, true)
+        : Effect.void,
+    ),
     Effect.retry(Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL)),
     Effect.timeout(timeout),
-    Effect.mapError(() => new BackendTimeoutError({ url: readinessUrl })),
+    Effect.catch(() =>
+      Ref.get(foreignBackendObserved).pipe(
+        Effect.flatMap((observed) =>
+          Effect.fail(
+            new BackendTimeoutError({ url: readinessUrl, foreignBackendObserved: observed }),
+          ),
+        ),
+      ),
+    ),
   );
 });
 

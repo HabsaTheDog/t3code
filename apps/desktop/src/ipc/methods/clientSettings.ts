@@ -4,6 +4,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import { DesktopEnvironment } from "../../app/DesktopEnvironment.ts";
+import { readDesktopHealthEvents } from "../../app/DesktopHealthJournal.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 
@@ -24,5 +26,10 @@ export const setClientSettings = makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     yield* clientSettings.set(settings);
+    if (settings.analyticsConsent !== "accepted") {
+      const env = yield* Effect.serviceOption(DesktopEnvironment);
+      if (Option.isSome(env))
+        yield* Effect.promise(() => readDesktopHealthEvents(env.value).catch(() => []));
+    }
   }),
 });

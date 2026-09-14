@@ -458,7 +458,7 @@ const make = Effect.gen(function* () {
       yield* Ref.set(updateInstallInFlightRef, false);
       yield* Ref.set(desktopState.quitting, false);
       yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
-      yield* logUpdaterError("updater error", { message });
+      yield* logUpdaterError("updater error", { message, failureStage: "install" });
       return;
     }
 
@@ -476,7 +476,10 @@ const make = Effect.gen(function* () {
       }));
     }
 
-    yield* logUpdaterError("updater error", { message });
+    yield* logUpdaterError("updater error", {
+      message,
+      failureStage: yield* resolveUpdaterErrorContext,
+    });
   });
 
   const handleDownloadProgress = Effect.fn("desktop.updates.handleDownloadProgress")(function* (

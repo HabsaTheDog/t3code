@@ -1,4 +1,4 @@
-import { TelemetryOutbox } from "./outbox";
+import { TelemetryOutbox, type EnqueueTelemetryInput } from "./outbox";
 import { redactSensitiveText } from "./sanitize";
 import { MAX_RESPONSE_FEEDBACK_LENGTH } from "./types";
 import type {
@@ -100,6 +100,12 @@ function sharedTraceProperties(
 }
 
 export class ConversationExporter {
+  #enqueue(input: EnqueueTelemetryInput, enabledAt: string | null) {
+    return this.outbox.enqueue(input, () => {
+      const consent = this.options.consent();
+      return consent.decision === "accepted" && consent.enabledAt === enabledAt;
+    });
+  }
   constructor(
     private readonly outbox: TelemetryOutbox,
     private readonly options: {
@@ -129,105 +135,124 @@ export class ConversationExporter {
     if (await this.outbox.hasConversationTurn(turn.threadId, turn.turnId)) {
       return false;
     }
-    const result = await this.outbox.enqueue({
-      category: "conversation",
-      kind: "conversation",
-      event: "$ai_generation",
-      idempotencyKey: turn.idempotencyKey,
-      payload: buildConversationGenerationPayload(
-        turn,
-        this.options.configuredSecrets?.() ?? [],
-        this.options.contextProperties?.() ?? {},
-      ),
-      createdAt: completedAt,
-    });
+    const result = await this.#enqueue(
+      {
+        category: "conversation",
+        kind: "conversation",
+        event: "$ai_generation",
+        idempotencyKey: turn.idempotencyKey,
+        payload: buildConversationGenerationPayload(
+          turn,
+          this.options.configuredSecrets?.() ?? [],
+          this.options.contextProperties?.() ?? {},
+        ),
+        createdAt: completedAt,
+      },
+      consent.enabledAt,
+    );
     if (result === "dropped") return false;
 
     const configuredSecrets = this.options.configuredSecrets?.() ?? [];
     const contextProperties = this.options.contextProperties?.() ?? {};
     for (const [index, log] of (turn.runLogs ?? []).entries()) {
-      await this.outbox.enqueue({
-        category: "conversation",
-        kind: "conversation",
-        event: "run.log.recorded",
-        idempotencyKey: `run.log.recorded:${turn.threadId}:${turn.turnId}:${index}`,
-        payload: {
-          ...sharedTraceProperties(turn, contextProperties),
-          run_log_kind: redactSensitiveText(log.kind, configuredSecrets).slice(
-            0,
-            MAX_DIAGNOSTIC_TEXT_LENGTH,
-          ),
-          run_log_tone: log.tone,
-          run_log_summary: redactSensitiveText(log.summary, configuredSecrets).slice(
-            0,
-            MAX_DIAGNOSTIC_TEXT_LENGTH,
-          ),
-          is_error:
-            log.tone === "error" || log.kind === "runtime.error" || log.kind.endsWith(".failed"),
+      await this.#enqueue(
+        {
+          category: "conversation",
+          kind: "conversation",
+          event: "run.log.recorded",
+          idempotencyKey: `run.log.recorded:${turn.threadId}:${turn.turnId}:${index}`,
+          payload: {
+            ...sharedTraceProperties(turn, contextProperties),
+            run_log_kind: redactSensitiveText(log.kind, configuredSecrets).slice(
+              0,
+              MAX_DIAGNOSTIC_TEXT_LENGTH,
+            ),
+            run_log_tone: log.tone,
+            run_log_summary: redactSensitiveText(log.summary, configuredSecrets).slice(
+              0,
+              MAX_DIAGNOSTIC_TEXT_LENGTH,
+            ),
+            is_error:
+              log.tone === "error" || log.kind === "runtime.error" || log.kind.endsWith(".failed"),
+          },
+          createdAt: Date.parse(log.createdAt),
         },
-        createdAt: Date.parse(log.createdAt),
-      });
+        consent.enabledAt,
+      );
     }
     for (const [index, file] of (turn.files ?? []).entries()) {
       const extension = file.name.match(/\.([a-z0-9]{1,12})$/iu)?.[1]?.toLowerCase() ?? "none";
-      await this.outbox.enqueue({
-        category: "conversation",
-        kind: "conversation",
-        event: "run.file.changed",
-        idempotencyKey: `run.file.changed:${turn.threadId}:${turn.turnId}:${index}`,
-        payload: {
-          ...sharedTraceProperties(turn, contextProperties),
-          file_name: redactSensitiveText(file.name, configuredSecrets).slice(0, 240),
-          relative_file: redactSensitiveText(file.relativePath, configuredSecrets).slice(0, 500),
-          file_extension: extension,
-          file_change_kind: file.kind ?? "unknown",
-          additions: file.additions ?? 0,
-          deletions: file.deletions ?? 0,
+      await this.#enqueue(
+        {
+          category: "conversation",
+          kind: "conversation",
+          event: "run.file.changed",
+          idempotencyKey: `run.file.changed:${turn.threadId}:${turn.turnId}:${index}`,
+          payload: {
+            ...sharedTraceProperties(turn, contextProperties),
+            file_name: redactSensitiveText(file.name, configuredSecrets).slice(0, 240),
+            relative_file: redactSensitiveText(file.relativePath, configuredSecrets).slice(0, 500),
+            file_extension: extension,
+            file_change_kind: file.kind ?? "unknown",
+            additions: file.additions ?? 0,
+            deletions: file.deletions ?? 0,
+          },
+          createdAt: completedAt,
         },
-        createdAt: completedAt,
-      });
+        consent.enabledAt,
+      );
     }
     for (const [index, artifact] of extractGeneratedArtifacts(turn.assistantText).entries()) {
-      await this.outbox.enqueue({
-        category: "conversation",
-        kind: "conversation",
-        event: "artifact.generated",
-        idempotencyKey: `artifact.generated:${turn.threadId}:${turn.turnId}:${index}`,
-        payload: {
-          ...sharedTraceProperties(turn, contextProperties),
-          artifact_name: redactSensitiveText(artifact.name, configuredSecrets).slice(0, 240),
-          artifact_extension: artifact.extension,
+      await this.#enqueue(
+        {
+          category: "conversation",
+          kind: "conversation",
+          event: "artifact.generated",
+          idempotencyKey: `artifact.generated:${turn.threadId}:${turn.turnId}:${index}`,
+          payload: {
+            ...sharedTraceProperties(turn, contextProperties),
+            artifact_name: redactSensitiveText(artifact.name, configuredSecrets).slice(0, 240),
+            artifact_extension: artifact.extension,
+          },
+          createdAt: completedAt,
         },
-        createdAt: completedAt,
-      });
+        consent.enabledAt,
+      );
     }
-    await this.outbox.markConversationTurn(turn.threadId, turn.turnId);
+    await this.outbox.markConversationTurn(turn.threadId, turn.turnId, () => {
+      const current = this.options.consent();
+      return current.decision === "accepted" && current.enabledAt === consent.enabledAt;
+    });
     return result === "enqueued";
   }
 
   async exportResponseFeedback(feedback: ResponseFeedbackExport): Promise<boolean> {
-    if (this.options.consent().decision !== "accepted") return false;
+    const consent = this.options.consent();
+    if (consent.decision !== "accepted") return false;
     const note = redactSensitiveText(feedback.note, this.options.configuredSecrets?.() ?? []).slice(
       0,
       MAX_RESPONSE_FEEDBACK_LENGTH,
     );
     if (!note.trim()) return false;
-    const result = await this.outbox.enqueue({
-      category: "conversation",
-      kind: "conversation",
-      event: "response.feedback.commented",
-      idempotencyKey: feedback.idempotencyKey,
-      payload: {
-        ...this.options.contextProperties?.(),
-        distinct_id: feedback.installationId,
-        $ai_session_id: feedback.threadId,
-        $ai_trace_id: feedback.turnId,
-        $ai_generation_id: feedback.turnId,
-        feedback_rating: feedback.rating,
-        feedback_note: note,
-        feedback_note_length: note.length,
+    const result = await this.#enqueue(
+      {
+        category: "conversation",
+        kind: "conversation",
+        event: "response.feedback.commented",
+        idempotencyKey: feedback.idempotencyKey,
+        payload: {
+          ...this.options.contextProperties?.(),
+          distinct_id: feedback.installationId,
+          $ai_session_id: feedback.threadId,
+          $ai_trace_id: feedback.turnId,
+          $ai_generation_id: feedback.turnId,
+          feedback_rating: feedback.rating,
+          feedback_note: note,
+          feedback_note_length: note.length,
+        },
       },
-    });
+      consent.enabledAt,
+    );
     return result === "enqueued";
   }
 }

@@ -66,8 +66,8 @@ export class BrowserPostHogTelemetryClient implements PostHogTelemetryClient {
       // Session replay is intentionally outside the analytics consent contract.
       disable_session_recording: true,
       disable_surveys: true,
-      advanced_disable_feature_flags: false,
-      advanced_disable_feature_flags_on_first_load: false,
+      advanced_disable_feature_flags: true,
+      advanced_disable_feature_flags_on_first_load: true,
       save_campaign_params: false,
       save_referrer: false,
       disable_capture_url_hashes: true,

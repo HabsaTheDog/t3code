@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { getHealthEvents, acknowledgeHealthEvents } from "./methods/health.ts";
 import {
   clearCloudAuthToken,
   createCloudAuthRequest,
@@ -64,6 +65,8 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handleSync(getLocalEnvironmentBootstrap);
 
   yield* ipc.handle(getClientSettings);
+  yield* ipc.handle(getHealthEvents);
+  yield* ipc.handle(acknowledgeHealthEvents);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getSavedEnvironmentRegistry);
   yield* ipc.handle(setSavedEnvironmentRegistry);

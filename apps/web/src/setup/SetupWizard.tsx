@@ -55,7 +55,8 @@ import { SpeechModelCard } from "../components/speech/SpeechModelCard";
 import { SourceInventory } from "../components/settings/SourceInventory";
 
 export const ONBOARDING_VERSION = 1;
-export const CONSENT_VERSION = 1;
+export { TELEMETRY_CONSENT_VERSION as CONSENT_VERSION } from "@t3tools/shared/telemetryHealth";
+import { TELEMETRY_CONSENT_VERSION as CONSENT_VERSION } from "@t3tools/shared/telemetryHealth";
 const SETUP_BRAND_LOGO_SRC = "/logo-highlight.png";
 
 type SetupStepId = "privacy" | "environment" | "provider" | "voice" | "sources" | "quiz-safety";

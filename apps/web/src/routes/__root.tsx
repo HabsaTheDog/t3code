@@ -66,6 +66,8 @@ import {
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { CONSENT_VERSION, SetupGate } from "../setup/SetupWizard";
 import { telemetry } from "../telemetry/runtime";
+import { drainDesktopHealth } from "../telemetry/desktopHealth";
+import { classifyTelemetryFailure } from "@t3tools/shared/telemetryHealth";
 import { ConversationTelemetryBridge } from "../telemetry/ConversationTelemetryBridge";
 import { AnalyticsTelemetryBridge } from "../telemetry/AnalyticsTelemetryBridge";
 import { featuresExposedOnRoute } from "../telemetry/featureCatalog";
@@ -204,11 +206,71 @@ function setSessionMarker(key: string): void {
   }
 }
 
-function TelemetryBootstrap({ pathname }: { pathname: string }) {
+function TelemetryBootstrap({
+  pathname,
+  startupError,
+}: {
+  pathname: string;
+  startupError?: unknown;
+}) {
   const hydrated = useClientSettingsHydrated();
   const settings = useSettings();
   const appStartedCaptured = useRef(hasSessionMarker(APP_STARTED_SESSION_MARKER));
   const lastCapturedPathname = useRef<string | null>(null);
+  const startupErrorCaptured = useRef<unknown>(undefined);
+
+  useEffect(() => {
+    if (
+      !hydrated ||
+      settings.consentVersion !== CONSENT_VERSION ||
+      settings.analyticsConsent !== "accepted"
+    )
+      return;
+    let captured = 0;
+    const report = (error: unknown) => {
+      if (captured++ >= 10) return;
+      void telemetry.capture({
+        event: "desktop.renderer_failed",
+        properties: {
+          failure_kind: classifyTelemetryFailure(error),
+          failure_stage: "renderer",
+        },
+      });
+    };
+    const onError = (event: ErrorEvent) => report(event.error ?? event.message);
+    const onRejection = (event: PromiseRejectionEvent) => report(event.reason);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, [hydrated, settings.analyticsConsent, settings.consentVersion]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setInterval(() => {
+      void drainDesktopHealth(telemetry, window.desktopBridge);
+    }, 30_000);
+    const healthTimer = window.setInterval(() => {
+      void telemetry.diagnostics().then((status) =>
+        telemetry.capture({
+          event: "telemetry.health",
+          properties: {
+            queued_items: status.queuedItems,
+            dropped_count: status.droppedCount,
+            oldest_age_ms: status.oldestItemAt
+              ? Math.max(0, Date.now() - Date.parse(status.oldestItemAt))
+              : 0,
+          },
+        }),
+      );
+    }, 5 * 60_000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearInterval(healthTimer);
+    };
+  }, [hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -227,8 +289,21 @@ function TelemetryBootstrap({ pathname }: { pathname: string }) {
           !consentCurrent &&
           (settings.analyticsConsent === "accepted" || settings.conversationConsent === "accepted"),
       });
+      await drainDesktopHealth(telemetry, window.desktopBridge);
       if (analyticsConsent !== "accepted") return;
-      if (!appStartedCaptured.current) {
+      if (startupError !== undefined && startupErrorCaptured.current !== startupError) {
+        if (
+          await telemetry.capture({
+            event: "desktop.renderer_failed",
+            properties: {
+              failure_kind: classifyTelemetryFailure(startupError),
+              failure_stage: "renderer",
+            },
+          })
+        )
+          startupErrorCaptured.current = startupError;
+      }
+      if (startupError === undefined && !appStartedCaptured.current) {
         appStartedCaptured.current = await telemetry.capture({ event: "app.started" });
         if (appStartedCaptured.current) setSessionMarker(APP_STARTED_SESSION_MARKER);
       }
@@ -244,6 +319,7 @@ function TelemetryBootstrap({ pathname }: { pathname: string }) {
   }, [
     hydrated,
     pathname,
+    startupError,
     settings.analyticsConsent,
     settings.analyticsEnabledAt,
     settings.consentVersion,
@@ -287,6 +363,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+      <TelemetryBootstrap pathname="/startup-error" startupError={error} />
       <div className="pointer-events-none absolute inset-0 opacity-80">
         <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]" />
         <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />

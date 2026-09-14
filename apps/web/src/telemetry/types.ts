@@ -34,6 +34,8 @@ export interface TelemetryOutboxItem {
 }
 
 export interface SemanticTelemetryEvent {
+  /** Durable native event UUID, preserved across journal re-delivery. */
+  readonly eventId?: string;
   readonly event: string;
   readonly properties?: Readonly<Record<string, unknown>>;
   readonly idempotencyKey?: string;

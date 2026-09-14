@@ -36,6 +36,49 @@ async function formJson(form: FormData, name: string): Promise<Record<string, un
 }
 
 describe("PostHogBatchUploader", () => {
+  it("isolates an invalid ordinary event without dropping its healthy neighbor", async () => {
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 400 }))
+      .mockResolvedValueOnce(new Response("", { status: 400 }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }));
+    const uploader = new PostHogBatchUploader({
+      host: "https://analytics.example.test",
+      projectToken: "phc_test",
+      fetch: fetchSpy,
+    });
+    const result = await uploader.upload([outboxItem({ id: "bad" }), outboxItem({ id: "good" })]);
+    expect(result.outcomes).toEqual([
+      {
+        ids: ["bad"],
+        result: { ok: false, permanent: true, error: "PostHog ingestion returned HTTP 400." },
+      },
+      { ids: ["good"], result: { ok: true } },
+    ]);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it("bounds a hanging request and does not leak its underlying error", async () => {
+    const fetchSpy = vi.fn<typeof fetch>(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init!.signal!.addEventListener("abort", () => reject(new Error("Bearer SECRET")), {
+            once: true,
+          });
+        }),
+    );
+    const uploader = new PostHogBatchUploader({
+      host: "https://analytics.example.test",
+      projectToken: "phc_test",
+      fetch: fetchSpy,
+      timeoutMs: 10,
+    });
+    expect(await uploader.upload([outboxItem()])).toEqual({
+      ok: false,
+      error: "PostHog ingestion failed or timed out.",
+    });
+  });
+
   it("uploads ordinary analytics and discards legacy queued replay snapshots", async () => {
     const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(new Response("", { status: 200 }));
     const uploader = new PostHogBatchUploader({
@@ -67,6 +110,7 @@ describe("PostHogBatchUploader", () => {
       api_key: "phc_test",
       batch: [
         {
+          uuid: "outbox-item",
           event: "app.started",
           properties: {
             distinct_id: "installation-id",
@@ -190,9 +234,18 @@ describe("PostHogBatchUploader", () => {
 
     await expect(uploader.upload(items)).resolves.toEqual({
       ok: false,
-      permanent: false,
-      retryAfterMs: 4_000,
-      error: "PostHog ingestion returned HTTP 429.",
+      outcomes: [
+        { ids: ["analytics"], result: { ok: true } },
+        {
+          ids: ["stable-conversation-id"],
+          result: {
+            ok: false,
+            permanent: false,
+            retryAfterMs: 4_000,
+            error: "PostHog ingestion returned HTTP 429.",
+          },
+        },
+      ],
     });
     await expect(uploader.upload(items)).resolves.toEqual({ ok: true });
 
@@ -211,6 +264,7 @@ describe("PostHogBatchUploader", () => {
   });
 
   it.each([
+    { status: 408, permanent: false, retryAfterMs: undefined },
     { status: 429, permanent: false, retryAfterMs: 7_000 },
     { status: 503, permanent: false, retryAfterMs: undefined },
     { status: 400, permanent: true, retryAfterMs: undefined },
@@ -243,7 +297,7 @@ describe("PostHogBatchUploader", () => {
     });
   });
 
-  it("prefers a retryable response when a mixed request also has a permanent error", async () => {
+  it("keeps permanent and retryable mixed outcomes independent", async () => {
     const fetchSpy = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response("", { status: 400 }))
@@ -256,8 +310,9 @@ describe("PostHogBatchUploader", () => {
 
     await expect(
       uploader.upload([
-        outboxItem(),
+        outboxItem({ id: "analytics" }),
         outboxItem({
+          id: "conversation",
           category: "conversation",
           kind: "conversation",
           event: "$ai_generation",
@@ -265,8 +320,16 @@ describe("PostHogBatchUploader", () => {
       ]),
     ).resolves.toEqual({
       ok: false,
-      permanent: false,
-      error: "PostHog ingestion returned HTTP 503.",
+      outcomes: [
+        {
+          ids: ["analytics"],
+          result: { ok: false, permanent: true, error: "PostHog ingestion returned HTTP 400." },
+        },
+        {
+          ids: ["conversation"],
+          result: { ok: false, permanent: false, error: "PostHog ingestion returned HTTP 503." },
+        },
+      ],
     });
   });
 
@@ -288,7 +351,7 @@ describe("PostHogBatchUploader", () => {
       ]),
     ).resolves.toEqual({
       ok: false,
-      error: "network unavailable",
+      error: "PostHog ingestion failed or timed out.",
     });
   });
 
@@ -323,6 +386,76 @@ describe("PostHogBatchUploader", () => {
 });
 
 describe("TelemetryRetryWorker", () => {
+  it("removes successes and retries only the failed part of a mixed upload", async () => {
+    let now = 1_000;
+    let id = 0;
+    const outbox = new TelemetryOutbox({
+      indexedDB: new IDBFactory(),
+      databaseName: `mixed-${Math.random()}`,
+      clock: { now: () => now },
+      random: { uuid: () => `item-${++id}`, unit: () => 0.5 },
+    });
+    await outbox.enqueue({
+      category: "analytics",
+      kind: "analytics",
+      event: "app.started",
+      idempotencyKey: "app",
+      payload: {},
+    });
+    await outbox.enqueue({
+      category: "conversation",
+      kind: "conversation",
+      event: "$ai_generation",
+      idempotencyKey: "turn",
+      payload: {},
+    });
+    const fetchSpy = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }));
+    const worker = new TelemetryRetryWorker(
+      outbox,
+      new PostHogBatchUploader({
+        host: "https://analytics.example.test",
+        projectToken: "phc_test",
+        fetch: fetchSpy,
+      }),
+    );
+    await worker.flush();
+    expect((await outbox.status()).queuedItems).toBe(1);
+    now += 10_000;
+    expect((await outbox.listDue()).map((item) => item.event)).toEqual(["$ai_generation"]);
+    await worker.flush();
+    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+      "https://analytics.example.test/batch/",
+      "https://analytics.example.test/i/v0/ai",
+      "https://analytics.example.test/i/v0/ai",
+    ]);
+    expect((await outbox.status()).queuedItems).toBe(0);
+  });
+
+  it("does not start a request if stopped while reading the outbox", async () => {
+    const outbox = new TelemetryOutbox({
+      indexedDB: new IDBFactory(),
+      databaseName: `stop-${Math.random()}`,
+    });
+    let resolve!: (items: ReadonlyArray<TelemetryOutboxItem>) => void;
+    vi.spyOn(outbox, "listDue").mockImplementation(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const upload = vi.fn(async () => ({ ok: true }));
+    const worker = new TelemetryRetryWorker(outbox, { upload });
+    const flushing = worker.flush();
+    worker.stop();
+    resolve([outboxItem()]);
+    await flushing;
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   it("retains and schedules items after 429 responses", async () => {
     let now = 1_000;
     const outbox = new TelemetryOutbox({

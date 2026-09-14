@@ -24,6 +24,7 @@ interface MetaRow {
 }
 
 export interface EnqueueTelemetryInput {
+  readonly id?: string;
   readonly idempotencyKey: string;
   readonly category: TelemetryCategory;
   readonly kind: TelemetryOutboxKind;
@@ -64,8 +65,12 @@ export class TelemetryOutbox {
     this.#random = options.random ?? systemTelemetryRandom;
   }
 
-  async enqueue(input: EnqueueTelemetryInput): Promise<"enqueued" | "duplicate" | "dropped"> {
+  async enqueue(
+    input: EnqueueTelemetryInput,
+    shouldEnqueue?: () => boolean,
+  ): Promise<"enqueued" | "duplicate" | "dropped"> {
     const database = await this.#database();
+    if (shouldEnqueue?.() === false) return "dropped";
     const transaction = database.transaction([ITEMS_STORE, META_STORE], "readwrite");
     const items = transaction.objectStore(ITEMS_STORE);
     const duplicate = await request(items.index("idempotencyKey").getKey(input.idempotencyKey));
@@ -73,10 +78,18 @@ export class TelemetryOutbox {
       await transactionDone(transaction);
       return "duplicate";
     }
+    if (shouldEnqueue?.() === false) {
+      await transactionDone(transaction);
+      return "dropped";
+    }
 
     const createdAt = input.createdAt ?? this.#clock.now();
     const item: TelemetryOutboxItem = {
-      id: this.#random.uuid(),
+      id:
+        input.id &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(input.id)
+          ? input.id
+          : this.#random.uuid(),
       idempotencyKey: input.idempotencyKey,
       category: input.category,
       kind: input.kind,
@@ -90,7 +103,7 @@ export class TelemetryOutbox {
     };
     await request(items.add(item));
 
-    const allItems = (await request(items.getAll())) as TelemetryOutboxItem[];
+    const allItems = await readItemMetadata(items);
     const evictedIds = selectCapacityEvictions(allItems, this.#maxBytes, item);
     for (const id of evictedIds) {
       await request(items.delete(id));
@@ -104,11 +117,19 @@ export class TelemetryOutbox {
 
   async clearCategory(category: TelemetryCategory): Promise<void> {
     const database = await this.#database();
-    const transaction = database.transaction(ITEMS_STORE, "readwrite");
+    const transaction = database.transaction([ITEMS_STORE, META_STORE], "readwrite");
     const store = transaction.objectStore(ITEMS_STORE);
     const keys = await request(store.index("category").getAllKeys(category));
     for (const key of keys) {
       await request(store.delete(key));
+    }
+    if (category === "conversation") {
+      const meta = transaction.objectStore(META_STORE);
+      const metadataKeys = await request(meta.getAllKeys());
+      for (const key of metadataKeys) {
+        if (typeof key === "string" && key.startsWith("conversation-watermark:"))
+          await request(meta.delete(key));
+      }
     }
     await transactionDone(transaction);
   }
@@ -144,7 +165,7 @@ export class TelemetryOutbox {
     const database = await this.#database();
     const transaction = database.transaction([ITEMS_STORE, META_STORE], "readwrite");
     const items = transaction.objectStore(ITEMS_STORE);
-    const allItems = (await request(items.getAll())) as TelemetryOutboxItem[];
+    const allItems = await readItemMetadata(items);
     const now = this.#clock.now();
     const expired = allItems.filter((item) => item.expiresAt <= now);
     for (const item of expired) {
@@ -161,14 +182,29 @@ export class TelemetryOutbox {
     await this.pruneExpired();
     const database = await this.#database();
     const transaction = database.transaction(ITEMS_STORE, "readonly");
-    const allItems = (await request(
-      transaction.objectStore(ITEMS_STORE).index("nextAttemptAt").getAll(),
-    )) as TelemetryOutboxItem[];
+    const due = await new Promise<TelemetryOutboxItem[]>((resolve, reject) => {
+      const result: TelemetryOutboxItem[] = [];
+      const cursorRequest = transaction
+        .objectStore(ITEMS_STORE)
+        .index("nextAttemptAt")
+        .openCursor();
+      cursorRequest.addEventListener("error", () => reject(cursorRequest.error), { once: true });
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (
+          !cursor ||
+          Number(cursor.key) > this.#clock.now() ||
+          result.length >= Math.max(1, limit)
+        ) {
+          resolve(result);
+          return;
+        }
+        result.push(cursor.value as TelemetryOutboxItem);
+        cursor.continue();
+      };
+    });
     await transactionDone(transaction);
-    return allItems
-      .filter((item) => item.nextAttemptAt <= this.#clock.now())
-      .toSorted((left, right) => left.createdAt - right.createdAt)
-      .slice(0, Math.max(1, limit));
+    return due;
   }
 
   async markSucceeded(ids: ReadonlyArray<string>): Promise<void> {
@@ -213,7 +249,13 @@ export class TelemetryOutbox {
     const items = transaction.objectStore(ITEMS_STORE);
     const now = this.#clock.now();
     for (const item of itemsToRetry) {
-      const delay = retryAfterMs ?? calculateRetryDelay(item.attemptCount + 1, this.#random.unit());
+      // Consent withdrawal or another renderer may have removed this item while
+      // its request was in flight. Never resurrect deleted telemetry.
+      if ((await request(items.getKey(item.id))) === undefined) continue;
+      const delay =
+        retryAfterMs !== undefined && Number.isFinite(retryAfterMs)
+          ? Math.min(MAX_RETRY_MS, Math.max(BASE_RETRY_MS, retryAfterMs))
+          : calculateRetryDelay(item.attemptCount + 1, this.#random.unit());
       await request(
         items.put({
           ...item,
@@ -237,9 +279,7 @@ export class TelemetryOutbox {
     await this.pruneExpired();
     const database = await this.#database();
     const transaction = database.transaction([ITEMS_STORE, META_STORE], "readonly");
-    const items = (await request(
-      transaction.objectStore(ITEMS_STORE).getAll(),
-    )) as TelemetryOutboxItem[];
+    const items = await readItemMetadata(transaction.objectStore(ITEMS_STORE));
     const meta = transaction.objectStore(META_STORE);
     const [lastSuccessfulSyncAt, droppedCount, lastError] = await Promise.all([
       getMeta<string | null>(meta, "lastSuccessfulSyncAt", null),
@@ -262,8 +302,13 @@ export class TelemetryOutbox {
     return (await this.#getMeta<boolean>(watermarkKey(threadId, turnId), false)) === true;
   }
 
-  async markConversationTurn(threadId: string, turnId: string): Promise<void> {
+  async markConversationTurn(
+    threadId: string,
+    turnId: string,
+    shouldMark?: () => boolean,
+  ): Promise<void> {
     const database = await this.#database();
+    if (shouldMark?.() === false) return;
     const transaction = database.transaction(META_STORE, "readwrite");
     await setMeta(transaction.objectStore(META_STORE), watermarkKey(threadId, turnId), true);
     await transactionDone(transaction);
@@ -317,7 +362,29 @@ export class TelemetryOutbox {
 
 export function calculateRetryDelay(attempt: number, jitterUnit: number): number {
   const exponential = Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** Math.max(0, attempt - 1));
-  return Math.round(exponential * (0.5 + Math.max(0, Math.min(1, jitterUnit))));
+  return Math.min(
+    MAX_RETRY_MS,
+    Math.round(exponential * (0.5 + Math.max(0, Math.min(1, jitterUnit)))),
+  );
+}
+
+/** Inspect capacity/expiry without retaining up to 250 MB of conversation payloads. */
+function readItemMetadata(store: IDBObjectStore): Promise<TelemetryOutboxItem[]> {
+  return new Promise((resolve, reject) => {
+    const result: TelemetryOutboxItem[] = [];
+    const scan = store.openCursor();
+    scan.addEventListener("error", () => reject(scan.error), { once: true });
+    scan.onsuccess = () => {
+      const cursor = scan.result;
+      if (!cursor) {
+        resolve(result);
+        return;
+      }
+      const item = cursor.value as TelemetryOutboxItem;
+      result.push({ ...item, payload: {} });
+      cursor.continue();
+    };
+  });
 }
 
 function estimateBytes(input: EnqueueTelemetryInput): number {

@@ -4,7 +4,7 @@ const DISALLOWED_PROPERTY_KEY =
   /(?:url|href|pathname|search|query|filename|file_name|file_path|path|text|prompt|message|content|transcript|terminal|diff|command|input|output|value|innerhtml|outerhtml|attributes?)/i;
 
 const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\b(?:sk|pk|phc)[_-][A-Za-z0-9_-]{16,}\b/g, "[REDACTED_KEY]"],
+  [/\b(?:sk|pk|phc|phx)[_-][A-Za-z0-9_-]{16,}\b/g, "[REDACTED_KEY]"],
   [
     /\b(?:gh[opurs]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{20,})\b/g,
     "[REDACTED_KEY]",
@@ -95,23 +95,40 @@ export function canonicalHeatmapUrl(value: string): string {
     route === "/chat" || route === "/home" || route === "/application" || route === "/setup"
       ? "/_chat/"
       : route;
-  return `https://app.t3.codes${displayPath}`;
+  return `https://app.study-buddy.invalid${displayPath}`;
 }
 
-function sanitizeValue(value: unknown, configuredSecrets: ReadonlyArray<string>): unknown {
+function sanitizeValue(
+  value: unknown,
+  configuredSecrets: ReadonlyArray<string>,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown {
+  if (depth > 5) return undefined;
   if (typeof value === "string") {
     return sanitizeAnalyticsString(value, configuredSecrets).slice(0, 500);
   }
-  if (typeof value === "number" || typeof value === "boolean" || value === null) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "boolean" || value === null) {
     return value;
   }
   if (Array.isArray(value)) {
-    return value.slice(0, 50).map((entry) => sanitizeValue(entry, configuredSecrets));
+    if (seen.has(value)) return undefined;
+    seen.add(value);
+    return value
+      .slice(0, 50)
+      .map((entry) => sanitizeValue(entry, configuredSecrets, depth + 1, seen))
+      .filter((entry) => entry !== undefined);
   }
   if (typeof value !== "object") {
     return undefined;
   }
-  return sanitizeRecord(value as Readonly<Record<string, unknown>>, configuredSecrets);
+  return sanitizeObject(
+    value as Readonly<Record<string, unknown>>,
+    configuredSecrets,
+    depth + 1,
+    seen,
+  );
 }
 
 function sanitizeAnalyticsString(value: string, configuredSecrets: ReadonlyArray<string>): string {
@@ -127,10 +144,22 @@ export function sanitizeRecord(
   input: Readonly<Record<string, unknown>>,
   configuredSecrets: ReadonlyArray<string> = [],
 ): Record<string, unknown> {
+  return sanitizeObject(input, configuredSecrets, 0, new WeakSet());
+}
+
+function sanitizeObject(
+  input: Readonly<Record<string, unknown>>,
+  configuredSecrets: ReadonlyArray<string>,
+  depth: number,
+  seen: WeakSet<object>,
+): Record<string, unknown> {
   const output: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
+  if (depth > 5 || seen.has(input)) return output;
+  seen.add(input);
+  for (const [key, value] of Object.entries(input).slice(0, 100)) {
     if (SENSITIVE_KEY.test(key) || DISALLOWED_PROPERTY_KEY.test(key)) continue;
-    const sanitized = sanitizeValue(value, configuredSecrets);
+    if (["__proto__", "prototype", "constructor"].includes(key)) continue;
+    const sanitized = sanitizeValue(value, configuredSecrets, depth + 1, seen);
     if (sanitized !== undefined) output[key] = sanitized;
   }
   return output;

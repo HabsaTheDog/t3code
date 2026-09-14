@@ -82,6 +82,8 @@ import { useServerObservability, useServerProviders } from "../../rpc/serverStat
 import { isProviderDriverAvailable } from "../../providerAvailability";
 import { featureProperties } from "../../telemetry/featureCatalog";
 import { telemetry } from "../../telemetry/runtime";
+import { providerMaintenanceEvent } from "../../telemetry/providerMaintenanceTelemetry";
+import { classifyTelemetryFailure } from "@t3tools/shared/telemetryHealth";
 
 const THEME_OPTIONS = [
   {
@@ -1021,12 +1023,36 @@ export function ProviderSettingsPanel() {
       return;
     }
 
+    const startedAt = Date.now();
+    void telemetry.capture({
+      event: "provider.update_started",
+      properties: {
+        provider: candidate.driver === "claudeAgent" ? "claude" : candidate.driver,
+      },
+    });
     try {
-      await ensureLocalApi().server.updateProvider({
+      const result = await ensureLocalApi().server.updateProvider({
         provider: candidate.driver,
         instanceId: candidate.instanceId,
       });
+      const state = result.providers.find(
+        (provider) =>
+          provider.driver === candidate.driver && provider.instanceId === candidate.instanceId,
+      )?.updateState;
+      void telemetry.capture(
+        providerMaintenanceEvent(candidate.driver, state, Date.now() - startedAt),
+      );
     } catch (error) {
+      void telemetry.capture({
+        event: "provider.update_failed",
+        properties: {
+          provider: candidate.driver === "claudeAgent" ? "claude" : candidate.driver,
+          outcome: "start_failed",
+          failure_stage: "install",
+          failure_kind: classifyTelemetryFailure(error),
+          duration_ms: Date.now() - startedAt,
+        },
+      });
       toastManager.add(
         stackedThreadToast({
           type: "error",

@@ -9,6 +9,23 @@ import {
 } from "./sanitize";
 
 describe("telemetry sanitization", () => {
+  it("bounds recursive metadata and removes admin tokens and non-finite numbers", () => {
+    const cyclic: Record<string, unknown> = {
+      safe: 1,
+      infinite: Infinity,
+      diagnostic: "phx_abcdefghijklmnopqrstuvwxyz",
+    };
+    cyclic.self = cyclic;
+    const sanitized = sanitizeRecord(cyclic);
+    expect(sanitized.safe).toBe(1);
+    expect(sanitized).not.toHaveProperty("infinite");
+    expect(JSON.stringify(sanitized)).not.toContain("phx_");
+    expect(
+      Object.keys(
+        sanitizeRecord(Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`key${i}`, i]))),
+      ),
+    ).toHaveLength(100);
+  });
   it("redacts credentials and configured secrets deterministically", () => {
     const result = redactSensitiveText(
       "Authorization: Bearer abcdefghijklmnop password=hunter2 webcal://calendar/private",
@@ -187,7 +204,7 @@ describe("telemetry sanitization", () => {
       $viewport_width: 1440,
       $viewport_height: 900,
       $heatmap_data: {
-        "https://app.t3.codes/_chat/": [{ x: 10, y: 20, type: "click" }],
+        "https://app.study-buddy.invalid/_chat/": [{ x: 10, y: 20, type: "click" }],
       },
     });
     expect(JSON.stringify(enqueue.mock.calls)).not.toContain("thread-secret");
@@ -254,7 +271,7 @@ describe("telemetry sanitization", () => {
 
   it("never promotes an unknown settings path segment into a heatmap URL", () => {
     expect(canonicalHeatmapUrl("https://private.test/settings/thread-secret?token=x")).toBe(
-      "https://app.t3.codes/settings",
+      "https://app.study-buddy.invalid/settings",
     );
   });
 });

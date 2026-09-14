@@ -56,6 +56,6 @@ export function privacySafePageviewProperties(pathname: string): PrivacySafePage
           : route;
   return {
     route,
-    $current_url: `https://app.t3.codes${canonicalPath}`,
+    $current_url: `https://app.study-buddy.invalid${canonicalPath}`,
   };
 }

@@ -46,7 +46,9 @@ describe("PrivacySafeHeatmapCollector", () => {
 
     expect(emit).toHaveBeenCalledWith({
       $heatmap_data: {
-        "https://app.t3.codes/_chat/": [{ x: 14, y: 28, type: "click", target_fixed: false }],
+        "https://app.study-buddy.invalid/_chat/": [
+          { x: 14, y: 28, type: "click", target_fixed: false },
+        ],
       },
       $viewport_width: 1440,
       $viewport_height: 900,
@@ -78,7 +80,7 @@ describe("PrivacySafeHeatmapCollector", () => {
 
     expect(emitControlClick).toHaveBeenCalledWith({
       analytics_id: "thread.favorite",
-      $current_url: "https://app.t3.codes/_chat/",
+      $current_url: "https://app.study-buddy.invalid/_chat/",
       $session_id: "0198a748-305a-7000-8000-000000000001",
     });
     expect(JSON.stringify(emitControlClick.mock.calls)).not.toContain("private thread title");

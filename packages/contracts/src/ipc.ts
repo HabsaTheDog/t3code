@@ -471,7 +471,20 @@ export const DesktopSpeechTranscriptionResultSchema = Schema.Struct({
 });
 export type DesktopSpeechTranscriptionResult = typeof DesktopSpeechTranscriptionResultSchema.Type;
 
+export const DesktopHealthEventSchema = Schema.Struct({
+  id: Schema.String,
+  event: Schema.Literals(["desktop.startup_failed", "desktop.update_failed"]),
+  timestamp: Schema.String,
+  appVersion: Schema.String,
+  platform: Schema.String,
+  failureKind: Schema.String,
+  failureStage: Schema.String,
+});
+export type DesktopHealthEvent = typeof DesktopHealthEventSchema.Type;
+
 export interface DesktopBridge {
+  getHealthEvents?: () => Promise<ReadonlyArray<DesktopHealthEvent>>;
+  acknowledgeHealthEvents?: (ids: ReadonlyArray<string>) => Promise<void>;
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
   getClientSettings: () => Promise<ClientSettings | null>;
