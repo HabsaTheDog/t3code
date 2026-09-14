@@ -241,8 +241,14 @@ export class ProviderSetupJobRunner {
         child.kill("SIGTERM");
       }
 
-      const stdout = this.#consumeProgress(jobId, job, "stdout", child.stdout);
-      const stderr = this.#consumeProgress(jobId, job, "stderr", child.stderr);
+      let firstStdoutLine: string | null = null;
+      let firstStderrLine: string | null = null;
+      const stdout = this.#consumeProgress(jobId, job, "stdout", child.stdout, (line) => {
+        firstStdoutLine ??= line;
+      });
+      const stderr = this.#consumeProgress(jobId, job, "stderr", child.stderr, (line) => {
+        firstStderrLine ??= line;
+      });
 
       if (secretValue !== undefined) {
         await child.writeStdin(`${secretValue}\n`);
@@ -256,12 +262,14 @@ export class ProviderSetupJobRunner {
         return this.#terminalEvent(jobId, job, { type: "cancelled" });
       }
       if (result.exitCode !== 0) {
+        const diagnostic = firstStderrLine ?? firstStdoutLine;
+        const exitMessage =
+          result.exitCode === null
+            ? "Provider setup process ended without an exit code."
+            : `Provider setup process exited with code ${result.exitCode}.`;
         return this.#terminalEvent(jobId, job, {
           type: "failed",
-          message:
-            result.exitCode === null
-              ? "Provider setup process ended without an exit code."
-              : `Provider setup process exited with code ${result.exitCode}.`,
+          message: diagnostic ? `${exitMessage} ${diagnostic}` : exitMessage,
           exitCode: result.exitCode,
         });
       }
@@ -291,10 +299,14 @@ export class ProviderSetupJobRunner {
     job: ActiveJob,
     stream: "stdout" | "stderr",
     chunks: AsyncIterable<Uint8Array | string>,
+    onSanitizedLine?: (line: string) => void,
   ): Promise<void> {
     const sanitizer = makeProviderSetupProgressSanitizer({
       sensitiveValues: job.sensitiveValues,
-      emit: (text) => this.#event(jobId, job, { type: "progress", stream, text }),
+      emit: (text) => {
+        onSanitizedLine?.(text);
+        this.#event(jobId, job, { type: "progress", stream, text });
+      },
     });
     for await (const chunk of chunks) {
       sanitizer.write(chunk);

@@ -289,6 +289,30 @@ describe("ProviderSetupJobRunner", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("includes the sanitized installer diagnostic when a setup process exits nonzero", async () => {
+    const secret = "sk-secret-installer123";
+    const fake = makeChild({
+      stdout: ["Downloading Codex CLI\n"],
+      stderr: [`Access denied for token=${secret}\n`, "PowerShell stack detail\n"],
+      result: Promise.resolve({ exitCode: 1, signal: null }),
+    });
+    const runner = new ProviderSetupJobRunner({
+      spawner: { spawn: async () => fake.child },
+      refreshProviderStatus: async () => undefined,
+      platform: { platform: "win32", isWsl: false },
+      createJobId: () => "job-installer-failure",
+    });
+
+    const terminal = await runner.start({ actionId: "codex.install", confirmed: true }).completion;
+
+    expect(terminal).toMatchObject({
+      type: "failed",
+      message: "Provider setup process exited with code 1. Access denied for token=[REDACTED]",
+      exitCode: 1,
+    });
+    expect(JSON.stringify(terminal)).not.toContain(secret);
+  });
+
   it("replays a completed job to a subscription opened after completion", async () => {
     const fake = makeChild({ stdout: ["complete\n"] });
     const runner = new ProviderSetupJobRunner({
