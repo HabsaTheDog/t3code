@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createBrokerExecutionRequest,
+  safeBaseEnvironment,
   spawnWorkflow,
   stageQuizPermissionRequest,
   terminateWorkflowTree,
@@ -240,4 +241,16 @@ describe("Study Buddy quiz permission staging", () => {
       await rm(stateDir, { recursive: true, force: true });
     }
   });
+});
+
+it("uses only the server-owned Study Buddy source cache root", () => {
+  const env = safeBaseEnvironment(
+    { STUDY_BUDDY_SOURCE_CACHE_ROOT: "/untrusted", T3CODE_HOME: "/independent-t3" },
+    "/study-buddy/codex-home",
+    "/study-buddy",
+  );
+  expect(env.STUDY_BUDDY_SOURCE_CACHE_ROOT).toBe(
+    path.join("/study-buddy", "study-buddy-data", "cache", "sources"),
+  );
+  expect(env.T3CODE_HOME).toBeUndefined();
 });

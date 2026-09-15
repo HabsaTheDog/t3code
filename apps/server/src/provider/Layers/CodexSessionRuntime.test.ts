@@ -310,6 +310,12 @@ describe("buildTurnStartParams", () => {
       instructions,
       /answer the complete original user request in your own words[\s\S]*native evidence handoff/i,
     );
+    assert.match(
+      instructions,
+      /absence of a matching calendar event never proves that no task is due/,
+    );
+    assert.match(instructions, /workflow supervisor owns idle and runtime limits/);
+    assert.match(instructions, /If the workflow fails[\s\S]*must not claim that nothing is due/);
   });
 
   it("passes a custom Quiz Solver role into Study Buddy wrapper commands", () => {
