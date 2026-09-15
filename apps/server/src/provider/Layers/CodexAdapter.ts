@@ -177,6 +177,10 @@ function normalizeCodexTokenUsage(
 
   return {
     usedTokens,
+    totalInputTokens: usage.total.inputTokens,
+    totalCachedInputTokens: usage.total.cachedInputTokens,
+    totalOutputTokens: usage.total.outputTokens,
+    totalReasoningOutputTokens: usage.total.reasoningOutputTokens,
     ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
       ? { totalProcessedTokens }
       : {}),
@@ -845,7 +849,7 @@ function mapToRuntimeEvents(
         type: "thread.token-usage.updated",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          usage: normalizedUsage,
+          usage: { ...normalizedUsage, providerThreadId: payload!.threadId },
         },
       },
     ];

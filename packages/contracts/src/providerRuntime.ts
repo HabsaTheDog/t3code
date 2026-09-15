@@ -306,6 +306,11 @@ export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.T
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
+  providerThreadId: Schema.optional(Schema.String),
+  totalInputTokens: Schema.optional(NonNegativeInt),
+  totalCachedInputTokens: Schema.optional(NonNegativeInt),
+  totalOutputTokens: Schema.optional(NonNegativeInt),
+  totalReasoningOutputTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
