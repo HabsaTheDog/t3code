@@ -87,7 +87,7 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
-import { openDiscoveredPort } from "./preview/openDiscoveredPort";
+import { openDiscoveredPort, openDiscoveredPortExternally } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
 import { previewEnvironment } from "../state/preview";
 import {
@@ -425,6 +425,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       event.preventDefault();
       event.stopPropagation();
       navigateToThread(threadRef);
+      if (!isElectron) {
+        openDiscoveredPortExternally({ threadRef, port });
+        return;
+      }
       void (async () => {
         const result = await openDiscoveredPort({ threadRef, port, openPreview });
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {

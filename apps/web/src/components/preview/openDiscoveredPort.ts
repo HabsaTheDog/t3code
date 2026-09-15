@@ -9,6 +9,24 @@ import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { openPreviewSession } from "./openPreviewSession";
 
+type ExternalWindowOpener = (
+  url?: string | URL,
+  target?: string,
+  features?: string,
+) => WindowProxy | null;
+
+export function openDiscoveredPortExternally(
+  input: {
+    readonly threadRef: ScopedThreadRef;
+    readonly port: DiscoveredLocalServer;
+  },
+  openExternal: ExternalWindowOpener = window.open.bind(window),
+): string {
+  const resolvedUrl = resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
+  openExternal(resolvedUrl, "_blank", "noopener,noreferrer");
+  return resolvedUrl;
+}
+
 export async function openDiscoveredPort<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly port: DiscoveredLocalServer;
