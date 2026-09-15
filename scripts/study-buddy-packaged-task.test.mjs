@@ -387,6 +387,54 @@ it("uses route-aware packaged completion contracts and rejects stale artifacts",
   }
 });
 
+it("accepts batch quiz permissions only from distinct contained request files", () => {
+  const runDir = mkdtempSync(path.join(tmpdir(), "packaged-quiz-batch-"));
+  try {
+    const permissions = [
+      path.join("quizzes", "quiz-1", "quiz-permission-request.json"),
+      path.join("quizzes", "quiz-2", "quiz-permission-request.json"),
+    ];
+    writeFileSync(
+      path.join(runDir, "run-summary.md"),
+      "Route: interactive_quiz\nRun status: success\n",
+    );
+    writeFileSync(path.join(runDir, "error.log"), "");
+    writeFileSync(path.join(runDir, "quiz-review.typ"), "review");
+    writeFileSync(path.join(runDir, "quiz-review.json"), "{}");
+    for (const permission of permissions) {
+      mkdirSync(path.dirname(path.join(runDir, permission)), { recursive: true });
+      writeFileSync(path.join(runDir, permission), "{}");
+    }
+    const result = (permissionRequestPaths) => ({
+      schemaVersion: 1,
+      ok: true,
+      workflowStatus: "permission_required",
+      kind: "quiz",
+      permissionRequestPaths,
+      requiredArtifacts: ["quiz-review.typ", "quiz-review.json", ...permissionRequestPaths],
+    });
+    writeFileSync(
+      path.join(runDir, "interaction-result.json"),
+      JSON.stringify(result(permissions)),
+    );
+    assert.isTrue(inspectRunContract(runDir).completed);
+    for (const invalid of [
+      [],
+      ["../quiz-permission-request.json"],
+      ["quizzes/../quiz-permission-request.json"],
+      [path.join(tmpdir(), "quiz-permission-request.json")],
+      ["wrong.json"],
+      [permissions[0], permissions[0]],
+      [path.join("quizzes", "missing", "quiz-permission-request.json")],
+    ]) {
+      writeFileSync(path.join(runDir, "interaction-result.json"), JSON.stringify(result(invalid)));
+      assert.isFalse(inspectRunContract(runDir).completed);
+    }
+  } finally {
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
 it("fails closed on an ownerless packaged artifact lock", () => {
   const temp = mkdtempSync(path.join(tmpdir(), "study-buddy-packaged-lock-"));
   const workspace = path.join(temp, "workspace");

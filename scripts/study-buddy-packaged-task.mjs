@@ -342,11 +342,34 @@ function inspectRunContract(runDir) {
         ? ["assignment-report.md", "assignment-report.json"]
         : ["quiz-review.typ", "quiz-review.json"];
     if (interaction.workflowStatus === "permission_required") {
-      expectedArtifacts.push(
+      const permissionPaths =
+        contract === "interactive_assignment"
+          ? ["assignment-permission-request.json"]
+          : (interaction.permissionRequestPaths ?? ["quiz-permission-request.json"]);
+      const permissionName =
         contract === "interactive_assignment"
           ? "assignment-permission-request.json"
-          : "quiz-permission-request.json",
-      );
+          : "quiz-permission-request.json";
+      if (
+        !Array.isArray(permissionPaths) ||
+        permissionPaths.length === 0 ||
+        new Set(permissionPaths).size !== permissionPaths.length ||
+        permissionPaths.some(
+          (name) =>
+            typeof name !== "string" ||
+            path.isAbsolute(name) ||
+            path.win32.isAbsolute(name) ||
+            path.normalize(name) !== name ||
+            name.split(/[\\/]/).some((part) => !part || part === "." || part === "..") ||
+            path.basename(name) !== permissionName ||
+            !resolveContainedRegularFile(realRunDir, path.join(runDir, name)),
+        )
+      ) {
+        contradiction =
+          "Interaction permission paths must name distinct contained permission request files";
+      } else {
+        expectedArtifacts.push(...permissionPaths);
+      }
     }
     if (interaction.schemaVersion !== 1) {
       contradiction = `Unsupported interaction result schema (${interaction.schemaVersion ?? "unknown"})`;

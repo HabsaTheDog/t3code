@@ -5,6 +5,16 @@ import {
 } from "@t3tools/shared/studyBuddyProfiles";
 import { buildStudyBuddyDeveloperInstructions } from "./CodexDeveloperInstructions.js";
 
+it("keeps multi-quiz execution in one batch while preserving every exact approval", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  });
+  expect(instructions).toContain("keep all requested quizzes in one batch prompt");
+  expect(instructions).toContain("permissionRequestPaths");
+  expect(instructions).toContain("repeated `--approve-quiz-request");
+  expect(instructions).toContain("Never apply one quiz's approval to another");
+});
+
 describe("profile task handoff", () => {
   it("includes specialized tasks once and requires them for every workflow route", () => {
     const base = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "custom-task");
