@@ -1,3 +1,5 @@
+import { buildStudyBuddyDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import { providerWorkflowEnvironment } from "../studyBuddyModelBridge.ts";
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -2954,7 +2956,18 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: {
+          ...claudeEnvironment,
+          ...(yield* providerWorkflowEnvironment({
+            threadId: input.threadId,
+            modelSelection: input.modelSelection,
+            driver: PROVIDER,
+            cwd: input.cwd,
+          }).pipe(
+            Effect.provideService(ServerConfig, serverConfig),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+          )),
+        },
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
@@ -3191,11 +3204,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       providerRefs: {},
     });
 
-    const message = yield* buildUserMessageEffect(input, {
-      fileSystem,
-      attachmentsDir: serverConfig.attachmentsDir,
-      boundInstanceId,
+    const studyInstructions = buildStudyBuddyDeveloperInstructions({
+      cwd: context.session.cwd,
+      executionProfile: input.studyBuddyExecutionProfile,
+      executionProfileConfig: input.studyBuddyExecutionProfileConfig,
     });
+    const message = yield* buildUserMessageEffect(
+      { ...input, input: [studyInstructions, input.input].filter(Boolean).join("\n\n") },
+      {
+        fileSystem,
+        attachmentsDir: serverConfig.attachmentsDir,
+        boundInstanceId,
+      },
+    );
 
     yield* Queue.offer(context.promptQueue, {
       type: "message",

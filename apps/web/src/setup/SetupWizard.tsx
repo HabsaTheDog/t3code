@@ -74,7 +74,7 @@ type StepSaveHandle = {
 const ALL_STEPS: readonly SetupStep[] = [
   { id: "privacy", label: "Privacy", icon: ShieldCheckIcon },
   { id: "environment", label: "Environment", icon: WifiIcon },
-  { id: "provider", label: "Codex", icon: BotIcon },
+  { id: "provider", label: "AI providers", icon: BotIcon },
   { id: "voice", label: "Voice input", icon: AudioWaveformIcon },
   { id: "sources", label: "Sources", icon: GraduationCapIcon },
   { id: "quiz-safety", label: "Quiz safety", icon: ShieldCheckIcon },
@@ -373,7 +373,8 @@ function SetupWizard({
             })}
           </ol>
           <p className="mt-auto text-xs leading-5 text-muted-foreground">
-            Only Codex is required. You can add Moodle, websites, calendars, and email now or later.
+            Connect an AI provider now or later. You can also add Moodle, websites, calendars, and
+            email whenever you need them.
           </p>
         </aside>
 
@@ -496,7 +497,7 @@ function SetupWizard({
                   Back
                 </Button>
                 <div className="flex items-center gap-2">
-                  {stepIndex < steps.length - 1 && step.id !== "provider" ? (
+                  {stepIndex < steps.length - 1 ? (
                     <Button
                       variant="ghost"
                       data-analytics-id="setup.skip"
@@ -709,8 +710,8 @@ function ProviderStep({
   return (
     <div className="space-y-6">
       <StepIntro
-        title="Connect Codex"
-        description="Codex powers Study Buddy’s answers. Install it and sign in below. You only need to do this once."
+        title="Connect your AI providers"
+        description="Choose OpenAI Codex, Anthropic Claude, or Google Gemini. Connect any providers you want, or skip this step and set them up later in Settings."
         icon={BotIcon}
       />
       <ProviderSetupStep ref={providerSetupStepRef} />

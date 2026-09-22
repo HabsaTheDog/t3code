@@ -203,3 +203,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
 };
+
+export const ANTIGRAVITY_DEFAULT_MODEL = "default";

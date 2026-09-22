@@ -178,10 +178,25 @@ export function resolveStudyBuddyProfileForModelSelection(
     | "studyBuddyExecutionProfile"
     | "studyBuddyExecutionProfileId"
     | "studyBuddyCustomExecutionProfiles"
-  >,
+  > &
+    Partial<Pick<ServerSettings, "providerInstances">>,
   modelSelection: ModelSelection | null | undefined,
   options?: { preferDefault?: boolean },
 ): StudyBuddyExecutionProfileDefinition {
+  // Built-in execution policies follow the selected provider. A custom policy
+  // remains explicit; native providers must never receive GPT worker models.
+  const driver = modelSelection
+    ? (settings.providerInstances?.[modelSelection.instanceId]?.driver ?? modelSelection.instanceId)
+    : undefined;
+  if (modelSelection && driver !== "codex") {
+    const base = resolveStudyBuddyProfile({
+      activeProfileId:
+        studyBuddyProfileIdFromModelSelection(modelSelection) ??
+        settings.studyBuddyExecutionProfileId,
+      customProfiles: settings.studyBuddyCustomExecutionProfiles,
+    });
+    return adaptStudyBuddyProfileToSelection(base, modelSelection, driver);
+  }
   const explicitId = studyBuddyProfileIdFromModelSelection(modelSelection);
   if (explicitId) {
     return resolveStudyBuddyProfile({
@@ -282,5 +297,38 @@ export function studyBuddyProfileOverrides(
         .map(([task, role]) => [task, profile.roles[role]]),
     ),
     ...profile.taskOverrides,
+  };
+}
+
+/** Keep all native worker roles on the exact provider/model selected by the user. */
+export function adaptStudyBuddyProfileToSelection(
+  profile: StudyBuddyExecutionProfileDefinition,
+  selection: ModelSelection,
+  driver: string = selection.instanceId,
+): StudyBuddyExecutionProfileDefinition {
+  if (driver === "codex") return profile;
+  const adapt = (role: StudyBuddyWorkerRole): StudyBuddyWorkerRole => ({
+    ...role,
+    model: selection.model,
+    retryModel: selection.model,
+  });
+  return {
+    ...profile,
+    roles: {
+      coordinator: {
+        ...profile.roles.coordinator,
+        instanceId: selection.instanceId,
+        model: selection.model,
+        fastMode: false,
+      },
+      contentAnalyzer: adapt(profile.roles.contentAnalyzer),
+      quizSolver: adapt(profile.roles.quizSolver),
+      artifactPlanner: adapt(profile.roles.artifactPlanner),
+      artifactBuilder: adapt(profile.roles.artifactBuilder),
+      qualityReviewer: adapt(profile.roles.qualityReviewer),
+    },
+    taskOverrides: Object.fromEntries(
+      Object.entries(profile.taskOverrides ?? {}).map(([key, role]) => [key, adapt(role)]),
+    ),
   };
 }

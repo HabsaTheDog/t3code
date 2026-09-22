@@ -1,3 +1,6 @@
+import { makeClaudeEnvironment } from "./provider/Drivers/ClaudeHome.ts";
+import { ProviderInstanceSetupError } from "@t3tools/contracts";
+import { ProviderManagement } from "./provider/providerManagement.ts";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -185,6 +188,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetProviderSetupCapabilities, AuthOrchestrationReadScope],
+  [WS_METHODS.serverManageProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverStartProviderSetup, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCancelProviderSetup, AuthOrchestrationOperateScope],
   [WS_METHODS.serverWriteProviderSetupInput, AuthOrchestrationOperateScope],
@@ -416,17 +420,26 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       });
       const configuredProviders = yield* serverSettings.getSettings;
       const configuredCodexBinary = configuredProviders.providers.codex.binaryPath;
+      const providerManagement = yield* Effect.serviceOption(ProviderManagement);
+      const setupEnvironment = studyBuddyCodexEnvironment(studyBuddyCodexPaths);
+      const claudeSetupEnvironment = yield* makeClaudeEnvironment(
+        configuredProviders.providers.claudeAgent,
+        setupEnvironment,
+      );
       const providerSetupPlatform = detectProviderSetupPlatform();
       const providerSetupRunner = new ProviderSetupJobRunner({
         spawner: nodeProviderSetupProcessSpawner,
         cwd: config.cwd,
-        env: studyBuddyCodexEnvironment(studyBuddyCodexPaths),
+        env: setupEnvironment,
+        resolveEnvironment: (action) =>
+          action.provider === "claude" ? claudeSetupEnvironment : setupEnvironment,
         platform: providerSetupPlatform,
         resolveCommand: (action) =>
           resolveProviderSetupCommand({
             action,
             platform: providerSetupPlatform,
             configuredCodexBinary,
+            configuredClaudeBinary: configuredProviders.providers.claudeAgent.binaryPath,
           }),
         refreshProviderStatus: () => runPromise(providerRegistry.refresh().pipe(Effect.asVoid)),
       });
@@ -1188,6 +1201,20 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           observeRpcEffect(
             WS_METHODS.serverGetProviderSetupCapabilities,
             Effect.sync(() => getProviderSetupCapabilities()),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverManageProvider]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverManageProvider,
+            Option.isSome(providerManagement)
+              ? providerManagement.value(input, currentSessionId)
+              : Effect.fail(
+                  new ProviderInstanceSetupError({
+                    instanceId: input.instanceId,
+                    operation: input.action,
+                    detail: "Provider management is unavailable.",
+                  }),
+                ),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverStartProviderSetup]: (input) =>

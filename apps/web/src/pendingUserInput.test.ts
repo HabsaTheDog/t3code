@@ -41,6 +41,24 @@ const multiSelectQuestion = {
 } as const;
 
 describe("resolvePendingUserInputAnswer", () => {
+  it("returns native option IDs and ignores stale custom answers when prohibited", () => {
+    const question = {
+      ...singleSelectQuestion,
+      allowCustomAnswer: false,
+      options: [
+        { label: "Approve once", description: "Continue this operation", value: "allow-once" },
+      ],
+    };
+    const draft = { selectedOptionLabels: ["Approve once"], customAnswer: "old answer" };
+    expect(resolvePendingUserInputAnswer(question, draft)).toBe("allow-once");
+    expect(resolvePendingUserInputAnswer(question, { customAnswer: "old answer" })).toBeNull();
+    expect(derivePendingUserInputProgress([question], { scope: draft }, 0)).toMatchObject({
+      usingCustomAnswer: false,
+      customAnswer: "",
+      resolvedAnswer: "allow-once",
+    });
+  });
+
   it("prefers a custom answer over selected options", () => {
     expect(
       resolvePendingUserInputAnswer(singleSelectQuestion, {

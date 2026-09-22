@@ -2877,6 +2877,47 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it.each([
+    ["idle", "blocked"],
+    ["cancelled", "canceled"],
+    ["failed", "failed"],
+  ] as const)(
+    "records native subagent %s status without leaving it running",
+    async (nativeStatus, expectedStatus) => {
+      const harness = await createHarness();
+      const now = "2026-01-01T00:00:00.000Z";
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("native-turn-start"),
+        provider: ProviderDriverKind.make("antigravity"),
+        threadId: asThreadId("thread-1"),
+        createdAt: now,
+        turnId: asTurnId("native-turn"),
+      });
+      harness.emit({
+        type: "task.updated",
+        eventId: asEventId("native-task-update"),
+        provider: ProviderDriverKind.make("antigravity"),
+        threadId: asThreadId("thread-1"),
+        createdAt: now,
+        turnId: asTurnId("native-turn"),
+        payload: {
+          taskId: "native-child",
+          description: "Review source evidence",
+          status: nativeStatus,
+        },
+      });
+      const thread = await waitForThread(harness.readModel, (thread) =>
+        thread.delegatedWork.some(
+          (work) => work.id === "native-child" && work.status === expectedStatus,
+        ),
+      );
+      const work = thread.delegatedWork.find((work) => work.id === "native-child");
+      expect(work?.status).toBe(expectedStatus);
+      expect(work?.completedAt).toBe(nativeStatus === "idle" ? null : now);
+    },
+  );
+
   it("defers assistant and turn completion until required delegated work is terminal", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

@@ -9,10 +9,10 @@ import {
 const linux = { platform: "linux", isWsl: false } as const;
 
 describe("provider setup capability registry", () => {
-  it("exposes only Codex through stable allowlisted action ids", () => {
+  it("exposes Codex and Claude through stable allowlisted action ids", () => {
     const capabilities = getProviderSetupCapabilities(linux);
 
-    expect(capabilities.map((capability) => capability.provider)).toEqual(["codex"]);
+    expect(capabilities.map((capability) => capability.provider)).toEqual(["codex", "claude"]);
     expect(
       capabilities.flatMap((capability) => capability.actions.map((action) => action.id)),
     ).toEqual([
@@ -21,6 +21,10 @@ describe("provider setup capability registry", () => {
       "codex.auth.device-code",
       "codex.auth.api-key",
       "codex.auth.access-token",
+      "claude.install",
+      "claude.auth.login",
+      "claude.auth.console",
+      "claude.auth.api-key",
     ]);
     expect(capabilities).not.toHaveProperty("command");
     expect(JSON.stringify(capabilities)).not.toContain("@openai/codex");
@@ -54,13 +58,16 @@ describe("provider setup capability registry", () => {
       args: ["login", "--with-access-token"],
       secretInput: "access-token",
     });
-    expect(resolveProviderSetupAction("claude.auth.login", linux)).toBeNull();
+    expect(resolveProviderSetupAction("claude.auth.login", linux)).toMatchObject({
+      executable: "claude",
+      args: ["auth", "login"],
+    });
     expect(resolveProviderSetupAction("cursor.auth.login", linux)).toBeNull();
     expect(resolveProviderSetupAction("opencode.auth.login", linux)).toBeNull();
     expect(resolveProviderSetupAction("codex.install; rm -rf /", linux)).toBeNull();
   });
 
-  it("exposes the same Codex-only flow on Linux, native Windows, and WSL", () => {
+  it("exposes the same Codex and Claude flows on Linux, native Windows, and WSL", () => {
     for (const platform of [
       { platform: "linux", isWsl: false },
       { platform: "win32", isWsl: false },
@@ -68,6 +75,7 @@ describe("provider setup capability registry", () => {
     ] as const) {
       expect(getProviderSetupCapabilities(platform).map((entry) => entry.provider)).toEqual([
         "codex",
+        "claude",
       ]);
       expect(
         getProviderSetupCapabilities(platform)[0]?.actions.every((action) => action.supported),
@@ -108,4 +116,23 @@ describe("provider setup capability registry", () => {
       }),
     ).toBe("C:\\Tools\\codex.exe");
   });
+});
+
+it("bootstraps Claude without npm on Linux and Windows and respects its configured binary", () => {
+  const action = resolveProviderSetupAction("claude.install", linux)!;
+  expect(action.executable).toBe("bash");
+  expect(action.args.join(" ")).toContain("https://claude.ai/install.sh");
+  expect(
+    resolveProviderSetupAction("claude.install", { platform: "win32", isWsl: false })?.args.join(
+      " ",
+    ),
+  ).toContain("https://claude.ai/install.ps1");
+  expect(
+    resolveProviderSetupCommand({
+      action: resolveProviderSetupAction("claude.auth.login", linux)!,
+      platform: linux,
+      configuredCodexBinary: "codex",
+      configuredClaudeBinary: "/configured/claude",
+    }),
+  ).toBe("/configured/claude");
 });

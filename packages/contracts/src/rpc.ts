@@ -1,3 +1,8 @@
+import {
+  ProviderManageInput,
+  ProviderManageResult,
+  ProviderInstanceSetupError,
+} from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -205,6 +210,7 @@ export const WS_METHODS = {
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverGetProviderSetupCapabilities: "server.getProviderSetupCapabilities",
+  serverManageProvider: "server.manageProvider",
   serverStartProviderSetup: "server.startProviderSetup",
   serverCancelProviderSetup: "server.cancelProviderSetup",
   serverWriteProviderSetupInput: "server.writeProviderSetupInput",
@@ -297,6 +303,12 @@ export const WsServerGetProviderSetupCapabilitiesRpc = Rpc.make(
     error: EnvironmentAuthorizationError,
   },
 );
+
+export const WsServerManageProviderRpc = Rpc.make(WS_METHODS.serverManageProvider, {
+  payload: ProviderManageInput,
+  success: ProviderManageResult,
+  error: Schema.Union([ProviderInstanceSetupError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerStartProviderSetupRpc = Rpc.make(WS_METHODS.serverStartProviderSetup, {
   payload: ProviderSetupStartInput,
@@ -769,6 +781,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsServerGetProviderSetupCapabilitiesRpc,
+  WsServerManageProviderRpc,
   WsServerStartProviderSetupRpc,
   WsServerCancelProviderSetupRpc,
   WsServerWriteProviderSetupInputRpc,

@@ -210,7 +210,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.isDefined(delta);
       if (delta?.type === "content.delta") {
         assert.equal(delta.payload.delta, "hello from mock");
-        assert.match(String(delta.itemId), /^assistant:mock-session-1:segment:0$/);
+        assert.match(
+          String(delta.itemId),
+          /^assistant:mock-session-1:runtime:[0-9a-f-]+:segment:0$/,
+        );
       }
 
       const assistantCompleted = runtimeEvents.find(
@@ -589,7 +592,10 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           if (contentDelta?.type === "content.delta") {
             assert.equal(String(contentDelta.turnId), String(turn.turnId));
             assert.equal(contentDelta.payload.delta, "hello from mock");
-            assert.equal(String(contentDelta.itemId), "assistant:mock-session-1:segment:0");
+            assert.match(
+              String(contentDelta.itemId),
+              /^assistant:mock-session-1:runtime:[0-9a-f-]+:segment:0$/,
+            );
           }
         });
 
@@ -920,6 +926,21 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      // The native cancel notification is fire-and-forget; wait for the peer
+      // to observe it before asserting its request log.
+      awaitCancel: for (
+        let attempt = 0;
+        !requests.some((entry) => entry.method === "session/cancel");
+        attempt++
+      ) {
+        if (attempt >= 40) break awaitCancel;
+        yield* Effect.promise(() => Effect.runPromise(Effect.sleep("25 millis")));
+        requests.splice(
+          0,
+          requests.length,
+          ...(yield* Effect.promise(() => readJsonLines(requestLogPath))),
+        );
+      }
       assert.isTrue(requests.some((entry) => entry.method === "session/cancel"));
       assert.isTrue(
         requests.some(

@@ -147,6 +147,7 @@ export interface WsRpcClient {
     readonly getProviderSetupCapabilities: RpcUnaryNoArgMethod<
       typeof WS_METHODS.serverGetProviderSetupCapabilities
     >;
+    readonly manageProvider: RpcUnaryMethod<typeof WS_METHODS.serverManageProvider>;
     readonly startProviderSetup: RpcUnaryMethod<typeof WS_METHODS.serverStartProviderSetup>;
     readonly cancelProviderSetup: RpcUnaryMethod<typeof WS_METHODS.serverCancelProviderSetup>;
     readonly writeProviderSetupInput: RpcUnaryMethod<
@@ -357,6 +358,8 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverUpdateProvider](input)),
       getProviderSetupCapabilities: () =>
         transport.request((client) => client[WS_METHODS.serverGetProviderSetupCapabilities]({})),
+      manageProvider: (input) =>
+        transport.request((client) => client[WS_METHODS.serverManageProvider](input)),
       startProviderSetup: (input) =>
         transport.request((client) => client[WS_METHODS.serverStartProviderSetup](input)),
       cancelProviderSetup: (input) =>

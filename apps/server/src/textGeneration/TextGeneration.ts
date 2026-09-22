@@ -10,7 +10,12 @@ import {
 } from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 
-export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
+export type TextGenerationProvider =
+  | "codex"
+  | "claudeAgent"
+  | "antigravity"
+  | "cursor"
+  | "opencode";
 
 export interface CommitMessageGenerationInput {
   cwd: string;
@@ -82,7 +87,17 @@ export interface TextGenerationService {
 /**
  * TextGenerationShape - Service API for commit/PR text generation.
  */
+export interface WorkflowGenerationInput {
+  readonly prompt: string;
+  readonly modelSelection: ModelSelection;
+  readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+}
+
 export interface TextGenerationShape {
+  readonly generateWorkflow?: (
+    input: WorkflowGenerationInput,
+  ) => Effect.Effect<{ result: string }, TextGenerationError>;
+
   /**
    * Generate a commit message from staged change context.
    */

@@ -1,3 +1,6 @@
+import { studyBuddyModelRouteLayer } from "./provider/studyBuddyModelBridge.ts";
+import { ProviderManagement } from "./provider/providerManagement.ts";
+import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
 import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -262,7 +265,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   Layer.provideMerge(OrchestrationLayerLive),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const RuntimeCoreDependenciesLive = Layer.merge(ReactorLayerLive, ProviderManagement.layer).pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
@@ -278,7 +281,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(
+    ProviderInstanceRegistryHydrationLive.pipe(Layer.provideMerge(AntigravityInstallation.layer)),
+  ),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).
@@ -335,6 +340,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
   studyBuddyWorkflowRouteLayer,
+  studyBuddyModelRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));
 
 export const makeServerLayer = Layer.unwrap(

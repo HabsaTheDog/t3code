@@ -68,6 +68,30 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 describe("ProviderSetupJobRunner", () => {
+  it("isolates native login environments by provider", async () => {
+    const requests: ProviderSetupSpawnInput[] = [];
+    const runner = new ProviderSetupJobRunner({
+      spawner: {
+        spawn: async (request) => {
+          requests.push(request);
+          return makeChild().child;
+        },
+      },
+      refreshProviderStatus: async () => {},
+      platform: { platform: "linux", isWsl: false },
+      resolveEnvironment: (action) =>
+        action.provider === "claude"
+          ? { HOME: "/test/claude-account" }
+          : { CODEX_HOME: "/test/codex-account" },
+    });
+    await runner.start({ actionId: "claude.auth.login" }).completion;
+    await runner.start({ actionId: "codex.auth.browser" }).completion;
+    expect(requests.map((request) => request.env)).toEqual([
+      { HOME: "/test/claude-account" },
+      { CODEX_HOME: "/test/codex-account" },
+    ]);
+  });
+
   it("runs an allowlisted command, streams sanitized progress, and refreshes status", async () => {
     const spawned: ProviderSetupSpawnInput[] = [];
     const refresh = vi.fn(async () => undefined);

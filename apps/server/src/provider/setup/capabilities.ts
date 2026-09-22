@@ -35,10 +35,13 @@ export function resolveProviderSetupCommand(input: {
   readonly action: ResolvedProviderSetupAction;
   readonly platform: ProviderSetupPlatform;
   readonly configuredCodexBinary: string;
+  readonly configuredClaudeBinary?: string;
 }): string {
   if (input.action.provider === "codex" && input.action.kind !== "install") {
     return input.configuredCodexBinary;
   }
+  if (input.action.provider === "claude" && input.action.kind !== "install")
+    return input.configuredClaudeBinary || "claude";
   return input.action.executable;
 }
 
@@ -54,7 +57,7 @@ const WINDOWS_CODEX_INSTALL_SCRIPT = [
 // official standalone installer does not require a pre-existing Node/npm
 // toolchain and verifies the downloaded Codex release before installing it.
 const POSIX_CODEX_INSTALL_SCRIPT =
-  "curl -fsSL --proto '=https' --tlsv1.2 https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh";
+  "set -o pipefail; curl -fsSL --proto '=https' --tlsv1.2 https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh";
 
 const supportsCursor = (platform: ProviderSetupPlatform): string | null => {
   if (platform.platform === "darwin" || platform.platform === "linux") {
@@ -132,8 +135,11 @@ const ACTIONS: ReadonlyArray<ProviderSetupActionDefinition> = [
     provider: "claude",
     kind: "install",
     label: "Install Claude Code",
-    executable: "npm",
-    args: ["install", "-g", "@anthropic-ai/claude-code"],
+    executable: "bash",
+    args: [
+      "-lc",
+      "set -o pipefail; curl -fsSL --proto '=https' --tlsv1.2 https://claude.ai/install.sh | bash",
+    ],
     requiresConfirmation: true,
     secretInput: null,
     interaction: "background",
@@ -259,11 +265,11 @@ export function resolveProviderSetupAction(
   platform: ProviderSetupPlatform,
 ): ResolvedProviderSetupAction | null {
   const definition = ACTIONS_BY_ID.get(actionId as ProviderSetupActionId);
-  if (!definition || definition.provider !== "codex") {
+  if (!definition || !["codex", "claude"].includes(definition.provider)) {
     return null;
   }
   const windowsStandaloneInstall =
-    definition.id === "codex.install" && platform.platform === "win32";
+    ["codex.install", "claude.install"].includes(definition.id) && platform.platform === "win32";
   return {
     id: definition.id,
     provider: definition.provider,
@@ -277,7 +283,9 @@ export function resolveProviderSetupAction(
           "-ExecutionPolicy",
           "Bypass",
           "-Command",
-          WINDOWS_CODEX_INSTALL_SCRIPT,
+          definition.provider === "claude"
+            ? "& ([scriptblock]::Create((Invoke-RestMethod https://claude.ai/install.ps1)))"
+            : WINDOWS_CODEX_INSTALL_SCRIPT,
         ]
       : [...definition.args],
     requiresConfirmation: definition.requiresConfirmation,
@@ -290,20 +298,22 @@ export function resolveProviderSetupAction(
 export function getProviderSetupCapabilities(
   platform: ProviderSetupPlatform = detectProviderSetupPlatform(),
 ): ReadonlyArray<ProviderSetupCapability> {
-  return PROVIDERS.filter((provider) => provider.provider === "codex").map((provider) => ({
-    ...provider,
-    actions: ACTIONS.filter((action) => action.provider === provider.provider).map((action) => {
-      const unsupportedReason = action.supports(platform);
-      return {
-        id: action.id,
-        kind: action.kind,
-        label: action.label,
-        supported: unsupportedReason === null,
-        unsupportedReason,
-        requiresConfirmation: action.requiresConfirmation,
-        secretInput: action.secretInput,
-        interaction: action.interaction,
-      };
+  return PROVIDERS.filter((provider) => ["codex", "claude"].includes(provider.provider)).map(
+    (provider) => ({
+      ...provider,
+      actions: ACTIONS.filter((action) => action.provider === provider.provider).map((action) => {
+        const unsupportedReason = action.supports(platform);
+        return {
+          id: action.id,
+          kind: action.kind,
+          label: action.label,
+          supported: unsupportedReason === null,
+          unsupportedReason,
+          requiresConfirmation: action.requiresConfirmation,
+          secretInput: action.secretInput,
+          interaction: action.interaction,
+        };
+      }),
     }),
-  }));
+  );
 }

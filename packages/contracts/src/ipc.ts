@@ -1,3 +1,4 @@
+import type { ProviderManageInput, ProviderManageResult } from "./providerSetup.ts";
 import type {
   VcsCreateRefInput,
   VcsCreateRefResult,
@@ -599,6 +600,7 @@ export interface LocalApi {
     }) => Promise<ServerProviderUpdatedPayload>;
     updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
     getProviderSetupCapabilities: () => Promise<ReadonlyArray<ProviderSetupCapability>>;
+    manageProvider: (input: ProviderManageInput) => Promise<ProviderManageResult>;
     startProviderSetup: (input: ProviderSetupStartInput) => Promise<ProviderSetupStartResult>;
     cancelProviderSetup: (input: ProviderSetupCancelInput) => Promise<ProviderSetupCancelResult>;
     writeProviderSetupInput: (input: ProviderSetupWriteInput) => Promise<ProviderSetupWriteResult>;

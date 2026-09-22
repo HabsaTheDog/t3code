@@ -140,6 +140,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       getDiffPreview: vi.fn(),
     },
     server: {
+      manageProvider: vi.fn(),
       getConfig: vi.fn(),
       refreshProviders: vi.fn(),
       discoverSourceControl: vi.fn(),
@@ -277,6 +278,7 @@ describe("retainThreadDetailSubscription", () => {
     mockSubscribeThread.mockImplementation(() => mockThreadUnsubscribe);
     mockCreateWsRpcClient.mockReturnValue({
       server: {
+        manageProvider: vi.fn(),
         getConfig: vi.fn(async () => ({
           environment: {
             environmentId: EnvironmentId.make("env-remote"),
@@ -589,6 +591,7 @@ describe("retainThreadDetailSubscription", () => {
     });
     mockCreateWsRpcClient.mockReturnValue({
       server: {
+        manageProvider: vi.fn(),
         getConfig: vi.fn(async () => ({
           environment: {
             environmentId: EnvironmentId.make("env-remote"),

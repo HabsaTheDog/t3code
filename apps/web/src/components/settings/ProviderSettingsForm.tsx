@@ -19,6 +19,7 @@ import type { ProviderClientDefinition } from "./providerDriverMeta";
 export interface ProviderSettingsFieldModel {
   readonly key: string;
   readonly control: ProviderSettingsFormControl;
+  readonly options?: ReadonlyArray<{ readonly value: string; readonly label: string }> | undefined;
   readonly label: string;
   readonly description?: string | undefined;
   readonly placeholder?: string | undefined;
@@ -97,6 +98,7 @@ export function deriveProviderSettingsFields(
         {
           key,
           control: formAnnotation.control ?? "text",
+          options: formAnnotation.options,
           label: annotatedTitle ?? titleizeFieldKey(key),
           ...(annotatedDescription !== undefined ? { description: annotatedDescription } : {}),
           ...(formAnnotation.placeholder !== undefined
@@ -213,6 +215,31 @@ function ProviderSettingsFieldRow({
             aria-label={field.label}
           />
         </div>
+      </FieldFrame>
+    );
+  }
+
+  if (field.control === "select") {
+    return (
+      <FieldFrame variant={variant}>
+        <label htmlFor={inputId}>
+          {label}
+          <select
+            id={inputId}
+            className="mt-1.5 w-full rounded-md border bg-background p-2 text-sm"
+            value={readProviderConfigString(value, field.key)}
+            onChange={(event) =>
+              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
+            }
+          >
+            {field.options?.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          {description}
+        </label>
       </FieldFrame>
     );
   }

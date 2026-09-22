@@ -471,7 +471,12 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("generates a thread title on the first turn", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+    });
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
     harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
@@ -506,6 +511,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
     expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
       message: "Please investigate reconnect failures after restarting the session.",
+      modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
     });
 
     await waitFor(async () => {
@@ -533,7 +539,12 @@ describe("ProviderCommandReactor", () => {
       transcripts: ["Explain how a heat pump works.", "Include the role of the compressor."],
     },
   ])("names the first turn from the full provider input: $label", async ({ text, transcripts }) => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      threadModelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
+    });
     const titleSeed = text || "Voice input";
     const providerInput = [
       text,

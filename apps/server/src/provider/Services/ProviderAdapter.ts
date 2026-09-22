@@ -26,6 +26,7 @@ import type * as Stream from "effect/Stream";
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
+  readonly supportsConversationRollback?: boolean;
   /**
    * Declares whether changing the model on an existing session is supported.
    */

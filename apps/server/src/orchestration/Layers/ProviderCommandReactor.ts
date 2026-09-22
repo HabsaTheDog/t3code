@@ -665,6 +665,7 @@ const make = Effect.gen(function* () {
     "maybeGenerateAndRenameWorktreeBranchForFirstTurn",
   )(function* (input: {
     readonly threadId: ThreadId;
+    readonly modelSelection: ModelSelection;
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly messageText: string;
@@ -681,8 +682,7 @@ const make = Effect.gen(function* () {
     const cwd = input.worktreePath;
     const attachments = input.attachments ?? [];
     yield* Effect.gen(function* () {
-      const { textGenerationModelSelection: modelSelection } =
-        yield* serverSettingsService.getSettings;
+      const modelSelection = input.modelSelection;
 
       const generated = yield* textGeneration.generateBranchName({
         cwd,
@@ -720,14 +720,14 @@ const make = Effect.gen(function* () {
     function* (input: {
       readonly threadId: ThreadId;
       readonly cwd: string;
+      readonly modelSelection: ModelSelection;
       readonly messageText: string;
       readonly attachments?: ReadonlyArray<ChatAttachment>;
       readonly titleSeed?: string;
     }) {
       const attachments = input.attachments ?? [];
       yield* Effect.gen(function* () {
-        const { textGenerationModelSelection: modelSelection } =
-          yield* serverSettingsService.getSettings;
+        const modelSelection = input.modelSelection;
 
         const generatedTitle = yield* textGeneration
           .generateThreadTitle({
@@ -825,6 +825,7 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        modelSelection: event.payload.modelSelection ?? thread.modelSelection,
         ...generationInput,
       }).pipe(Effect.forkScoped);
 
@@ -832,6 +833,7 @@ const make = Effect.gen(function* () {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
           cwd: generationCwd,
+          modelSelection: event.payload.modelSelection ?? thread.modelSelection,
           ...generationInput,
         }).pipe(Effect.forkScoped);
       }

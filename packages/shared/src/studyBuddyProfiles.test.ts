@@ -1,5 +1,9 @@
 import * as Schema from "effect/Schema";
-import { StudyBuddyCustomExecutionProfile } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  StudyBuddyCustomExecutionProfile,
+} from "@t3tools/contracts";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -206,5 +210,42 @@ describe("profile persistence", () => {
     expect(() =>
       decode({ ...changed, taskOverrides: { solution_generation: { model: "" } } }),
     ).toThrow();
+  });
+});
+
+describe("native provider execution policies", () => {
+  it.each(["claudeAgent", "antigravity"])(
+    "keeps every %s worker and retry on the selected model",
+    (driver) => {
+      const instanceId = ProviderInstanceId.make(`custom-${driver}`);
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: { [instanceId]: { driver: ProviderDriverKind.make(driver) } },
+      };
+      const selection = {
+        instanceId,
+        model: "selected-native-model",
+        options: [{ id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" }],
+      };
+      const profile = resolveStudyBuddyProfileForModelSelection(settings, selection);
+      expect(profile.roles.coordinator.instanceId).toBe(instanceId);
+      for (const policy of Object.values(studyBuddyProfileOverrides(profile))) {
+        expect(policy.model).toBe("selected-native-model");
+        expect(policy.retryModel).toBe("selected-native-model");
+      }
+    },
+  );
+  it("preserves the GPT role policies for a custom Codex instance", () => {
+    const instanceId = ProviderInstanceId.make("work-codex");
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: { [instanceId]: { driver: ProviderDriverKind.make("codex") } },
+    };
+    const profile = resolveStudyBuddyProfileForModelSelection(settings, {
+      instanceId,
+      model: "gpt-5.6-terra",
+      options: [{ id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" }],
+    });
+    expect(profile.roles.artifactBuilder.model).toBe("gpt-5.6-sol");
   });
 });

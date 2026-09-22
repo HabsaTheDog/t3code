@@ -115,11 +115,12 @@ function isDelegatedTaskRuntimeEvent(
   event: ProviderRuntimeEvent,
 ): event is Extract<
   ProviderRuntimeEvent,
-  { type: "task.started" | "task.progress" | "task.completed" }
+  { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
 > {
   return (
     event.type === "task.started" ||
     event.type === "task.progress" ||
+    event.type === "task.updated" ||
     event.type === "task.completed"
   );
 }
@@ -127,13 +128,13 @@ function isDelegatedTaskRuntimeEvent(
 function taskLabelFromRuntimeEvent(
   event: Extract<
     ProviderRuntimeEvent,
-    { type: "task.started" | "task.progress" | "task.completed" }
+    { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
   >,
 ): string {
   if (event.type === "task.started") {
     return event.payload.description?.trim() || event.payload.taskType?.trim() || "Task";
   }
-  if (event.type === "task.progress") {
+  if (event.type === "task.progress" || event.type === "task.updated") {
     return event.payload.description?.trim() || event.payload.summary?.trim() || "Task";
   }
   return event.payload.summary?.trim() || "Task";
@@ -153,7 +154,7 @@ function hashProgress(value: string | null): string | undefined {
 function classifyDelegatedTask(
   event: Extract<
     ProviderRuntimeEvent,
-    { type: "task.started" | "task.progress" | "task.completed" }
+    { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
   >,
 ): {
   readonly blockingPolicy: OrchestrationDelegatedWork["blockingPolicy"];
@@ -187,7 +188,7 @@ function classifyDelegatedTask(
 function delegatedWorkFromRuntimeTaskEvent(input: {
   readonly event: Extract<
     ProviderRuntimeEvent,
-    { type: "task.started" | "task.progress" | "task.completed" }
+    { type: "task.started" | "task.progress" | "task.updated" | "task.completed" }
   >;
   readonly parentTurnId: TurnId;
   readonly existing: OrchestrationDelegatedWork | undefined;
@@ -200,7 +201,7 @@ function delegatedWorkFromRuntimeTaskEvent(input: {
   const nextProgress =
     event.type === "task.started"
       ? (event.payload.description ?? null)
-      : event.type === "task.progress"
+      : event.type === "task.progress" || event.type === "task.updated"
         ? (event.payload.summary ?? event.payload.description ?? existing?.lastProgress ?? null)
         : (existing?.lastProgress ?? null);
   const base = {
@@ -239,12 +240,30 @@ function delegatedWorkFromRuntimeTaskEvent(input: {
     };
   }
 
-  if (event.type === "task.progress") {
+  if (event.type === "task.progress" || event.type === "task.updated") {
+    const status =
+      event.payload.status === "failed"
+        ? "failed"
+        : event.payload.status === "cancelled" || event.payload.status === "interrupted"
+          ? "canceled"
+          : event.payload.status === "idle"
+            ? "blocked"
+            : event.payload.status === "completed"
+              ? "completed"
+              : "progress";
+    const terminal = status === "failed" || status === "canceled" || status === "completed";
     return {
       ...base,
-      status: "progress",
+      status,
       lastProgress: nextProgress,
-      completedAt: null,
+      error: event.payload.error ?? base.error,
+      ...(status === "completed"
+        ? {
+            result: event.payload.summary ?? base.result,
+            reviewStatus: required ? ("pending" as const) : ("not_required" as const),
+          }
+        : {}),
+      completedAt: terminal ? event.createdAt : null,
     };
   }
 
@@ -775,6 +794,7 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "task.updated":
     case "task.progress": {
       const detail = truncateDetail(event.payload.summary ?? event.payload.description);
       const turnId = toTurnId(event.turnId) ?? null;

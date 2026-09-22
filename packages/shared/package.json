@@ -162,7 +162,11 @@
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"
-    }
+    },
+    "./hostProcess": "./src/hostProcess.ts",
+    "./nodeRuntime": "./src/nodeRuntime.ts",
+    "./filePreview": "./src/filePreview.ts",
+    "./testing/symlinks": "./src/testing/symlinks.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",

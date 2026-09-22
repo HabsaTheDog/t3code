@@ -1,3 +1,4 @@
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -554,7 +555,11 @@ export interface ChatComposerProps {
     isLastQuestion: boolean;
     canAdvance: boolean;
     customAnswer: string;
-    activeQuestion: { id: string; multiSelect?: boolean | undefined } | null;
+    activeQuestion: {
+      id: string;
+      multiSelect?: boolean | undefined;
+      allowCustomAnswer?: boolean | undefined;
+    } | null;
   } | null;
   activePendingResolvedAnswers: Record<string, unknown> | null;
   activePendingIsResponding: boolean;
@@ -930,8 +935,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const storedStudyBuddyModelSelection =
-    composerDraft.modelSelectionByProvider[selectedInstanceId] ?? activeThreadModelSelection;
+  const storedStudyBuddyModelSelection = useMemo(
+    () =>
+      composerDraft.modelSelectionByProvider[selectedInstanceId] ??
+      createModelSelection(selectedInstanceId, selectedModel, activeThreadModelSelection?.options),
+    [
+      composerDraft.modelSelectionByProvider,
+      selectedInstanceId,
+      selectedModel,
+      activeThreadModelSelection?.options,
+    ],
+  );
   const hasExplicitStudyBuddyProfile = Boolean(
     studyBuddyProfileIdFromModelSelection(storedStudyBuddyModelSelection),
   );
@@ -948,7 +962,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
   const selectedModelSelection = useMemo<ModelSelection>(() => {
-    const profileOptions = studyBuddyCoordinatorOptions(activeExecutionProfile);
+    const profileOptions = studyBuddyCoordinatorOptions(activeExecutionProfile).filter(
+      (option) => selectedProvider === "codex" || option.id === "studyBuddyExecutionProfileId",
+    );
     const controlledIds = new Set(profileOptions.map((option) => option.id));
     const retainedOptions = (selectedModelOptionsForDispatch ?? []).filter(
       (option) => !controlledIds.has(option.id),
@@ -957,7 +973,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ...retainedOptions,
       ...profileOptions,
     ]);
-  }, [activeExecutionProfile, selectedInstanceId, selectedModel, selectedModelOptionsForDispatch]);
+  }, [
+    activeExecutionProfile,
+    selectedInstanceId,
+    selectedModel,
+    selectedModelOptionsForDispatch,
+    selectedProvider,
+  ]);
   // ------------------------------------------------------------------
   // Context window
   // ------------------------------------------------------------------
@@ -987,7 +1009,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
   useEffect(() => {
-    if ((activeThread?.messages.length ?? 0) > 0 && !hasExplicitStudyBuddyProfile) return;
+    if (
+      selectedProvider !== "codex" ||
+      composerDraft.modelSelectionByProvider[selectedInstanceId] ||
+      activeThread
+    )
+      return;
     const coordinator = activeExecutionProfile.roles.coordinator;
     onProviderModelSelect(
       coordinator.instanceId,
@@ -996,8 +1023,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   }, [
     activeExecutionProfile,
-    activeThread?.messages.length,
-    hasExplicitStudyBuddyProfile,
+    activeThread,
+    composerDraft.modelSelectionByProvider,
+    selectedInstanceId,
+    selectedProvider,
     onProviderModelSelect,
   ]);
 
@@ -2264,7 +2293,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onToggleOption={onSelectActivePendingUserInputOption}
                 onAdvance={onAdvanceActivePendingUserInput}
               />
-              {!isStudyBuddyGuardedActionPermission ? (
+              {!isStudyBuddyGuardedActionPermission &&
+              activePendingProgress?.activeQuestion?.allowCustomAnswer !== false ? (
                 <div className="px-3 pb-3 sm:px-4">
                   <div
                     data-chat-composer-mobile-pending-compact="true"
@@ -2360,7 +2390,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               "relative px-3 pb-2 sm:px-4",
               hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
               isComposerCollapsedMobile && "hidden",
-              isStudyBuddyGuardedActionPermission && "hidden",
+              (isStudyBuddyGuardedActionPermission ||
+                activePendingProgress?.activeQuestion?.allowCustomAnswer === false) &&
+                "hidden",
             )}
           >
             {composerMenuOpen && !isComposerApprovalState && (
@@ -2585,6 +2617,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <ProviderModelPicker
+                  activeInstanceId={selectedInstanceId}
+                  model={selectedModel}
+                  lockedProvider={lockedProvider}
+                  lockedContinuationGroupKey={lockedContinuationGroupKey}
+                  instanceEntries={providerInstanceEntries}
+                  modelOptionsByInstance={
+                    new Map(
+                      providerStatuses.map((provider) => [provider.instanceId, provider.models]),
+                    )
+                  }
+                  compact={isComposerFooterCompact}
+                  onInstanceModelChange={(instanceId, model) =>
+                    onProviderModelSelect(instanceId, model, [])
+                  }
+                />
                 <StudyBuddyProfilePicker
                   activeProfile={activeExecutionProfile}
                   compact={isComposerFooterCompact}

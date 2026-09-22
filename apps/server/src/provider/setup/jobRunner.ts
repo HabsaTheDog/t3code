@@ -81,6 +81,9 @@ export interface ProviderSetupJobRunnerOptions {
   readonly createJobId?: (() => string) | undefined;
   readonly cwd?: string | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly resolveEnvironment?:
+    | ((action: ResolvedProviderSetupAction) => NodeJS.ProcessEnv)
+    | undefined;
   readonly resolveCommand?: ((action: ResolvedProviderSetupAction) => string) | undefined;
 }
 
@@ -92,6 +95,7 @@ export class ProviderSetupJobRunner {
   readonly #createJobId: () => string;
   readonly #cwd: string | undefined;
   readonly #env: NodeJS.ProcessEnv | undefined;
+  readonly #resolveEnvironment: ProviderSetupJobRunnerOptions["resolveEnvironment"];
   readonly #resolveCommand: (action: ResolvedProviderSetupAction) => string;
   readonly #jobs = new Map<string, ActiveJob>();
 
@@ -103,6 +107,7 @@ export class ProviderSetupJobRunner {
     this.#createJobId = options.createJobId ?? randomUUID;
     this.#cwd = options.cwd;
     this.#env = options.env;
+    this.#resolveEnvironment = options.resolveEnvironment;
     this.#resolveCommand = options.resolveCommand ?? ((action) => action.executable);
   }
 
@@ -232,7 +237,7 @@ export class ProviderSetupJobRunner {
         command: this.#resolveCommand(job.action),
         args: [...job.action.args],
         cwd: this.#cwd,
-        env: this.#env,
+        env: this.#resolveEnvironment?.(job.action) ?? this.#env,
         pty: job.action.interaction === "sanitized-terminal",
       });
       job.child = child;

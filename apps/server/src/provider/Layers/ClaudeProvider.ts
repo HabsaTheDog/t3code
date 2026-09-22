@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -39,6 +40,9 @@ import {
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
+const decodeClaudeAuthStatus = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ loggedIn: Schema.Boolean })),
+);
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -694,13 +698,40 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       ? formatClaudeOpus48UpgradeMessage(parsedVersion)
       : formatClaudeOpus47UpgradeMessage(parsedVersion);
 
+  const loginStatus = yield* runClaudeCommand(claudeSettings, ["auth", "status"], environment).pipe(
+    Effect.flatMap((result) => decodeClaudeAuthStatus(result.stdout)),
+    Effect.catchCause(() => Effect.succeed(undefined)),
+  );
+  if (loginStatus?.loggedIn === false) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: [],
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Claude is not signed in. Connect it in AI connections.",
+      },
+    });
+  }
+
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
-  if (!capabilities) {
+  if (
+    !capabilities ||
+    (loginStatus?.loggedIn !== true &&
+      !capabilities.email &&
+      !capabilities.subscriptionType &&
+      (!capabilities.tokenSource || capabilities.tokenSource === "none"))
+  ) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,

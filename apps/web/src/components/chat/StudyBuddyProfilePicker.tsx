@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   allStudyBuddyProfiles,
+  adaptStudyBuddyProfileToSelection,
   STUDY_BUDDY_BUILT_IN_PROFILES,
   studyBuddyCoordinatorOptions,
 } from "@t3tools/shared/studyBuddyProfiles";
@@ -76,8 +77,13 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
   const selectProfile = useCallback(
     (profileId: string | null) => {
       if (!profileId) return;
-      const profile = allProfiles.find((candidate) => candidate.id === profileId);
-      if (!profile) return;
+      const candidate = allProfiles.find((candidate) => candidate.id === profileId);
+      if (!candidate) return;
+      const profile = adaptStudyBuddyProfileToSelection(
+        candidate,
+        props.activeProfile.roles.coordinator,
+        settings.providerInstances[props.activeProfile.roles.coordinator.instanceId]?.driver,
+      );
       const telemetryProfile = profile.kind === "custom" ? "custom" : profile.id;
       void telemetry.capture({
         event: "execution_profile.selected",
@@ -103,7 +109,13 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       );
       props.onOpenChange(false);
     },
-    [allProfiles, props.onCoordinatorChange, props.onOpenChange],
+    [
+      allProfiles,
+      props.activeProfile,
+      props.onCoordinatorChange,
+      props.onOpenChange,
+      settings.providerInstances,
+    ],
   );
 
   useEffect(() => {

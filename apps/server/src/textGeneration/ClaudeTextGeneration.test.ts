@@ -190,6 +190,30 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
+  it.effect("runs workflow workers with native images and tools disabled", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { result: "verified" } }),
+        argsMustContain:
+          '--strict-mcp-config --mcp-config {"mcpServers":{}} --setting-sources  --permission-mode dontAsk --input-format stream-json --disable-slash-commands',
+        argsMustNotContain: "--dangerously-skip-permissions",
+        stdinMustContain: '"media_type":"image/png","data":"aGVsbG8="',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateWorkflow!({
+            prompt: "Exact worker evidence",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+            images: [{ mimeType: "image/png", data: "aGVsbG8=" }],
+          });
+          expect(result).toEqual({ result: "verified" });
+        }),
+    ),
+  );
+
   it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
     withFakeClaudeEnv(
       {

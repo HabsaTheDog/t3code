@@ -21,6 +21,8 @@
  *
  * @module provider/ProviderDriver
  */
+import type { ServerProvider } from "@t3tools/contracts";
+import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 import type {
   ProviderDriverKind,
   ProviderInstanceEnvironment,
@@ -69,6 +71,9 @@ export interface ProviderInstance {
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
+  readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
+  readonly auth?: ProviderAuthController;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGenerationShape;
 }

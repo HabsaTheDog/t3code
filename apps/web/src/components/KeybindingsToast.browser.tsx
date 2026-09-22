@@ -145,6 +145,7 @@ function createBaseServerConfig(): ServerConfig {
         model: "gpt-5.4-mini",
       },
       providers: {
+        antigravity: DEFAULT_SERVER_SETTINGS.providers.antigravity,
         codex: {
           enabled: true,
           binaryPath: "",

@@ -147,11 +147,11 @@ Before presenting completed delegated work as a conclusion, review it against th
 </collaboration_mode>`;
 
 export interface StudyBuddyDeveloperInstructionsInput {
-  readonly cwd?: string;
+  readonly cwd?: string | undefined;
   readonly environment?: NodeJS.ProcessEnv;
   readonly model?: string;
-  readonly executionProfile?: "auto" | "fast" | "balanced" | "quality" | "custom";
-  readonly executionProfileConfig?: StudyBuddyExecutionProfileDefinition;
+  readonly executionProfile?: "auto" | "fast" | "balanced" | "quality" | "custom" | undefined;
+  readonly executionProfileConfig?: StudyBuddyExecutionProfileDefinition | undefined;
 }
 
 function trimEnv(value: string | undefined): string | undefined {

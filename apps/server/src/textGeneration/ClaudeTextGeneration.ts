@@ -1,3 +1,4 @@
+import * as FileSystem from "effect/FileSystem";
 /**
  * ClaudeTextGeneration – Text generation layer using the Claude CLI.
  *
@@ -61,6 +62,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
 
@@ -84,7 +86,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateWorkflow",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -109,16 +112,19 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     prompt,
     outputSchemaJson,
     modelSelection,
+    images,
   }: {
     operation:
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateWorkflow";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
+    images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
     const jsonSchemaStr = yield* encodeJsonForOperation(
       operation,
@@ -142,6 +148,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
     const settings = {
+      ...(operation === "generateWorkflow" ? { disableAllHooks: true } : {}),
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(ultracode ? { ultracode: true } : {}),
@@ -168,14 +175,55 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
           ...(settingsJson ? ["--settings", settingsJson] : []),
-          "--dangerously-skip-permissions",
+          ...(operation === "generateWorkflow"
+            ? [
+                "--tools",
+                "",
+                "--strict-mcp-config",
+                "--mcp-config",
+                '{"mcpServers":{}}',
+                "--setting-sources",
+                "",
+                "--permission-mode",
+                "dontAsk",
+                "--input-format",
+                "stream-json",
+                "--disable-slash-commands",
+              ]
+            : ["--dangerously-skip-permissions"]),
         ],
         {
           env: claudeEnvironment,
           cwd,
           shell: process.platform === "win32",
           stdin: {
-            stream: Stream.encodeText(Stream.make(prompt)),
+            stream: Stream.encodeText(
+              Stream.make(
+                operation === "generateWorkflow"
+                  ? (yield* encodeJsonForOperation(
+                      operation,
+                      {
+                        type: "user",
+                        message: {
+                          role: "user",
+                          content: [
+                            { type: "text", text: prompt },
+                            ...(images ?? []).map((image) => ({
+                              type: "image",
+                              source: {
+                                type: "base64",
+                                media_type: image.mimeType,
+                                data: image.data,
+                              },
+                            })),
+                          ],
+                        },
+                      },
+                      "Failed to encode workflow input.",
+                    )) + "\n"
+                  : prompt,
+              ),
+            ),
           },
         },
       );
@@ -355,7 +403,31 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
   });
 
+  const generateWorkflow: NonNullable<TextGenerationShape["generateWorkflow"]> = (input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "study-buddy-claude-worker-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateWorkflow",
+                detail: "Could not prepare worker workspace.",
+                cause,
+              }),
+          ),
+        );
+      return yield* runClaudeJson({
+        operation: "generateWorkflow",
+        cwd,
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        outputSchemaJson: Schema.Struct({ result: Schema.String }),
+        ...(input.images ? { images: input.images } : {}),
+      });
+    }).pipe(Effect.scoped);
   return {
+    generateWorkflow,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

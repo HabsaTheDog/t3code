@@ -1,3 +1,4 @@
+import { ProviderSetupStep } from "../../setup/ProviderSetupStep";
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -1293,6 +1294,7 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
+        <ProviderSetupStep />
         {rows.map((row) => {
           const driverOption = getDriverOption(row.driver);
           const liveProvider = serverProviders.find(

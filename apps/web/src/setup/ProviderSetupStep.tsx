@@ -1,3 +1,4 @@
+import { GeminiSetupCard } from "./GeminiSetupCard";
 import type {
   ProviderSetupAction,
   ProviderSetupCapability,
@@ -47,13 +48,13 @@ import { Input } from "../components/ui/input";
 import { Spinner } from "../components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { buildProviderInstanceUpdatePatch } from "../components/settings/SettingsPanels.logic";
-import { useSettings, useUpdateSettings } from "../hooks/useSettings";
+import { useSettings } from "../hooks/useSettings";
 import { ensureLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { useServerProviders } from "../rpc/serverState";
 import { registerTelemetrySecret, telemetry } from "../telemetry/runtime";
 
-const PROVIDER_ORDER: readonly ProviderSetupProvider[] = ["codex"];
+const PROVIDER_ORDER: readonly ProviderSetupProvider[] = ["codex", "claude"];
 const PROVIDER_DRIVER_BY_SETUP_NAME = {
   codex: ProviderDriverKind.make("codex"),
   claude: ProviderDriverKind.make("claudeAgent"),
@@ -255,12 +256,10 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         providerInstances: current.providerInstances,
       }),
     );
-    const { updateSettings } = useUpdateSettings();
     const [capabilities, setCapabilities] = useState<ReadonlyArray<ProviderSetupCapability> | null>(
       null,
     );
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [readinessError, setReadinessError] = useState<string | null>(null);
     const [jobs, setJobs] = useState<Partial<Record<ProviderSetupProvider, ProviderJob>>>({});
     const [apiKeyDialog, setApiKeyDialog] = useState<{
       provider: ProviderSetupProvider;
@@ -285,7 +284,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         // background instead of holding the entire Codex step behind discovery.
         void api.refreshProviders().catch(() => undefined);
       } catch {
-        setLoadError("Connect Study Buddy first, then try setting up Codex again.");
+        setLoadError("Connect Study Buddy first, then try setting up providers again.");
         setCapabilities([]);
       }
     };
@@ -302,52 +301,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       () => new Map(capabilities?.map((capability) => [capability.provider, capability]) ?? []),
       [capabilities],
     );
-    const codexStatus = summarizeProvider(providers, "codex");
-    const codexVersionSupported =
-      codexStatus.version !== null &&
-      compareSemverVersions(codexStatus.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) >= 0;
-    const codexReady = codexStatus.installed && codexStatus.authenticated && codexVersionSupported;
-
-    useImperativeHandle(
-      ref,
-      () => ({
-        save: async () => {
-          if (codexReady) {
-            setReadinessError(null);
-            updateSettings({
-              providers: {
-                codex: { ...settings.providers.codex, enabled: true },
-                claudeAgent: { ...settings.providers.claudeAgent, enabled: false },
-                cursor: { ...settings.providers.cursor, enabled: false },
-                opencode: { ...settings.providers.opencode, enabled: false },
-              },
-              providerInstances: Object.fromEntries(
-                Object.entries(settings.providerInstances).filter(
-                  ([, instance]) => instance.driver === "codex",
-                ),
-              ),
-            });
-            return true;
-          }
-          setReadinessError(
-            !codexStatus.installed
-              ? "Install Codex before continuing."
-              : !codexVersionSupported
-                ? `Update Codex to ${MINIMUM_STUDY_BUDDY_CODEX_VERSION} or newer before continuing.`
-                : "Sign in to Codex before continuing.",
-          );
-          return false;
-        },
-      }),
-      [
-        codexReady,
-        codexStatus.authenticated,
-        codexStatus.installed,
-        codexVersionSupported,
-        settings.providerInstances,
-        updateSettings,
-      ],
-    );
+    useImperativeHandle(ref, () => ({ save: async () => true }), []);
     const updateFromEvent = (event: ProviderSetupJobEvent) => {
       setJobs((current) => {
         const previous = current[event.provider];
@@ -426,6 +380,21 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       });
 
       try {
+        const driver = PROVIDER_DRIVER_BY_SETUP_NAME[provider];
+        const instanceId = defaultInstanceIdForDriver(driver);
+        const current = settings.providerInstances[instanceId];
+        await ensureLocalApi().server.updateSettings({
+          providerInstances: {
+            ...settings.providerInstances,
+            [instanceId]: {
+              ...current,
+              driver,
+              enabled: true,
+              config:
+                current?.config ?? settings.providers[driver as keyof typeof settings.providers],
+            },
+          },
+        });
         if (secret) registerTelemetrySecret(secret);
         const result = await ensureLocalApi().server.startProviderSetup({
           actionId: action.id,
@@ -494,12 +463,13 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         { name: envName, value: secret, sensitive: true },
       ];
 
-      updateSettings(
+      await ensureLocalApi().server.updateSettings(
         buildProviderInstanceUpdatePatch({
           settings,
           instanceId,
           instance: {
             ...currentInstance,
+            enabled: true,
             environment: nextEnvironment,
           },
           driver,
@@ -542,7 +512,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         <Card className="grid min-h-48 place-items-center border-dashed">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Spinner className="size-4" />
-            Checking Codex…
+            Checking providers…
           </div>
         </Card>
       );
@@ -563,12 +533,6 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
               Retry
             </Button>
           </div>
-        ) : null}
-
-        {readinessError ? (
-          <p className="text-sm text-destructive" role="alert">
-            {readinessError}
-          </p>
         ) : null}
 
         <div className="grid gap-4">
@@ -621,10 +585,10 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                         </p>
                         <p className="mt-2 text-xs text-muted-foreground/80">
                           {status.authenticated
-                            ? "Codex is ready to use."
+                            ? `${providerLabel} is ready to use.`
                             : status.installed
                               ? "Choose an option below to sign in."
-                              : "Install Codex first, then sign in."}
+                              : `Install ${providerLabel} first, then sign in.`}
                         </p>
                       </div>
                     </div>
@@ -745,6 +709,8 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
           })}
         </div>
 
+        <GeminiSetupCard />
+
         <Dialog
           open={apiKeyDialog !== null}
           onOpenChange={(open) => (!open ? setApiKeyDialog(null) : null)}
@@ -800,7 +766,9 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
                 onClick={() => {
                   if (!apiKeyDialog) return undefined;
                   if (apiKeyDialog.action.id === "claude.auth.api-key") {
-                    void persistEnvironmentSecret(apiKeyDialog.provider, apiKeyDialog.action);
+                    void persistEnvironmentSecret(apiKeyDialog.provider, apiKeyDialog.action).catch(
+                      () => setLoadError("Could not save provider credentials. Please retry."),
+                    );
                     return undefined;
                   }
                   return void startAction(apiKeyDialog.provider, apiKeyDialog.action);

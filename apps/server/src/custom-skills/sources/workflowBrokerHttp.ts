@@ -1,3 +1,5 @@
+import { modelBridgeEnvironment } from "../../provider/studyBuddyModelBridge.ts";
+import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Owns the local packaged-workflow process boundary.
 // @effect-diagnostics globalTimers:off -- Native child-process escalation must outlive Effect scopes.
 // @effect-diagnostics globalDate:off -- Permission expiry is wall-clock security state.
@@ -299,6 +301,8 @@ export function spawnWorkflow(
 export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
+    const registry = yield* ProviderInstanceRegistry;
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
     const sourcePlatform = createStudyBuddySourcePlatform(config, secretStore);
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -389,11 +393,40 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
             ) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
             }
+            const ownerThread = snapshot.value.threads.find(
+              (thread) => thread.id === input.threadId && thread.deletedAt === null,
+            );
+            if (input.threadId && !ownerThread) throw new Error("Workflow thread is unavailable.");
+            const modelEnvironment: Record<string, string> = {};
+            if (ownerThread) {
+              const ownerProject = snapshot.value.projects.find(
+                (project) => project.id === ownerThread.projectId,
+              );
+              const ownerWorkspace = ownerThread.worktreePath ?? ownerProject?.workspaceRoot;
+              if (!ownerWorkspace || (await realpath(ownerWorkspace)) !== workspace)
+                throw new Error("Workflow thread does not own this workspace.");
+              const instance = await runPromise(
+                registry.getInstance(ownerThread.modelSelection.instanceId),
+              );
+              if (!instance) throw new Error("Selected workflow provider is unavailable.");
+              Object.assign(
+                modelEnvironment,
+                modelBridgeEnvironment({
+                  ...runtimeState.value,
+                  threadId: ownerThread.id,
+                  modelSelection: ownerThread.modelSelection,
+                  driver: instance.driverKind,
+                }),
+              );
+            }
             return executeStudyBuddyWorkflow(createBrokerExecutionRequest(input, workspace), {
               packagedRoot,
               taskModulePath,
               nodeExecutable,
-              baseEnvironment: safeBaseEnvironment(process.env, codexHome, config.stateDir),
+              baseEnvironment: {
+                ...safeBaseEnvironment(process.env, codexHome, config.stateDir),
+                ...modelEnvironment,
+              },
               resolveWorkflowEnvironment: (selection) =>
                 sourcePlatform.resolveWorkflowEnvironment(selection),
               stageQuizPermissionRequest: (permission) =>

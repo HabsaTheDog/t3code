@@ -1,7 +1,7 @@
 import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
-import { ClaudeAI, CursorIcon, Gemini, GithubCopilotIcon, OpenCodeIcon, type Icon } from "../Icons";
+import { CursorIcon, GithubCopilotIcon, OpenCodeIcon, type Icon } from "../Icons";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -47,10 +47,8 @@ const COMING_SOON_PROVIDERS: ReadonlyArray<{
   readonly label: string;
   readonly icon: Icon;
 }> = [
-  { id: "claude", label: "Claude", icon: ClaudeAI },
   { id: "cursor", label: "Cursor", icon: CursorIcon },
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
-  { id: "gemini", label: "Gemini", icon: Gemini },
   { id: "github-copilot", label: "Github Copilot", icon: GithubCopilotIcon },
 ];
 

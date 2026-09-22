@@ -1,5 +1,6 @@
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -17,17 +18,71 @@ import { it, assert } from "@effect/vitest";
 import * as AcpClient from "./client.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import * as AcpError from "./errors.ts";
-import { encodeJsonl, jsonRpcRequest, jsonRpcResponse } from "./_internal/shared.ts";
+import {
+  encodeJsonl,
+  jsonRpcNotification,
+  jsonRpcRequest,
+  jsonRpcResponse,
+} from "./_internal/shared.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 
 const InitializeRequest = jsonRpcRequest("initialize", AcpSchema.InitializeRequest);
 const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
+const PromptRequest = jsonRpcRequest("session/prompt", AcpSchema.PromptRequest);
+const PromptResponse = jsonRpcResponse(AcpSchema.PromptResponse);
+const SessionUpdateNotification = jsonRpcNotification(
+  "session/update",
+  AcpSchema.SessionNotification,
+);
+const decodePromptRequestLine = Schema.decodeEffect(Schema.fromJsonString(PromptRequest));
+const XAiPromptCompleteNotification = jsonRpcNotification(
+  "_x.ai/session/prompt_complete",
+  Schema.Struct({
+    sessionId: Schema.String,
+    promptId: Schema.String,
+    stopReason: Schema.String,
+    agentResult: Schema.NullOr(Schema.Unknown),
+  }),
+);
+const XAiQueueChangedNotification = jsonRpcNotification(
+  "_x.ai/queue/changed",
+  Schema.Struct({
+    sessionId: Schema.String,
+    entries: Schema.Array(Schema.Unknown),
+  }),
+);
+const XAiSessionsChangedNotification = jsonRpcNotification(
+  "_x.ai/sessions/changed",
+  Schema.Struct({
+    upserted: Schema.Array(Schema.Unknown),
+    removed: Schema.Array(Schema.Unknown),
+  }),
+);
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
 const mockPeerArgs = (path: string) => [path];
+const mockStartupNotice = "Mock ACP startup notice";
+const stripMockStartupNotice = (stdout: ChildProcessSpawner.ChildProcessHandle["stdout"]) =>
+  stdout.pipe(
+    Stream.decodeText,
+    Stream.splitLines,
+    Stream.filter((line) => line !== mockStartupNotice),
+    Stream.map((line) => `${line}\n`),
+    Stream.encodeText,
+  );
+
+function concatBytes(chunks: ReadonlyArray<Uint8Array>): Uint8Array {
+  const batch = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    batch.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return batch;
+}
 
 it.layer(NodeServices.layer)("effect-acp client", (it) => {
   const makeHandle = (env?: Record<string, string>) =>
@@ -40,6 +95,196 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       });
       return yield* spawner.spawn(command);
     });
+
+  it.effect("transforms fragmented stdout before parsing and preserves UTF-8", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({ ACP_MOCK_STDOUT_PREFIX: `${mockStartupNotice}\n` });
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        const initialized = yield* acp.agent.initialize({ protocolVersion: 1 });
+        assert.equal(initialized.protocolVersion, 1);
+
+        const echoed = yield* acp.raw.request("x/echo", { message: "café" });
+        assert.deepEqual(echoed, {
+          echoedMethod: "x/echo",
+          echoedParams: { message: "café" },
+        });
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            transformStdout: (stdout) =>
+              stdout.pipe(
+                Stream.flatMap((chunk) =>
+                  Stream.fromIterable(Array.from(chunk, (byte) => Uint8Array.of(byte))),
+                ),
+                stripMockStartupNotice,
+              ),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("reports malformed JSON that remains after a stdout transform", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle({
+        ACP_MOCK_STDOUT_PREFIX: `${mockStartupNotice}\n`,
+        ACP_MOCK_MALFORMED_OUTPUT: "1",
+      });
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const error = yield* Deferred.await(termination).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            transformStdout: stripMockStartupNotice,
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+
+      if (error._tag !== "AcpProtocolParseError") {
+        return assert.fail(`Expected a parse error, got ${error._tag}`);
+      }
+      assert.equal(error.operation, "decode-wire-message");
+    }),
+  );
+
+  it.effect("preserves stdout transform errors without logging rejected input", () =>
+    Effect.gen(function* () {
+      const privateNotice = "Mock sign-in URL: https://example.test/login?token=mock-private-token";
+      const handle = yield* makeHandle({ ACP_MOCK_STDOUT_PREFIX: `${privateNotice}\n` });
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      const logs = yield* Ref.make<Array<unknown>>([]);
+      const expectedError = new AcpError.AcpTransportError({
+        operation: "read-input-stream",
+        detail: "Sign in to the mock agent.",
+        cause: undefined,
+      });
+      const error = yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        const failure = yield* acp.agent.initialize({ protocolVersion: 1 }).pipe(Effect.flip);
+        assert.strictEqual(yield* Deferred.await(termination), expectedError);
+        return failure;
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            logIncoming: true,
+            logger: (event) => Ref.update(logs, (current) => [...current, event]),
+            transformStdout: (stdout) =>
+              stdout.pipe(
+                Stream.decodeText,
+                Stream.splitLines,
+                Stream.mapEffect((line) =>
+                  line === privateNotice ? Effect.fail(expectedError) : Effect.succeed(`${line}\n`),
+                ),
+                Stream.encodeText,
+              ),
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+
+      assert.strictEqual(error, expectedError);
+      assert.isEmpty(yield* Ref.get(logs));
+    }),
+  );
+
+  it.effect("retains only transformed session updates in raw notifications and handlers", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const delivered = yield* Deferred.make<AcpSchema.SessionNotification>();
+      const imageData = "A".repeat(1_048_576);
+      const normalized = {
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Image data omitted." },
+        },
+      } satisfies AcpSchema.SessionNotification;
+      let transformCalls = 0;
+      const acp = yield* AcpClient.make(stdio, {
+        transformSessionUpdate: (notification) => {
+          if (
+            notification.update.sessionUpdate !== "agent_message_chunk" ||
+            notification.update.content.type !== "image"
+          ) {
+            return notification;
+          }
+          assert.equal(notification.update.content.data, imageData);
+          transformCalls += 1;
+          return normalized;
+        },
+      });
+      yield* acp.handleSessionUpdate((notification) =>
+        Deferred.succeed(delivered, notification).pipe(Effect.asVoid),
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "image", data: imageData, mimeType: "image/png" },
+            },
+          },
+        }),
+      );
+
+      assert.strictEqual(yield* Deferred.await(delivered), normalized);
+      const [retained] = yield* acp.raw.notifications.pipe(Stream.take(1), Stream.runCollect);
+      assert.deepEqual(retained, {
+        _tag: "SessionUpdate",
+        method: "session/update",
+        params: normalized,
+      });
+      assert.equal(transformCalls, 1);
+    }),
+  );
+
+  it.effect("reports idle child termination and rejects later requests and notifications", () =>
+    Effect.gen(function* () {
+      const handle = yield* makeHandle();
+      const termination = yield* Deferred.make<AcpError.AcpError>();
+      yield* Effect.gen(function* () {
+        const acp = yield* AcpClient.AcpClient;
+        yield* acp.agent.initialize({ protocolVersion: 1 });
+        yield* handle.kill();
+
+        const error = yield* Deferred.await(termination);
+        if (error._tag !== "AcpProcessExitedError") {
+          return assert.fail(`Expected a process exit, got ${error._tag}`);
+        }
+        assert.equal(error.pid, handle.pid);
+        assert.equal(error.code, yield* handle.exitCode);
+        const rawRequestError = yield* acp.raw.request("x/echo", {}).pipe(
+          Effect.match({
+            onFailure: (failure) => failure,
+            onSuccess: () => assert.fail("Expected the request to fail after process exit"),
+          }),
+        );
+        assert.strictEqual(rawRequestError, error);
+        assert.strictEqual(yield* acp.raw.notify("x/notify", {}).pipe(Effect.flip), error);
+        assert.strictEqual(
+          yield* acp.agent.cancel({ sessionId: "mock-session-1" }).pipe(Effect.flip),
+          error,
+        );
+
+        const requestError = yield* acp.agent
+          .createSession({ cwd: process.cwd(), mcpServers: [] })
+          .pipe(Effect.flip);
+        assert.strictEqual(requestError, error);
+      }).pipe(
+        Effect.provide(
+          AcpClient.layerChildProcess(handle, {
+            onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+    }),
+  );
 
   it.effect("initializes, prompts, receives updates, and handles permission requests", () =>
     Effect.gen(function* () {
@@ -147,7 +392,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
   );
 
   it.effect(
-    "returns formatted invalid params when a typed extension request payload is wrong",
+    "returns structured invalid params without exposing values from typed extension request payloads",
     () =>
       Effect.gen(function* () {
         const handle = yield* makeHandle({ ACP_MOCK_BAD_TYPED_REQUEST: "1" });
@@ -213,8 +458,8 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           assert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        assert.include(rendered, "Invalid x/typed_request payload:");
-        assert.include(rendered, "Expected string, got 123");
+        assert.include(rendered, "Invalid payload for ACP extension method 'x/typed_request'.");
+        assert.notInclude(rendered, "Expected string, got 123");
       }),
   );
 
@@ -445,5 +690,91 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
       yield* Scope.close(scope, Exit.void);
     }),
+  );
+
+  it.effect(
+    "routes a standard prompt response after Grok extension notifications in the same batch",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const scope = yield* Scope.make();
+        const acp = yield* AcpClient.make(stdio).pipe(Effect.provideService(Scope.Scope, scope));
+
+        const promptFiber = yield* acp.agent
+          .prompt({
+            sessionId: "grok-session-1",
+            prompt: [{ type: "text", text: "run the ls command" }],
+          })
+          .pipe(Effect.forkScoped);
+
+        const outbound = yield* Queue.take(output);
+        const decodedPrompt = yield* decodePromptRequestLine(outbound);
+
+        const responseBatch = concatBytes(
+          yield* Effect.all([
+            encodeJsonl(XAiQueueChangedNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/queue/changed",
+              params: { sessionId: "grok-session-1", entries: [] },
+            }),
+            encodeJsonl(XAiPromptCompleteNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/session/prompt_complete",
+              params: {
+                sessionId: "grok-session-1",
+                promptId: "prompt-1",
+                stopReason: "end_turn",
+                agentResult: null,
+              },
+            }),
+            encodeJsonl(XAiSessionsChangedNotification, {
+              jsonrpc: "2.0",
+              method: "_x.ai/sessions/changed",
+              params: {
+                upserted: [
+                  {
+                    sessionId: "grok-session-1",
+                    title: null,
+                    cwd: process.cwd(),
+                    isWorktree: false,
+                    modelId: "grok-composer-2.5-fast",
+                    yolo: false,
+                    activity: "idle",
+                    resident: true,
+                    lastChangeUnixMs: 1_710_000_000_000,
+                    origin: { kind: "local" },
+                  },
+                ],
+                removed: [],
+              },
+            }),
+            encodeJsonl(PromptResponse, {
+              jsonrpc: "2.0",
+              id: decodedPrompt.id,
+              result: {
+                stopReason: "end_turn",
+                _meta: {
+                  sessionId: "grok-session-1",
+                  requestId: "prompt-1",
+                  promptId: "prompt-1",
+                  modelId: "grok-composer-2.5-fast",
+                },
+              },
+            }),
+          ]),
+        );
+        yield* Queue.offer(input, responseBatch);
+
+        assert.deepEqual(yield* Fiber.join(promptFiber), {
+          stopReason: "end_turn",
+          _meta: {
+            sessionId: "grok-session-1",
+            requestId: "prompt-1",
+            promptId: "prompt-1",
+            modelId: "grok-composer-2.5-fast",
+          },
+        });
+        yield* Scope.close(scope, Exit.void);
+      }),
   );
 });
