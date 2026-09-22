@@ -76,7 +76,7 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
       contentAnalyzer: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
       quizSolver: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
       artifactPlanner: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
-      artifactBuilder: worker("gpt-5.6-sol", "medium", "gpt-5.6-sol", "high"),
+      artifactBuilder: worker("gpt-5.6-sol", "medium", "gpt-5.6-terra", "high"),
       qualityReviewer: worker("gpt-5.6-terra", "medium", "gpt-5.6-terra", "medium"),
     },
   },

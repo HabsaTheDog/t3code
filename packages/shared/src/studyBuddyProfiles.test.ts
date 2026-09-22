@@ -61,7 +61,12 @@ describe("Study Buddy execution profiles", () => {
       contentAnalyzer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
       quizSolver: { model: "gpt-5.6-terra", reasoningEffort: "high" },
       artifactPlanner: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
-      artifactBuilder: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
+      artifactBuilder: {
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+        retryModel: "gpt-5.6-terra",
+        retryReasoningEffort: "high",
+      },
       qualityReviewer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
     });
     expect(quality?.roles).toMatchObject({
