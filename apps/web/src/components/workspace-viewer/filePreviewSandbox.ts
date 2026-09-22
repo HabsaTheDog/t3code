@@ -1,6 +1,8 @@
-export const RESTRICTED_HTML_FILE_PREVIEW_SANDBOX = "allow-scripts";
+// Local submit handlers need allow-forms; preview CSP still blocks network form actions.
+export const RESTRICTED_HTML_FILE_PREVIEW_SANDBOX = "allow-forms allow-scripts";
 
-export const INTERACTIVE_HTML_FILE_PREVIEW_SANDBOX = "allow-modals allow-same-origin allow-scripts";
+export const INTERACTIVE_HTML_FILE_PREVIEW_SANDBOX =
+  "allow-forms allow-modals allow-same-origin allow-scripts";
 
 export function htmlFilePreviewSandbox(previewUrl: string, hostUrl: string): string {
   const previewOrigin = new URL(previewUrl, hostUrl).origin;

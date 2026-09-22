@@ -28,8 +28,12 @@ describe("htmlFilePreviewSandbox", () => {
   it("keeps unrelated sandbox capabilities disabled", () => {
     const capabilities = new Set(INTERACTIVE_HTML_FILE_PREVIEW_SANDBOX.split(" "));
 
-    expect(capabilities).toEqual(new Set(["allow-modals", "allow-same-origin", "allow-scripts"]));
-    expect(capabilities).not.toContain("allow-forms");
+    expect(capabilities).toEqual(
+      new Set(["allow-forms", "allow-modals", "allow-same-origin", "allow-scripts"]),
+    );
+    expect(new Set(RESTRICTED_HTML_FILE_PREVIEW_SANDBOX.split(" "))).toEqual(
+      new Set(["allow-forms", "allow-scripts"]),
+    );
     expect(capabilities).not.toContain("allow-popups");
     expect(capabilities).not.toContain("allow-top-navigation");
     expect(capabilities).not.toContain("allow-downloads");
