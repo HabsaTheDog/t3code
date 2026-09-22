@@ -135,7 +135,12 @@ export function deriveProviderModelsForDisplay(input: {
         capabilities: null,
       },
   );
-  return [...serverModels, ...customModels];
+  const seen = new Set<string>();
+  return [...serverModels, ...customModels].filter((model) => {
+    if (seen.has(model.slug)) return false;
+    seen.add(model.slug);
+    return true;
+  });
 }
 
 function ProviderAuthEmail(props: {
@@ -416,6 +421,7 @@ interface ProviderInstanceCardProps {
    * omit it.
    */
   readonly headerAction?: ReactNode | undefined;
+  readonly onSetup?: (() => void) | undefined;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -461,6 +467,7 @@ export function ProviderInstanceCard({
   onUpdate,
   onDelete,
   headerAction,
+  onSetup,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -681,7 +688,7 @@ export function ProviderInstanceCard({
           {isComingSoon ? null : <ProviderAuthEmail email={authEmail} separator prefix="Email" />}
         </>
       )}
-      {summary.detail ? <span>- {summary.detail}</span> : null}
+      {summary.detail && (!onSetup || isExpanded) ? <span>- {summary.detail}</span> : null}
     </p>
   );
 
@@ -797,13 +804,29 @@ export function ProviderInstanceCard({
             {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+            {onSetup ? (
+              <Button
+                size="sm"
+                variant={liveProvider?.auth.status === "authenticated" ? "outline" : "default"}
+                onClick={onSetup}
+                aria-label={`Set up ${displayName}`}
+              >
+                {liveProvider?.auth.status === "authenticated"
+                  ? "Account"
+                  : liveProvider?.installed
+                    ? "Connect"
+                    : "Install & connect"}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant="ghost"
               className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
               onClick={() => onExpandedChange(!isExpanded)}
               aria-label={`Toggle ${displayName} details`}
+              aria-expanded={isExpanded}
             >
+              <span>Advanced</span>
               <ChevronDownIcon
                 className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
               />

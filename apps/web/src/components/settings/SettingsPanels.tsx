@@ -1,3 +1,5 @@
+import { GeminiSetupCard } from "../../setup/GeminiSetupCard";
+import { Dialog, DialogPopup, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
 import { ProviderSetupStep } from "../../setup/ProviderSetupStep";
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -969,6 +971,7 @@ export function ProviderSettingsPanel() {
   const serverProviders = useServerProviders();
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [setupDriver, setSetupDriver] = useState<string | null>(null);
   const [updatingProviderDrivers, setUpdatingProviderDrivers] = useState<
     ReadonlySet<ProviderDriverKind>
   >(() => new Set());
@@ -1247,10 +1250,17 @@ export function ProviderSettingsPanel() {
     });
   };
 
+  const visibleRows = rows
+    .filter((row) => !row.isDefault || isProviderDriverAvailable(row.driver))
+    .sort((left, right) => {
+      const order: Record<string, number> = { codex: 0, claudeAgent: 1, antigravity: 2 };
+      return (order[left.driver] ?? 3) - (order[right.driver] ?? 3);
+    });
+
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Providers"
+        title="AI connections"
         headerAction={
           <div className="flex items-center gap-1.5">
             <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
@@ -1294,8 +1304,10 @@ export function ProviderSettingsPanel() {
           </div>
         }
       >
-        <ProviderSetupStep />
-        {rows.map((row) => {
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
+          Connect the providers you want to use. Choose your model in each chat.
+        </p>
+        {visibleRows.map((row) => {
           const driverOption = getDriverOption(row.driver);
           const liveProvider = serverProviders.find(
             (candidate) => candidate.instanceId === row.instanceId,
@@ -1361,6 +1373,11 @@ export function ProviderSettingsPanel() {
               }}
               onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
               headerAction={headerAction}
+              onSetup={
+                row.isDefault && isProviderDriverAvailable(row.driver)
+                  ? () => setSetupDriver(row.driver)
+                  : undefined
+              }
               hiddenModels={modelPreferences.hiddenModels}
               favoriteModels={favoriteModels}
               modelOrder={modelPreferences.modelOrder}
@@ -1395,6 +1412,32 @@ export function ProviderSettingsPanel() {
           );
         })}
       </SettingsSection>
+
+      <Dialog
+        open={setupDriver !== null}
+        onOpenChange={(open) => {
+          if (!open) setSetupDriver(null);
+        }}
+      >
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Connect your account</DialogTitle>
+            <DialogDescription>
+              Install the provider if needed, then choose how to sign in.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-y-auto px-5 pb-5">
+            {setupDriver === "antigravity" ? (
+              <GeminiSetupCard />
+            ) : setupDriver === "codex" || setupDriver === "claudeAgent" ? (
+              <ProviderSetupStep
+                key={setupDriver}
+                provider={setupDriver === "claudeAgent" ? "claude" : "codex"}
+              />
+            ) : null}
+          </div>
+        </DialogPopup>
+      </Dialog>
 
       <AddProviderInstanceDialog
         open={isAddInstanceDialogOpen}

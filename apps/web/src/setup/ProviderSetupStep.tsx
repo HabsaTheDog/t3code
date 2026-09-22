@@ -247,8 +247,10 @@ export interface ProviderSetupStepHandle {
   readonly save: () => Promise<boolean>;
 }
 
-export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
-  function ProviderSetupStep(_props, ref) {
+type SetupProps = { provider?: ProviderSetupProvider };
+
+export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>(
+  function ProviderSetupStep(props, ref) {
     const providers = useServerProviders();
     const settings = useSettings(
       (current): Pick<UnifiedSettings, "providers" | "providerInstances"> => ({
@@ -507,6 +509,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
       }
     };
 
+    const visibleProviders = props.provider ? [props.provider] : PROVIDER_ORDER;
     if (capabilities === null) {
       return (
         <Card className="grid min-h-48 place-items-center border-dashed">
@@ -536,7 +539,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
         ) : null}
 
         <div className="grid gap-4">
-          {PROVIDER_ORDER.map((providerName) => {
+          {visibleProviders.map((providerName) => {
             const capability = capabilityByProvider.get(providerName);
             const status = summarizeProvider(providers, providerName);
             const job = jobs[providerName];
@@ -709,7 +712,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle>(
           })}
         </div>
 
-        <GeminiSetupCard />
+        {!props.provider ? <GeminiSetupCard /> : null}
 
         <Dialog
           open={apiKeyDialog !== null}

@@ -4,6 +4,21 @@ import type { ServerProviderModel } from "@t3tools/contracts";
 import { deriveProviderModelsForDisplay } from "./ProviderInstanceCard";
 
 describe("deriveProviderModelsForDisplay", () => {
+  it("shows a model only once when built-in and custom entries overlap", () => {
+    const model = {
+      slug: "shared-model",
+      name: "Shared model",
+      isCustom: false,
+      capabilities: null,
+    };
+    const models = deriveProviderModelsForDisplay({
+      liveModels: [model, model],
+      customModels: ["shared-model", "custom-model", "custom-model"],
+    });
+    expect(models.map((model) => model.slug)).toEqual(["shared-model", "custom-model"]);
+    expect(models[0]?.name).toBe("Shared model");
+  });
+
   it("uses current config custom models instead of stale live custom rows", () => {
     const liveModels: ReadonlyArray<ServerProviderModel> = [
       {
