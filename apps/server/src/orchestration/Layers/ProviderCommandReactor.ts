@@ -919,6 +919,26 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const runtimeSession = (yield* providerService.listSessions()).find(
+      (session) => session.threadId === thread.id,
+    );
+    // A persisted running turn can outlive its process after a crash/reboot.
+    // Reconnecting merely to cancel cannot emit a completion for that old turn.
+    if (!runtimeSession || (runtimeSession.status === "ready" && !runtimeSession.activeTurnId)) {
+      yield* providerService.stopSession({ threadId: thread.id });
+      yield* setThreadSession({
+        threadId: thread.id,
+        session: {
+          ...thread.session!,
+          status: "stopped",
+          activeTurnId: null,
+          updatedAt: event.payload.createdAt,
+        },
+        createdAt: event.payload.createdAt,
+      });
+      return;
+    }
+
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
     yield* providerService.interruptTurn({ threadId: event.payload.threadId });
   });

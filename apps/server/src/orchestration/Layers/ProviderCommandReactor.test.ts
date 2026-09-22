@@ -1794,6 +1794,16 @@ describe("ProviderCommandReactor", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
+    harness.runtimeSessions.push({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      activeTurnId: asTurnId("native-turn-1"),
+      createdAt: now,
+      updatedAt: now,
+    });
+
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",
@@ -1827,6 +1837,55 @@ describe("ProviderCommandReactor", () => {
       threadId: "thread-1",
     });
   });
+
+  it.each([false, true])(
+    "stops a reboot-interrupted turn without reviving it (idle runtime: %s)",
+    async (hasIdleRuntime) => {
+      const harness = await createHarness();
+      const now = "2026-01-01T00:00:00.000Z";
+      if (hasIdleRuntime)
+        harness.runtimeSessions.push({
+          provider: ProviderDriverKind.make("antigravity"),
+          status: "ready",
+          runtimeMode: "approval-required",
+          threadId: ThreadId.make("thread-1"),
+          createdAt: now,
+          updatedAt: now,
+        });
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("stale-session"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: now,
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "antigravity",
+            providerInstanceId: ProviderInstanceId.make("antigravity"),
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("old-turn"),
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stop-stale-turn"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: now,
+        }),
+      );
+      await waitFor(
+        async () => (await harness.readModel()).threads[0]?.session?.status === "stopped",
+      );
+      expect(harness.interruptTurn).not.toHaveBeenCalled();
+      expect(harness.stopSession).toHaveBeenCalledWith({ threadId: "thread-1" });
+      expect((await harness.readModel()).threads[0]?.session?.activeTurnId).toBeNull();
+    },
+  );
 
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
