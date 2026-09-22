@@ -493,6 +493,13 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           resolveAntigravityProfileDirectory(config.stateDir, instanceId),
         );
         const orphan = path.join(tempRoot, "run-orphan", "_MEI123", "google3");
+        const legacyTempRoot = path.join(
+          resolveAntigravityProfileDirectory(config.stateDir, instanceId),
+          "antigravity-acp",
+          "tmp",
+        );
+        yield* fs.makeDirectory(legacyTempRoot, { recursive: true });
+        yield* fs.writeFileString(path.join(legacyTempRoot, "legacy-payload.bin"), "stale");
         yield* fs.makeDirectory(orphan, { recursive: true });
         yield* fs.writeFileString(path.join(orphan, "payload.bin"), "stale");
         yield* AntigravityDriver.create({
@@ -511,6 +518,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           ),
         );
         expect(yield* fs.exists(tempRoot)).toBe(false);
+        expect(yield* fs.exists(legacyTempRoot)).toBe(false);
       }).pipe(Effect.scoped),
   );
 

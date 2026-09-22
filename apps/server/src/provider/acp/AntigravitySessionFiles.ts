@@ -43,10 +43,10 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
 );
 
 /**
- * Removes every per-process runtime temp directory under the profile. Call
+ * Removes every per-process runtime temp directory under its profile-specific root. Call
  * once when the driver starts, before it launches any process, so a previous
  * server that was killed mid-session cannot leave unpacked runtimes behind.
- * Only the profile-owned directory is touched. The system temp directory
+ * Only the exact profile-owned root is touched. The system temp directory
  * belongs to other programs and Windows does not lock data files, so sweeping
  * it could gut a live extraction.
  */

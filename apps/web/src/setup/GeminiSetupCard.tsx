@@ -102,7 +102,9 @@ export function GeminiSetupCard() {
             {ready
               ? "Signed in"
               : installed
-                ? "Sign-in needed"
+                ? provider?.auth.status === "unknown"
+                  ? "Check your saved connection or sign in"
+                  : "Sign-in needed"
                 : "Install Antigravity to connect your Google account"}
           </p>
         </div>
@@ -114,9 +116,16 @@ export function GeminiSetupCard() {
           </Button>
         ) : null}
         {installed && !authenticating ? (
-          <Button disabled={busy} onClick={() => void run("auth-start")}>
-            Sign in with Google
-          </Button>
+          <>
+            {!ready ? (
+              <Button disabled={busy} variant="outline" onClick={() => void run("refresh-models")}>
+                Check connection
+              </Button>
+            ) : null}
+            <Button disabled={busy} onClick={() => void run("auth-start")}>
+              {ready ? "Change Google account" : "Sign in with Google"}
+            </Button>
+          </>
         ) : null}
         {installing ? (
           <Button disabled={busy} variant="outline" onClick={() => void run("install-cancel")}>

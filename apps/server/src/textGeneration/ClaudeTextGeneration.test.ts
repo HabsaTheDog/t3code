@@ -214,6 +214,70 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  for (const failure of [
+    {
+      name: "failed account response",
+      output: JSON.stringify({ is_error: true, result: "Not logged in" }),
+      detail: "Check account access",
+    },
+    {
+      name: "error envelope with a stale structured result",
+      output: JSON.stringify({ is_error: true, structured_output: { result: "stale" } }),
+      detail: "Check account access",
+    },
+    { name: "malformed JSON", output: "not JSON", detail: "unexpected output format" },
+    {
+      name: "wrong result schema",
+      output: JSON.stringify({ structured_output: { result: 42 } }),
+      detail: "invalid structured output",
+    },
+    {
+      name: "CLI failure",
+      output: "",
+      stderr: "Account subscription required",
+      exitCode: 1,
+      detail: "Account subscription required",
+    },
+  ]) {
+    it.effect(`rejects workflow ${failure.name}`, () =>
+      withFakeClaudeEnv(failure, (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* textGeneration.generateWorkflow!({
+            prompt: "Compute from supplied evidence only.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          }).pipe(Effect.flip);
+          expect(error.operation).toBe("generateWorkflow");
+          expect(error.detail).toContain(failure.detail);
+        }),
+      ),
+    );
+  }
+
+  it.effect("preserves Unicode and multiline workflow prompts without shell interpretation", () => {
+    const prompt = "Evidence: α Ω\nLiteral $(echo secret) and `command`";
+    return withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { result: "verified" } }),
+        stdinMustContain: JSON.stringify(prompt),
+        argsMustContain: '--settings {"disableAllHooks":true}',
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateWorkflow!({
+            prompt,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4-6",
+            },
+          });
+          expect(result.result).toBe("verified");
+        }),
+    );
+  });
+
   it.effect("forwards Claude thinking settings for Haiku without passing effort", () =>
     withFakeClaudeEnv(
       {

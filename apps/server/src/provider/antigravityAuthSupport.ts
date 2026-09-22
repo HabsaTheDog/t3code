@@ -1,4 +1,5 @@
 import * as NodeCrypto from "node:crypto";
+import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - resolveAntigravityProfileDirectory is a pure sync helper, so it cannot use the Path service.
@@ -194,9 +195,16 @@ export function resolveAntigravityProfileDirectory(
   return NodePath.join(stateDir, "providers", "antigravity", directoryName);
 }
 
-/** Parent of the per-process runtime temp directories inside a profile. */
+/** Short, profile-specific root: child tools use TMPDIR for Unix-domain sockets. */
 export function resolveAntigravityRuntimeTempDirectory(profileDirectory: string): string {
-  return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
+  const identity = NodeCrypto.createHash("sha256")
+    .update(profileDirectory)
+    .digest("hex")
+    .slice(0, 24);
+  const systemTemp = NodeOS.tmpdir();
+  const root =
+    process.platform !== "win32" && Buffer.byteLength(systemTemp) > 30 ? "/tmp" : systemTemp;
+  return NodePath.join(root, `sb-agy-${identity}`);
 }
 
 function quoteBrowserArgument(value: string): string {
@@ -225,7 +233,8 @@ function antigravityEnvironment(
         : {};
   // The agent is a PyInstaller one-file bundle. It unpacks about 1 GB into
   // the system temp directory per launch and a force kill leaves that behind.
-  // Point it at a T3-owned directory so the driver can reclaim the space.
+  // Point it at a short Study Buddy-owned directory so the driver can reclaim
+  // the space without breaking inherited Unix socket paths in child tools.
   const tempDirectory = runtimeTempDirectory ?? profile.tempDirectory;
   return {
     ...environment,

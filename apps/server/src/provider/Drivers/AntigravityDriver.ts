@@ -104,7 +104,10 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         instanceId,
       );
       // No process of this instance exists yet, so every runtime temp
-      // directory left under the profile is an orphan from a killed server.
+      // directory left under its short temp root is an orphan from a killed server.
+      yield* removeAntigravityRuntimeTempDirs(
+        path.join(profileDirectory, "antigravity-acp", "tmp"),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
       yield* removeAntigravityRuntimeTempDirs(
         resolveAntigravityRuntimeTempDirectory(profileDirectory),
       ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));

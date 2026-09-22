@@ -52,7 +52,8 @@ const CLAUDE_TIMEOUT_MS = 180_000;
  * We only care about `structured_output`.
  */
 const ClaudeOutputEnvelope = Schema.Struct({
-  structured_output: Schema.Unknown,
+  structured_output: Schema.optional(Schema.Unknown),
+  is_error: Schema.optional(Schema.Boolean),
 });
 
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
@@ -290,6 +291,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         ),
       ),
     );
+
+    if (envelope.is_error === true) {
+      return yield* new TextGenerationError({
+        operation,
+        detail:
+          "Claude could not complete the request. Check account access and usage limits in AI connections.",
+      });
+    }
 
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
     return yield* decodeOutput(envelope.structured_output).pipe(

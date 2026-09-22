@@ -2630,7 +2630,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   compact={isComposerFooterCompact}
                   onInstanceModelChange={(instanceId, model) =>
-                    onProviderModelSelect(instanceId, model, [])
+                    onProviderModelSelect(
+                      instanceId,
+                      model,
+                      studyBuddyCoordinatorOptions(activeExecutionProfile).filter(
+                        (option) => option.id === "studyBuddyExecutionProfileId",
+                      ),
+                    )
                   }
                 />
                 <StudyBuddyProfilePicker

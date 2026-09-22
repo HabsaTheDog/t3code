@@ -37,6 +37,7 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityProfileDirectory,
+  resolveAntigravityRuntimeTempDirectory,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -50,6 +51,16 @@ const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("Antigravity process environment", () => {
+  it("keeps inherited socket paths short and separates profiles even in long workspaces", () => {
+    const profile = `/workspace/${"long directory/".repeat(25)}providers/personal`;
+    const root = resolveAntigravityRuntimeTempDirectory(profile);
+    if (process.platform !== "win32") {
+      expect(Buffer.byteLength(`${root}/run-123456/tsx-1000/1234567.pipe`)).toBeLessThan(104);
+    }
+    expect(resolveAntigravityRuntimeTempDirectory(profile)).toBe(root);
+    expect(resolveAntigravityRuntimeTempDirectory(`${profile}-other`)).not.toBe(root);
+  });
+
   const profile: AntigravityProfile = {
     platform: "linux",
     geminiHome: "/t3/userdata/providers/antigravity/profile",
