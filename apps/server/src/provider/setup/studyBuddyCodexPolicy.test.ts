@@ -36,6 +36,7 @@ describe("Study Buddy Codex policy", () => {
     expect(rendered.match(/"127\.0\.0\.1" = "allow"/g)).toHaveLength(2);
     expect(rendered).not.toContain('"*" = "allow"');
     expect(rendered).toContain('inherit = "core"');
+    expect(rendered).toContain('CODEX_HOME = "/state/userdata/codex-home"');
     expect(rendered).toContain('STUDY_BUDDY_CONFIG_ROOT = "/state/userdata"');
     expect(rendered).toContain("default_mode_request_user_input = true");
   });

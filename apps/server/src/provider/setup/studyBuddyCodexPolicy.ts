@@ -114,6 +114,7 @@ ignore_default_excludes = false
 exclude = ["MOODLE_*", "CIS_*", "*PASSWORD*", "*PASSCODE*", "*TOKEN*", "*SECRET*", "*API_KEY*"]
 
 [shell_environment_policy.set]
+CODEX_HOME = ${tomlString(paths.codexHome)}
 STUDY_BUDDY_CONFIG_ROOT = ${tomlString(paths.configRoot)}
 `;
 }
