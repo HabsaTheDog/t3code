@@ -473,7 +473,11 @@ describe("openCodexThread", () => {
 
       assert.equal(payload?.approvalPolicy, expectedApprovalPolicy);
       assert.equal(payload?.approvalsReviewer, "user");
-      assert.deepStrictEqual(payload?.config, { default_permissions: expectedProfile });
+      assert.deepStrictEqual(payload?.config, {
+        default_permissions: expectedProfile,
+        "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": `local-${runtimeMode}`,
+        "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": "/tmp/project",
+      });
       assert.equal(payload?.sandbox, undefined);
     }
   });
@@ -507,7 +511,11 @@ describe("openCodexThread", () => {
 
     assert.equal(payload?.approvalPolicy, "never");
     assert.equal(payload?.sandbox, undefined);
-    assert.deepStrictEqual(payload?.config, { default_permissions: ":danger-full-access" });
+    assert.deepStrictEqual(payload?.config, {
+      default_permissions: ":danger-full-access",
+      "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": "thread-secure",
+      "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": "/tmp/project",
+    });
   });
 
   it("falls back to thread/start when resume fails recoverably", async () => {

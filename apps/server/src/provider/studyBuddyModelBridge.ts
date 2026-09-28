@@ -11,6 +11,7 @@ import {
   HttpIncomingMessage,
 } from "effect/unstable/http";
 import { ServerConfig } from "../config.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
@@ -26,6 +27,7 @@ const requestSchema = Schema.Struct({
   model: Schema.optional(Schema.String),
   images: Schema.Array(image).check(Schema.isMaxLength(20)),
   outputSchema: Schema.optional(Schema.Unknown),
+  context: Schema.optional(Schema.Boolean),
 });
 
 const decodeRequest = Schema.decodeUnknownEffect(requestSchema);
@@ -90,6 +92,33 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
             { error: "Workflow thread is unavailable." },
             { status: 404 },
           );
+        if (input.context) {
+          const turn = thread.value.latestTurn;
+          const message =
+            turn &&
+            thread.value.messages.findLast(
+              (entry) => entry.role === "user" && entry.createdAt <= turn.requestedAt,
+            );
+          if (!turn || turn.state !== "running" || !message)
+            return HttpServerResponse.jsonUnsafe(
+              { error: "Workflow owner is no longer running." },
+              { status: 409 },
+            );
+          const providerInput = (message.attachments ?? []).some((entry) => entry.type === "voice")
+            ? yield* projection.getMessageProviderInput(input.threadId, message.id)
+            : Option.none();
+          return HttpServerResponse.jsonUnsafe({
+            turnId: turn.turnId,
+            originalUserPrompt: Option.getOrElse(providerInput, () => message.text),
+            images: (message.attachments ?? []).flatMap((attachment) => {
+              const file = resolveAttachmentPath({
+                attachmentsDir: config.attachmentsDir,
+                attachment,
+              });
+              return file ? [file] : [];
+            }),
+          });
+        }
         const selected = thread.value.modelSelection;
         const instance = yield* registry.getInstance(selected.instanceId);
         if (!instance?.enabled || !instance.textGeneration.generateWorkflow)

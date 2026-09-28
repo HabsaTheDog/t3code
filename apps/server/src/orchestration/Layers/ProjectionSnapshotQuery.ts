@@ -1958,6 +1958,25 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       } satisfies OrchestrationThreadShell);
     });
 
+  const getMessageProviderInput: ProjectionSnapshotQueryShape["getMessageProviderInput"] = (
+    threadId,
+    messageId,
+  ) =>
+    sql<{ providerInput: string | null }>`
+      SELECT json_extract(payload_json, '$.providerInput') AS providerInput
+      FROM orchestration_events
+      WHERE stream_id = ${threadId} AND event_type = 'thread.turn-start-requested'
+        AND json_extract(payload_json, '$.messageId') = ${messageId}
+      ORDER BY sequence DESC LIMIT 1
+    `.pipe(
+      Effect.map((rows) =>
+        typeof rows[0]?.providerInput === "string"
+          ? Option.some(rows[0].providerInput)
+          : Option.none(),
+      ),
+      Effect.mapError(toPersistenceSqlError("ProjectionSnapshotQuery.getMessageProviderInput")),
+    );
+
   const getThreadDetailById: ProjectionSnapshotQueryShape["getThreadDetailById"] = (threadId) =>
     Effect.gen(function* () {
       const [
@@ -2113,6 +2132,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getMessageProviderInput,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

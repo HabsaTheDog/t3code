@@ -127,6 +127,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getMessageProviderInput: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -169,6 +170,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getMessageProviderInput: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -217,6 +219,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
+        getMessageProviderInput: () => Effect.die("unused"),
       }),
       Effect.provideService(OrchestrationEngineService, {
         readEvents: () => Stream.empty,

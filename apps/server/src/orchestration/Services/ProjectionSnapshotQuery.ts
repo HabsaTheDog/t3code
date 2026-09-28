@@ -8,6 +8,7 @@
  */
 import type {
   CheckpointRef,
+  MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -54,6 +55,11 @@ export interface ProjectionFullThreadDiffContext {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Original provider input (including voice transcripts) for one user message. */
+  readonly getMessageProviderInput: (
+    threadId: ThreadId,
+    messageId: MessageId,
+  ) => Effect.Effect<Option.Option<string>, ProjectionRepositoryError>;
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.

@@ -11,6 +11,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -35,6 +36,39 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("reads voice input only for its owning thread and message", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO orchestration_events
+      (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json)
+      VALUES ('voice-context-fixture', 'thread', 'voice-owner', 1, 'thread.turn-start-requested', '2026-09-29T00:00:00Z', NULL, NULL, NULL, 'user',
+      ${String.raw`{"messageId":"voice-message","providerInput":"Exact spoken α\nrequest"}`}, '{}')`;
+      assert.deepStrictEqual(
+        yield* query.getMessageProviderInput(
+          ThreadId.make("voice-owner"),
+          MessageId.make("voice-message"),
+        ),
+        Option.some("Exact spoken α\nrequest"),
+      );
+      assert.isTrue(
+        Option.isNone(
+          yield* query.getMessageProviderInput(
+            ThreadId.make("other-owner"),
+            MessageId.make("voice-message"),
+          ),
+        ),
+      );
+      assert.isTrue(
+        Option.isNone(
+          yield* query.getMessageProviderInput(
+            ThreadId.make("voice-owner"),
+            MessageId.make("other-message"),
+          ),
+        ),
+      );
+    }),
+  );
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

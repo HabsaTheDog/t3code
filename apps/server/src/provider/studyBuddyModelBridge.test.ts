@@ -47,6 +47,41 @@ describe("Study Buddy model bridge", () => {
           snapshot: { getSnapshot: Effect.succeed({ models: [] }) },
         } as unknown as ProviderInstance),
       );
+      let ownerRunning = true;
+      let voice = false;
+      const owner = () => ({
+        deletedAt: null,
+        modelSelection: selection,
+        latestTurn: {
+          turnId: "active-turn",
+          state: ownerRunning ? "running" : "interrupted",
+          requestedAt: "2026-09-22T10:00:01Z",
+        },
+        messages: [
+          {
+            id: "original-message",
+            role: "user",
+            createdAt: "2026-09-22T10:00:00Z",
+            text: "Exact request: α\nUse this card.",
+            attachments: [
+              ...(voice ? [{ type: "voice", id: "voice-one", durationMs: 1000 }] : []),
+              {
+                type: "image",
+                id: "card-image",
+                name: "card.png",
+                mimeType: "image/png",
+                sizeBytes: 10,
+              },
+            ],
+          },
+          {
+            role: "user",
+            createdAt: "2026-09-22T10:00:02Z",
+            text: "Queued next request",
+            attachments: [],
+          },
+        ],
+      });
       const app = HttpRouter.toWebHandler(
         studyBuddyModelRouteLayer.pipe(
           Layer.provide(
@@ -61,12 +96,14 @@ describe("Study Buddy model bridge", () => {
           ),
           Layer.provide(
             Layer.mock(ProjectionSnapshotQuery)({
-              getThreadDetailById: (id) =>
+              getMessageProviderInput: (id, messageId) =>
                 Effect.succeed(
-                  id === "owner"
-                    ? Option.some({ deletedAt: null, modelSelection: selection } as never)
+                  id === "owner" && messageId === "original-message"
+                    ? Option.some("Exact spoken request α")
                     : Option.none(),
                 ),
+              getThreadDetailById: (id) =>
+                Effect.succeed(id === "owner" ? Option.some(owner() as never) : Option.none()),
             }),
           ),
           Layer.provide(Layer.mock(ProviderInstanceRegistry)({ getInstance })),
@@ -103,6 +140,27 @@ describe("Study Buddy model bridge", () => {
           ).status,
         ).toBe(409);
         expect(generateWorkflow).not.toHaveBeenCalled();
+        expect(
+          (await request({ threadId: "owner", prompt: "", images: [], context: true }, "wrong"))
+            .status,
+        ).toBe(403);
+        const context = await request({ threadId: "owner", prompt: "", images: [], context: true });
+        expect(context.status).toBe(200);
+        expect(await context.json()).toEqual({
+          turnId: "active-turn",
+          originalUserPrompt: "Exact request: α\nUse this card.",
+          images: [expect.stringMatching(/card-image\.png$/)],
+        });
+        expect(generateWorkflow).not.toHaveBeenCalled();
+        voice = true;
+        const spoken = await request({ threadId: "owner", prompt: "", images: [], context: true });
+        expect(await spoken.json()).toMatchObject({ originalUserPrompt: "Exact spoken request α" });
+        voice = false;
+        ownerRunning = false;
+        expect(
+          (await request({ threadId: "owner", prompt: "", images: [], context: true })).status,
+        ).toBe(409);
+        ownerRunning = true;
         const response = await request({
           threadId: "owner",
           prompt: "Exact evidence: α\nnext line",

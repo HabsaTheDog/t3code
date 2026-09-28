@@ -298,6 +298,7 @@ function runtimeModeToPermissionProfile(input: RuntimeMode, studyBuddyActive: bo
 }
 
 function buildThreadStartParams(input: {
+  readonly threadId: ThreadId;
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
@@ -312,6 +313,12 @@ function buildThreadStartParams(input: {
     approvalPolicy: config.approvalPolicy,
     approvalsReviewer: "user",
     config: {
+      ...(input.studyBuddyActive
+        ? {
+            "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": input.threadId,
+            "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": input.cwd,
+          }
+        : {}),
       default_permissions: runtimeModeToPermissionProfile(
         input.runtimeMode,
         input.studyBuddyActive,
@@ -482,6 +489,7 @@ export const openCodexThread = (input: {
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
+    threadId: input.threadId,
     cwd: input.cwd,
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
