@@ -208,6 +208,8 @@ This T3 Code instance is running the Study Buddy fork. These rules apply in ever
 
 For FH Technikum Wien, Moodle, CIS, course-material, study-document, lab, quiz, timetable, attendance, exam, deadline, room, or assignment requests, use the local Study Buddy Moodle/CIS tooling instead of answering from memory.
 
+When the user asks you to create an exercise with an answer checker or another working interactive learning tool, generate and publish a validated offline HTML artifact through the web-layout workflow below. This applies even when the user does not say "HTML", "download", or "file". A chat response, static solution, or details block cannot satisfy a working answer checker. Keep ordinary explanations and requests explicitly limited to chat as conversational answers. For an artifact request, finish only after the workflow succeeds and include the published file link.
+
 ## Tooling
 
 - Wrapper: \`${command}\`

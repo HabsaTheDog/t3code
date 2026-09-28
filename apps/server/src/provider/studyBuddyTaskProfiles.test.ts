@@ -5,6 +5,17 @@ import {
 } from "@t3tools/shared/studyBuddyProfiles";
 import { buildStudyBuddyDeveloperInstructions } from "./CodexDeveloperInstructions.js";
 
+it("requires a working artifact for answer-checking exercises while preserving conversational requests", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  });
+  expect(instructions).toContain("exercise with an answer checker");
+  expect(instructions).toContain("generate and publish a validated offline HTML artifact");
+  expect(instructions).toContain("requests explicitly limited to chat as conversational answers");
+  expect(instructions).toContain("include the published file link");
+  expect(buildStudyBuddyDeveloperInstructions({ environment: {} })).toBeUndefined();
+});
+
 it("keeps multi-quiz execution in one batch while preserving every exact approval", () => {
   const instructions = buildStudyBuddyDeveloperInstructions({
     environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
