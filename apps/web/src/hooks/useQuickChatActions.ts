@@ -1,8 +1,6 @@
 import {
-  DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  ProviderInstanceId,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -32,6 +30,7 @@ import {
   isQuickChatSubmitting,
   releaseQuickChatCreation,
 } from "../quickChatLifecycle";
+import { resolveQuickChatModelSelection } from "../quickChatModelSelection";
 
 async function waitForProjectInStore(input: {
   environmentId: EnvironmentId;
@@ -132,10 +131,10 @@ export function useQuickChatActions() {
       const draftId = newDraftId();
       const createdAt = new Date().toISOString();
       const workspaceRoot = joinWorkspacePath(serverConfig.quickChatWorkspaceRoot, threadId);
-      const modelSelection = {
-        instanceId: ProviderInstanceId.make("codex"),
-        model: DEFAULT_MODEL,
-      };
+      const modelSelection = resolveQuickChatModelSelection({
+        settings: serverConfig.settings,
+        providers: serverConfig.providers,
+      });
 
       await api.orchestration.dispatchCommand({
         type: "project.create",
@@ -171,6 +170,9 @@ export function useQuickChatActions() {
           },
         );
       useComposerDraftStore.getState().applyStickyState(draftId);
+      // The selected Study Buddy profile is authoritative for a new Quick Chat.
+      // Apply it after sticky state so a stale prior model cannot win the first-send race.
+      useComposerDraftStore.getState().setModelSelection(draftId, modelSelection);
 
       await navigate({
         to: "/draft/$draftId",
