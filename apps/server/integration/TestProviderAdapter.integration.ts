@@ -28,6 +28,8 @@ import type {
 
 export interface TestTurnResponse {
   readonly events: ReadonlyArray<FixtureProviderRuntimeEvent>;
+  /** Keep an interrupt fixture running instead of emitting immediate completion. */
+  readonly completeTurn?: boolean;
   readonly mutateWorkspace?: (input: {
     readonly cwd: string;
     readonly turnCount: number;
@@ -51,7 +53,7 @@ export type FixtureProviderRuntimeEvent = {
 export type LegacyProviderRuntimeEvent = FixtureProviderRuntimeEvent;
 
 interface SessionState {
-  readonly session: ProviderSession;
+  session: ProviderSession;
   snapshot: ProviderThreadSnapshot;
   turnCount: number;
   readonly queuedResponses: Array<TestTurnResponse>;
@@ -307,6 +309,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         state.turnCount += 1;
         const turnCount = state.turnCount;
         const turnId = TurnId.make(`turn-${turnCount}`);
+        state.session = { ...state.session, status: "running", activeTurnId: turnId };
 
         const response = state.queuedResponses.shift();
         if (!response) {
@@ -376,6 +379,9 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           turns: [...state.snapshot.turns, nextTurn],
         };
 
+        if (response.completeTurn === false) {
+          return { threadId: state.snapshot.threadId, turnId } satisfies ProviderTurnStartResult;
+        }
         if (deferredTurnCompletedEvents.length === 0) {
           yield* emit({
             type: "turn.completed",
@@ -394,6 +400,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
           }
         }
 
+        state.session = { ...state.session, status: "ready", activeTurnId: undefined };
         return {
           threadId: state.snapshot.threadId,
           turnId,

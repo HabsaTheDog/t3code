@@ -101,7 +101,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateWorkflow",
     value: unknown,
   ): Effect.Effect<string, TextGenerationError> =>
     encodeJsonString(value).pipe(
@@ -120,7 +121,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateWorkflow",
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -162,7 +164,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateWorkflow";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -196,6 +199,23 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           `model_reasoning_effort="${reasoningEffort}"`,
           ...(getModelSelectionBooleanOptionValue(modelSelection, "fastMode") === true
             ? ["--config", `service_tier="fast"`]
+            : []),
+          ...(operation === "generateWorkflow"
+            ? [
+                "--config",
+                'web_search="disabled"',
+                "--config",
+                "mcp_servers={}",
+                "--config",
+                "features.shell_tool=false",
+                "--config",
+                "features.multi_agent=false",
+                // Leaf workers receive their complete instructions in the prompt.
+                // Avoid repository instruction discovery through the filesystem sandbox.
+                "--config",
+                "project_doc_max_bytes=0",
+                "--json",
+              ]
             : []),
           "--output-schema",
           schemaPath,
@@ -238,6 +258,26 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         { concurrency: "unbounded" },
       );
 
+      if (operation === "generateWorkflow") {
+        const usedTools = stdout.split("\n").some((line) => {
+          try {
+            const event = JSON.parse(line) as { item?: { type?: string } };
+            return (
+              event.item?.type !== undefined &&
+              // CLI warning items are diagnostics, not tool executions. A failed
+              // turn still fails below through its non-zero process exit.
+              !["agent_message", "reasoning", "error"].includes(event.item.type)
+            );
+          } catch {
+            return false;
+          }
+        });
+        if (usedTools)
+          return yield* new TextGenerationError({
+            operation,
+            detail: "Workflow worker returned tool calls instead of a pure transformation.",
+          });
+      }
       if (exitCode !== 0) {
         const stderrDetail = stderr.trim();
         const stdoutDetail = stdout.trim();
@@ -262,7 +302,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     return yield* Effect.gen(function* () {
       yield* runCodexCommand().pipe(
         Effect.scoped,
-        Effect.timeoutOption(CODEX_TIMEOUT_MS),
+        Effect.timeoutOption(operation === "generateWorkflow" ? 10 * 60_000 : CODEX_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -403,7 +443,50 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateWorkflow: NonNullable<TextGenerationShape["generateWorkflow"]> = (input) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "study-buddy-codex-worker-" })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateWorkflow",
+                detail: "Could not prepare worker workspace.",
+                cause,
+              }),
+          ),
+        );
+      const imagePaths: string[] = [];
+      for (const [index, image] of (input.images ?? []).entries()) {
+        const file = path.join(
+          cwd,
+          `evidence-${index}.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png"}`,
+        );
+        yield* fileSystem.writeFile(file, Buffer.from(image.data, "base64")).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation: "generateWorkflow",
+                detail: "Could not prepare worker evidence.",
+                cause,
+              }),
+          ),
+        );
+        imagePaths.push(file);
+      }
+      return yield* runCodexJson({
+        operation: "generateWorkflow",
+        cwd,
+        prompt: input.prompt,
+        modelSelection: input.modelSelection,
+        imagePaths,
+        outputSchemaJson: Schema.Struct({ result: Schema.String }),
+      });
+    }).pipe(Effect.scoped);
+
   return {
+    generateWorkflow,
     generateCommitMessage,
     generatePrContent,
     generateBranchName,

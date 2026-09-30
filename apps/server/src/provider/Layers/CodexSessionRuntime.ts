@@ -304,6 +304,7 @@ function buildThreadStartParams(input: {
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly studyBuddyActive: boolean;
+  readonly workflowEnvironment?: NodeJS.ProcessEnv;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -317,6 +318,14 @@ function buildThreadStartParams(input: {
         ? {
             "shell_environment_policy.set.STUDY_BUDDY_THREAD_ID": input.threadId,
             "shell_environment_policy.set.STUDY_BUDDY_WORKSPACE": input.cwd,
+            ...Object.fromEntries(
+              Object.entries(input.workflowEnvironment ?? {})
+                .filter(
+                  ([key, value]) =>
+                    key.startsWith("STUDY_BUDDY_MODEL_BRIDGE_") && value !== undefined,
+                )
+                .map(([key, value]) => [`shell_environment_policy.set.${key}`, value]),
+            ),
           }
         : {}),
       default_permissions: runtimeModeToPermissionProfile(
@@ -486,6 +495,7 @@ export const openCodexThread = (input: {
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
   readonly studyBuddyActive: boolean;
+  readonly workflowEnvironment?: NodeJS.ProcessEnv;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -495,6 +505,7 @@ export const openCodexThread = (input: {
     model: input.requestedModel,
     serviceTier: input.serviceTier,
     studyBuddyActive: input.studyBuddyActive,
+    ...(input.workflowEnvironment ? { workflowEnvironment: input.workflowEnvironment } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -1274,6 +1285,7 @@ export const makeCodexSessionRuntime = (
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
         studyBuddyActive,
+        workflowEnvironment: baseEnvironment,
       });
 
       const providerThreadId = opened.thread.id;

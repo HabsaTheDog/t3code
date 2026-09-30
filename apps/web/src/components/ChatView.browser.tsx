@@ -24,6 +24,10 @@ import {
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
+import {
+  duplicateStudyBuddyProfile,
+  STUDY_BUDDY_BUILT_IN_PROFILES,
+} from "@t3tools/shared/studyBuddyProfiles";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -75,7 +79,7 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-vi.mock("../lib/vcsStatusState", () => {
+vi.mock("~/lib/vcsStatusState", () => {
   const status = {
     data: {
       isRepo: true,
@@ -226,7 +230,14 @@ function createBaseServerConfig(): ServerConfig {
         status: "ready",
         auth: { status: "authenticated" },
         checkedAt: NOW_ISO,
-        models: [],
+        models: [
+          {
+            slug: "gpt-5.6-terra",
+            name: "Terra",
+            isCustom: false,
+            capabilities: createModelCapabilities({ optionDescriptors: [] }),
+          },
+        ],
         slashCommands: [],
         skills: [],
       },
@@ -3032,7 +3043,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("keeps custom provider instance ids when bootstrapping a local draft thread", async () => {
     setDraftThreadWithoutWorktree();
     const openRouterInstanceId = ProviderInstanceId.make("claude_openrouter");
-    const openRouterSelection = createModelSelection(openRouterInstanceId, "openai/gpt-5.5");
+    const profile = duplicateStudyBuddyProfile(
+      STUDY_BUDDY_BUILT_IN_PROFILES[1]!,
+      "custom-openrouter",
+    );
+    const openRouterSelection = createModelSelection(openRouterInstanceId, "openai/gpt-5.5", [
+      { id: "studyBuddyExecutionProfileId", value: profile.id },
+    ]);
     useComposerDraftStore.getState().setModelSelection(THREAD_REF, openRouterSelection);
 
     const mounted = await mountChatView({
@@ -3087,6 +3104,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
           settings: {
             ...nextFixture.serverConfig.settings,
+            studyBuddyCustomExecutionProfiles: [
+              {
+                ...profile,
+                roles: {
+                  ...profile.roles,
+                  coordinator: {
+                    ...profile.roles.coordinator,
+                    instanceId: openRouterInstanceId,
+                    model: "openai/gpt-5.5",
+                  },
+                },
+              },
+            ],
             providerInstances: {
               ...nextFixture.serverConfig.settings.providerInstances,
               [openRouterInstanceId]: {

@@ -31,12 +31,14 @@ function makeFakeCodexBinary(
     output: string;
     exitCode?: number;
     stderr?: string;
+    stdout?: string;
     requireImage?: boolean;
     requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    requirePromptOnlyPermissions?: boolean;
   },
 ) {
   return Effect.gen(function* () {
@@ -54,6 +56,8 @@ function makeFakeCodexBinary(
         'seen_image="0"',
         'seen_fast_service_tier="0"',
         'seen_reasoning_effort=""',
+        'seen_permissions="0"',
+        'seen_project_docs_disabled="0"',
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
         "    shift",
@@ -69,6 +73,8 @@ function makeFakeCodexBinary(
         '      seen_fast_service_tier="1"',
         "    fi",
         '    case "$1" in',
+        '      default_permissions=\\"study_buddy_analysis\\") seen_permissions="1" ;;',
+        '      project_doc_max_bytes=0) seen_project_docs_disabled="1" ;;',
         "      model_reasoning_effort=*)",
         '        seen_reasoning_effort="$1"',
         "        ;;",
@@ -85,6 +91,14 @@ function makeFakeCodexBinary(
         "  shift",
         "done",
         'stdin_content="$(cat)"',
+        ...(input.requirePromptOnlyPermissions
+          ? [
+              'if [ "$seen_permissions" != "1" ] || [ "$seen_project_docs_disabled" != "1" ]; then',
+              '  printf "%s\\n" "worker must retain analysis permissions and disable project instructions" >&2',
+              "  exit 8",
+              "fi",
+            ]
+          : []),
         ...(input.requireImage
           ? [
               'if [ "$seen_image" != "1" ]; then',
@@ -141,6 +155,9 @@ function makeFakeCodexBinary(
               `printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`,
             ]
           : []),
+        ...(input.stdout !== undefined
+          ? ["cat <<'__WORKER_EVENTS__'", input.stdout, "__WORKER_EVENTS__"]
+          : []),
         'if [ -n "$output_path" ]; then',
         "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
         input.output,
@@ -160,12 +177,14 @@ function withFakeCodexEnv<A, E, R>(
     output: string;
     exitCode?: number;
     stderr?: string;
+    stdout?: string;
     requireImage?: boolean;
     requireFastServiceTier?: boolean;
     requireReasoningEffort?: string;
     forbidReasoningEffort?: boolean;
     stdinMustContain?: string;
     stdinMustNotContain?: string;
+    requirePromptOnlyPermissions?: boolean;
   },
   effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
 ) {
@@ -597,6 +616,76 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
               "Codex CLI command failed: codex execution failed",
             );
           }
+        }),
+    ),
+  );
+  it.effect(
+    "runs an isolated mixed-profile Codex worker with assigned effort and image evidence",
+    () =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ result: "grounded output" }),
+          requireImage: true,
+          requireReasoningEffort: "high",
+          stdinMustContain: "Exact evidence α",
+          requirePromptOnlyPermissions: true,
+          stdout: JSON.stringify({
+            type: "item.completed",
+            item: { type: "error", message: "Under-development features enabled" },
+          }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration.generateWorkflow!({
+              prompt: "Exact evidence α",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex-work"),
+                "gpt-worker",
+                [{ id: "reasoningEffort", value: "high" }],
+              ),
+              images: [{ mimeType: "image/png", data: "aGVsbG8=" }],
+            });
+            expect(result).toEqual({ result: "grounded output" });
+          }),
+      ),
+  );
+  it.effect(
+    "rejects a failed mixed Codex turn even when it emits a diagnostic and valid JSON",
+    () =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ result: "partial output" }),
+          stdout: JSON.stringify({ type: "item.completed", item: { type: "error" } }),
+          stderr: "Provider usage limit reached",
+          exitCode: 1,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration.generateWorkflow!({
+              prompt: "Evidence only",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }).pipe(Effect.result);
+            expect(Result.isFailure(result)).toBe(true);
+            if (Result.isFailure(result))
+              expect(result.failure.message).toContain("Provider usage limit reached");
+          }),
+      ),
+  );
+  it.effect("rejects a mixed Codex worker that emits tools even when its final JSON is valid", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ result: "untrusted output" }),
+        stdout: JSON.stringify({ type: "item.completed", item: { type: "command_execution" } }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateWorkflow!({
+            prompt: "Evidence only",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          }).pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result))
+            expect(result.failure.message).toContain("pure transformation");
         }),
     ),
   );

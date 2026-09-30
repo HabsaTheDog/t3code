@@ -3,16 +3,19 @@ import type {
   ProviderOptionSelection,
   ResolvedKeybindingsConfig,
   StudyBuddyExecutionProfileDefinition,
+  ServerProvider,
 } from "@t3tools/contracts";
 import {
   allStudyBuddyProfiles,
-  adaptStudyBuddyProfileToSelection,
-  STUDY_BUDDY_BUILT_IN_PROFILES,
+  availableStudyBuddyProviders,
+  resolveStudyBuddyProfile,
+  studyBuddyConnectionLabel,
+  unavailableStudyBuddyProfileConnections,
   studyBuddyCoordinatorOptions,
 } from "@t3tools/shared/studyBuddyProfiles";
 import { memo, useCallback, useEffect, useMemo } from "react";
 
-import { useSettings } from "../../hooks/useSettings";
+import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -40,6 +43,8 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
   activeProfile: StudyBuddyExecutionProfileDefinition;
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
+  providers: ReadonlyArray<ServerProvider>;
+  lockedInstanceIds?: ReadonlyArray<ProviderInstanceId>;
   onOpenChange: (open: boolean) => void;
   onCoordinatorChange: (
     instanceId: ProviderInstanceId,
@@ -48,9 +53,13 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
   ) => void;
 }) {
   const settings = useSettings();
+  const provider = props.providers.find(
+    (entry) => entry.instanceId === props.activeProfile.roles.coordinator.instanceId,
+  );
+  const connected = availableStudyBuddyProviders(props.providers);
   const allProfiles = useMemo(
-    () => allStudyBuddyProfiles(settings.studyBuddyCustomExecutionProfiles),
-    [settings.studyBuddyCustomExecutionProfiles],
+    () => allStudyBuddyProfiles(settings.studyBuddyCustomExecutionProfiles, provider),
+    [settings.studyBuddyCustomExecutionProfiles, provider],
   );
   const customProfiles = useMemo(
     () => allProfiles.filter((profile) => profile.kind === "custom"),
@@ -79,11 +88,13 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       if (!profileId) return;
       const candidate = allProfiles.find((candidate) => candidate.id === profileId);
       if (!candidate) return;
-      const profile = adaptStudyBuddyProfileToSelection(
-        candidate,
-        props.activeProfile.roles.coordinator,
-        settings.providerInstances[props.activeProfile.roles.coordinator.instanceId]?.driver,
-      );
+      const profile = candidate;
+      if (
+        props.lockedInstanceIds &&
+        !props.lockedInstanceIds.includes(profile.roles.coordinator.instanceId)
+      )
+        return;
+      if (unavailableStudyBuddyProfileConnections(profile, props.providers).length > 0) return;
       const telemetryProfile = profile.kind === "custom" ? "custom" : profile.id;
       void telemetry.capture({
         event: "execution_profile.selected",
@@ -101,7 +112,11 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
           surface: "composer",
         }),
       });
-      const options = studyBuddyCoordinatorOptions(profile);
+      const options = studyBuddyCoordinatorOptions(
+        profile,
+        props.providers.find((entry) => entry.instanceId === profile.roles.coordinator.instanceId)
+          ?.driver,
+      );
       props.onCoordinatorChange(
         profile.roles.coordinator.instanceId,
         profile.roles.coordinator.model,
@@ -114,7 +129,9 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       props.activeProfile,
       props.onCoordinatorChange,
       props.onOpenChange,
-      settings.providerInstances,
+      connected,
+      props.providers,
+      props.lockedInstanceIds,
     ],
   );
 
@@ -189,6 +206,13 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
                 <ProfileItem
                   key={profile.id}
                   profile={profile}
+                  disabled={
+                    Boolean(
+                      props.lockedInstanceIds &&
+                      !props.lockedInstanceIds.includes(profile.roles.coordinator.instanceId),
+                    ) ||
+                    unavailableStudyBuddyProfileConnections(profile, props.providers).length > 0
+                  }
                   jumpLabel={jumpLabelByProfileId.get(profile.id) ?? null}
                 />
               ))}
@@ -198,13 +222,15 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
         ) : null}
         <SelectGroup>
           <SelectGroupLabel>Built in</SelectGroupLabel>
-          {STUDY_BUDDY_BUILT_IN_PROFILES.map((profile) => (
-            <ProfileItem
-              key={profile.id}
-              profile={profile}
-              jumpLabel={jumpLabelByProfileId.get(profile.id) ?? null}
-            />
-          ))}
+          {allProfiles
+            .filter((profile) => profile.kind === "built-in")
+            .map((profile) => (
+              <ProfileItem
+                key={profile.id}
+                profile={profile}
+                jumpLabel={jumpLabelByProfileId.get(profile.id) ?? null}
+              />
+            ))}
         </SelectGroup>
       </SelectPopup>
     </Select>
@@ -214,9 +240,15 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
 function ProfileItem(props: {
   profile: StudyBuddyExecutionProfileDefinition;
   jumpLabel: string | null;
+  disabled?: boolean;
 }) {
   return (
-    <SelectItem value={props.profile.id} className="min-w-60">
+    <SelectItem
+      value={props.profile.id}
+      disabled={props.disabled}
+      className="min-w-60"
+      title={props.profile.description}
+    >
       <span className="flex min-w-0 items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-2">
           <StudyBuddyProfileIconView
@@ -228,5 +260,81 @@ function ProfileItem(props: {
         {props.jumpLabel ? <Kbd className="shrink-0">{props.jumpLabel}</Kbd> : null}
       </span>
     </SelectItem>
+  );
+}
+
+/** Connections are an account choice; models stay inside execution profiles. */
+export function StudyBuddyConnectionPicker(props: {
+  activeProfile: StudyBuddyExecutionProfileDefinition;
+  providers: ReadonlyArray<ServerProvider>;
+  lockedInstanceIds?: ReadonlyArray<ProviderInstanceId>;
+  onCoordinatorChange: (
+    instanceId: ProviderInstanceId,
+    model: string,
+    options: ReadonlyArray<ProviderOptionSelection>,
+  ) => void;
+}) {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const connected = availableStudyBuddyProviders(props.providers);
+  if (connected.length <= 1) return null;
+  const select = (id: string | null) => {
+    const provider = connected.find((entry) => entry.instanceId === id);
+    if (!provider) return;
+    const active = props.activeProfile;
+    const requested = resolveStudyBuddyProfile({
+      activeProfileId:
+        settings.studyBuddyProviderProfileIds[provider.instanceId] ??
+        (active.kind === "built-in" ? active.id : "balanced"),
+      customProfiles: settings.studyBuddyCustomExecutionProfiles,
+      provider,
+    });
+    const profile =
+      requested.roles.coordinator.instanceId === provider.instanceId
+        ? requested
+        : resolveStudyBuddyProfile({ activeProfileId: "balanced", customProfiles: [], provider });
+    props.onCoordinatorChange(
+      profile.roles.coordinator.instanceId,
+      profile.roles.coordinator.model,
+      studyBuddyCoordinatorOptions(profile, provider.driver),
+    );
+    updateSettings({ studyBuddyDefaultProviderInstanceId: provider.instanceId });
+  };
+  return (
+    <Select value={props.activeProfile.roles.coordinator.instanceId} onValueChange={select}>
+      <SelectTrigger
+        size="sm"
+        variant="ghost"
+        className="w-auto max-w-44"
+        aria-label="AI connection"
+        data-chat-provider-picker="true"
+      >
+        <SelectValue>
+          {props.providers.find(
+            (provider) => provider.instanceId === props.activeProfile.roles.coordinator.instanceId,
+          )
+            ? studyBuddyConnectionLabel(
+                props.providers.find(
+                  (provider) =>
+                    provider.instanceId === props.activeProfile.roles.coordinator.instanceId,
+                )!,
+              )
+            : "Choose connection"}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup side="top" alignItemWithTrigger={false} matchTriggerWidth={false}>
+        {connected.map((provider) => (
+          <SelectItem
+            key={provider.instanceId}
+            value={provider.instanceId}
+            disabled={Boolean(
+              props.lockedInstanceIds && !props.lockedInstanceIds.includes(provider.instanceId),
+            )}
+          >
+            {studyBuddyConnectionLabel(provider)}
+          </SelectItem>
+        ))}
+      </SelectPopup>
+    </Select>
   );
 }

@@ -6,6 +6,7 @@ import type {
   StudyBuddyProfileRoles,
   StudyBuddyReasoningEffort,
   StudyBuddyWorkerRole,
+  ServerProvider,
 } from "@t3tools/contracts";
 import { ProviderInstanceId, STUDY_BUDDY_MAX_CUSTOM_PROFILES } from "@t3tools/contracts";
 import {
@@ -14,7 +15,10 @@ import {
   duplicateStudyBuddyProfile,
   resolveStudyBuddyProfileFromSettings,
   resolveStudyBuddyTask,
-  STUDY_BUDDY_BUILT_IN_PROFILES,
+  resolveStudyBuddyProfile,
+  studyBuddyProviderLabel,
+  studyBuddyConnectionLabel,
+  isStudyBuddyMixedProfile,
 } from "@t3tools/shared/studyBuddyProfiles";
 import {
   BotIcon,
@@ -26,7 +30,7 @@ import {
   SaveIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useServerProviders } from "../../rpc/serverState";
@@ -90,30 +94,69 @@ export function ExecutionProfilesSettingsPanel() {
   const { updateSettings } = useUpdateSettings();
   const serverProviders = useServerProviders();
   const resolvedDefault = resolveStudyBuddyProfileFromSettings(settings);
-  const [selectedId, setSelectedId] = useState(resolvedDefault.id);
+  const [selectedProviderId, setSelectedProviderId] = useState(
+    settings.studyBuddyDefaultProviderInstanceId,
+  );
+  const providers = serverProviders.filter((provider) =>
+    ["codex", "antigravity", "claudeAgent"].includes(provider.driver),
+  );
+  const selectedProvider =
+    providers.find((provider) => provider.instanceId === selectedProviderId) ?? providers[0];
+  const requestedDefault = resolveStudyBuddyProfile({
+    activeProfileId:
+      settings.studyBuddyProviderProfileIds[selectedProvider?.instanceId ?? selectedProviderId] ??
+      resolvedDefault.id,
+    customProfiles: settings.studyBuddyCustomExecutionProfiles,
+    ...(selectedProvider ? { provider: selectedProvider } : {}),
+  });
+  const providerDefault =
+    requestedDefault.roles.coordinator.instanceId === selectedProviderId
+      ? requestedDefault
+      : resolveStudyBuddyProfile({
+          activeProfileId: "balanced",
+          customProfiles: [],
+          ...(selectedProvider ? { provider: selectedProvider } : {}),
+        });
+  const [selectedId, setSelectedId] = useState(providerDefault.id);
   const [draftProfile, setDraftProfile] = useState<StudyBuddyCustomExecutionProfile | null>(null);
-  const profiles = allStudyBuddyProfiles(settings.studyBuddyCustomExecutionProfiles);
+  const profiles = allStudyBuddyProfiles(
+    settings.studyBuddyCustomExecutionProfiles,
+    selectedProvider,
+  );
   const selectedProfile =
     (draftProfile?.id === selectedId ? draftProfile : null) ??
     profiles.find((profile) => profile.id === selectedId) ??
     resolvedDefault;
   const customCount = settings.studyBuddyCustomExecutionProfiles.length;
-  const knownModels = useMemo(
-    () => [
-      ...new Set(
-        serverProviders
-          .filter((provider) => provider.driver === "codex")
-          .flatMap((provider) => provider.models.map((model) => model.slug)),
-      ),
-    ],
-    [serverProviders],
-  );
 
   const setDefault = (profile: StudyBuddyExecutionProfileDefinition) => {
     updateSettings({
       studyBuddyExecutionProfileId: profile.id,
       studyBuddyExecutionProfile: baseExecutionProfile(profile),
+      studyBuddyDefaultProviderInstanceId: profile.roles.coordinator.instanceId,
+      studyBuddyProviderProfileIds: {
+        ...Object.fromEntries(
+          providers.map((provider) => {
+            const previous = resolveStudyBuddyProfile({
+              activeProfileId: settings.studyBuddyExecutionProfileId,
+              legacyProfile: settings.studyBuddyExecutionProfile,
+              customProfiles: settings.studyBuddyCustomExecutionProfiles,
+              provider,
+            });
+            return [
+              provider.instanceId,
+              settings.studyBuddyProviderProfileIds[provider.instanceId] ??
+                (previous.roles.coordinator.instanceId === provider.instanceId
+                  ? previous.id
+                  : "balanced"),
+            ];
+          }),
+        ),
+        ...settings.studyBuddyProviderProfileIds,
+        [profile.roles.coordinator.instanceId]: profile.id,
+      },
     });
+    setSelectedProviderId(profile.roles.coordinator.instanceId);
   };
   const createBlankProfile = () => {
     if (customCount >= STUDY_BUDDY_MAX_CUSTOM_PROFILES) return;
@@ -131,7 +174,7 @@ export function ExecutionProfilesSettingsPanel() {
       icon: "book-open",
       roles: {
         coordinator: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: selectedProvider?.instanceId ?? ProviderInstanceId.make("codex"),
           model: "",
           reasoningEffort: "medium",
         },
@@ -183,6 +226,12 @@ export function ExecutionProfilesSettingsPanel() {
     const wasDefault = resolvedDefault.id === profile.id;
     updateSettings({
       studyBuddyCustomExecutionProfiles: nextProfiles,
+      studyBuddyProviderProfileIds: Object.fromEntries(
+        Object.entries(settings.studyBuddyProviderProfileIds).map(([id, value]) => [
+          id,
+          value === profile.id ? "balanced" : value,
+        ]),
+      ),
       ...(wasDefault
         ? { studyBuddyExecutionProfileId: "balanced", studyBuddyExecutionProfile: "balanced" }
         : {}),
@@ -199,8 +248,8 @@ export function ExecutionProfilesSettingsPanel() {
             <h1 className="text-lg font-semibold tracking-tight">Execution profiles</h1>
           </div>
           <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-            Set the profile new chats start with. Existing chats keep their own profile. Built-ins
-            are read-only; duplicate one to customize it.
+            Each connection has Fast, Balanced, and Quality profiles. Duplicate a profile to
+            customize it, or combine connections for individual roles and tasks.
           </p>
         </div>
         <Button
@@ -212,6 +261,41 @@ export function ExecutionProfilesSettingsPanel() {
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3">
+        <Select
+          value={selectedProvider?.instanceId ?? selectedProviderId}
+          onValueChange={(id) => {
+            if (!id) return;
+            const provider = providers.find((entry) => entry.instanceId === id);
+            setSelectedProviderId(ProviderInstanceId.make(id));
+            setSelectedId(
+              resolveStudyBuddyProfile({
+                activeProfileId: settings.studyBuddyProviderProfileIds[id] ?? "balanced",
+                customProfiles: settings.studyBuddyCustomExecutionProfiles,
+                ...(provider ? { provider } : {}),
+              }).id,
+            );
+          }}
+        >
+          <SelectTrigger className="w-auto min-w-44" aria-label="Profile connection">
+            <SelectValue>
+              {selectedProvider ? studyBuddyConnectionLabel(selectedProvider) : "Choose connection"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {providers.map((provider) => (
+              <SelectItem key={provider.instanceId} value={provider.instanceId}>
+                {studyBuddyConnectionLabel(provider)}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <span className="text-xs text-muted-foreground">
+          {isStudyBuddyMixedProfile(selectedProfile)
+            ? "Mixed connections"
+            : "Profiles for this connection"}
+        </span>
+      </div>
       <div className="grid min-h-0 gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
         <aside className="self-start rounded-2xl border bg-card p-2 shadow-sm/4">
           {settings.studyBuddyCustomExecutionProfiles.length > 0 || draftProfile ? (
@@ -224,15 +308,17 @@ export function ExecutionProfilesSettingsPanel() {
                   onClick={() => setSelectedId(draftProfile.id)}
                 />
               ) : null}
-              {settings.studyBuddyCustomExecutionProfiles.map((profile) => (
-                <ProfileButton
-                  key={profile.id}
-                  profile={profile}
-                  isDefault={profile.id === resolvedDefault.id}
-                  selected={profile.id === selectedProfile.id}
-                  onClick={() => setSelectedId(profile.id)}
-                />
-              ))}
+              {profiles
+                .filter((profile) => profile.kind === "custom")
+                .map((profile) => (
+                  <ProfileButton
+                    key={profile.id}
+                    profile={profile}
+                    isDefault={profile.id === providerDefault.id}
+                    selected={profile.id === selectedProfile.id}
+                    onClick={() => setSelectedId(profile.id)}
+                  />
+                ))}
             </ProfileGroup>
           ) : (
             <div className="px-2 py-3 text-xs text-muted-foreground">
@@ -241,22 +327,24 @@ export function ExecutionProfilesSettingsPanel() {
           )}
           <div className="my-2 h-px bg-border/70" />
           <ProfileGroup label="Built in">
-            {STUDY_BUDDY_BUILT_IN_PROFILES.map((profile) => (
-              <ProfileButton
-                key={profile.id}
-                profile={profile}
-                isDefault={profile.id === resolvedDefault.id}
-                selected={profile.id === selectedProfile.id}
-                onClick={() => setSelectedId(profile.id)}
-              />
-            ))}
+            {profiles
+              .filter((profile) => profile.kind === "built-in")
+              .map((profile) => (
+                <ProfileButton
+                  key={profile.id}
+                  profile={profile}
+                  isDefault={profile.id === providerDefault.id}
+                  selected={profile.id === selectedProfile.id}
+                  onClick={() => setSelectedId(profile.id)}
+                />
+              ))}
           </ProfileGroup>
         </aside>
 
         <ProfileEditor
           profile={selectedProfile}
-          isDefault={selectedProfile.id === resolvedDefault.id}
-          knownModels={knownModels}
+          isDefault={selectedProfile.id === providerDefault.id}
+          providers={providers}
           onSetDefault={() => setDefault(selectedProfile)}
           onDuplicate={() => duplicateProfile(selectedProfile)}
           {...(selectedProfile.kind === "custom"
@@ -332,7 +420,7 @@ function normalizeProfileName(value: string): string {
 function ProfileEditor(props: {
   profile: StudyBuddyExecutionProfileDefinition;
   isDefault: boolean;
-  knownModels: ReadonlyArray<string>;
+  providers: ReadonlyArray<ServerProvider>;
   duplicateDisabled: boolean;
   onSetDefault: () => void;
   onDuplicate: () => void;
@@ -347,8 +435,29 @@ function ProfileEditor(props: {
   const changeProfile = (patch: Partial<StudyBuddyExecutionProfileDefinition>) =>
     props.onChange?.({ ...props.profile, ...patch });
   const changeRoles = (roles: StudyBuddyProfileRoles) => changeProfile({ roles });
-  const roleModels = (current: string) =>
-    [...new Set([current, ...props.knownModels])].filter((model) => model.length > 0);
+  const coordinatorId = props.profile.roles.coordinator.instanceId;
+  const changeCoordinator = (instanceId: ProviderInstanceId, model: string) => {
+    // Freeze inherited connections before changing the coordinator, so an old
+    // GPT role cannot accidentally become a Gemini assignment.
+    const bind = (role: StudyBuddyWorkerRole) => ({
+      ...role,
+      instanceId: role.instanceId ?? coordinatorId,
+      retryInstanceId: role.retryInstanceId ?? role.instanceId ?? coordinatorId,
+    });
+    changeProfile({
+      roles: {
+        coordinator: { ...props.profile.roles.coordinator, instanceId, model, fastMode: false },
+        contentAnalyzer: bind(props.profile.roles.contentAnalyzer),
+        quizSolver: bind(props.profile.roles.quizSolver),
+        artifactPlanner: bind(props.profile.roles.artifactPlanner),
+        artifactBuilder: bind(props.profile.roles.artifactBuilder),
+        qualityReviewer: bind(props.profile.roles.qualityReviewer),
+      },
+      taskOverrides: Object.fromEntries(
+        Object.entries(props.profile.taskOverrides ?? {}).map(([key, value]) => [key, bind(value)]),
+      ),
+    });
+  };
 
   return (
     <section className="@container/profile overflow-hidden rounded-2xl border bg-card shadow-sm/4">
@@ -490,7 +599,10 @@ function ProfileEditor(props: {
                 <ModelControl
                   editable={Boolean(editable)}
                   value={props.profile.roles.coordinator.model}
-                  models={roleModels(props.profile.roles.coordinator.model)}
+                  ariaLabel="Coordinator model"
+                  instanceId={coordinatorId}
+                  providers={props.providers}
+                  onInstanceChange={changeCoordinator}
                   onChange={(model) =>
                     changeRoles({
                       ...props.profile.roles,
@@ -529,7 +641,21 @@ function ProfileEditor(props: {
                     <ModelControl
                       editable={Boolean(editable)}
                       value={value.model}
-                      models={roleModels(value.model)}
+                      ariaLabel={`${role.label} primary model`}
+                      instanceId={value.instanceId ?? coordinatorId}
+                      providers={props.providers}
+                      onInstanceChange={(instanceId, model) =>
+                        changeRoles({
+                          ...props.profile.roles,
+                          [role.key]: {
+                            ...value,
+                            instanceId,
+                            model,
+                            retryInstanceId:
+                              value.retryInstanceId ?? value.instanceId ?? coordinatorId,
+                          },
+                        })
+                      }
                       onChange={(model) =>
                         changeRoles({
                           ...props.profile.roles,
@@ -558,7 +684,15 @@ function ProfileEditor(props: {
                     <ModelControl
                       editable={Boolean(editable)}
                       value={value.retryModel}
-                      models={roleModels(value.retryModel)}
+                      ariaLabel={`${role.label} fallback model`}
+                      instanceId={value.retryInstanceId ?? value.instanceId ?? coordinatorId}
+                      providers={props.providers}
+                      onInstanceChange={(retryInstanceId, retryModel) =>
+                        changeRoles({
+                          ...props.profile.roles,
+                          [role.key]: { ...value, retryInstanceId, retryModel },
+                        })
+                      }
                       onChange={(retryModel) =>
                         changeRoles({
                           ...props.profile.roles,
@@ -641,7 +775,8 @@ function ProfileEditor(props: {
                         policy={policy}
                         fallback={false}
                         editable={Boolean(editable && hasOverride)}
-                        knownModels={props.knownModels}
+                        providers={props.providers}
+                        coordinatorId={coordinatorId}
                         onChange={setPolicy}
                       />
                     }
@@ -650,7 +785,8 @@ function ProfileEditor(props: {
                         policy={policy}
                         fallback
                         editable={Boolean(editable && hasOverride)}
-                        knownModels={props.knownModels}
+                        providers={props.providers}
+                        coordinatorId={coordinatorId}
                         onChange={setPolicy}
                       />
                     }
@@ -666,10 +802,11 @@ function ProfileEditor(props: {
 }
 
 function TaskModelControls(props: {
+  coordinatorId: ProviderInstanceId;
   policy: StudyBuddyWorkerRole;
   fallback: boolean;
   editable: boolean;
-  knownModels: ReadonlyArray<string>;
+  providers: ReadonlyArray<ServerProvider>;
   onChange: (policy: StudyBuddyWorkerRole) => void;
 }) {
   const modelKey = props.fallback ? "retryModel" : "model";
@@ -681,7 +818,27 @@ function TaskModelControls(props: {
           editable={props.editable}
           ariaLabel={props.fallback ? "Fallback model" : "Primary model"}
           value={props.policy[modelKey]}
-          models={[...new Set([props.policy[modelKey], ...props.knownModels])].filter(Boolean)}
+          instanceId={
+            props.fallback
+              ? (props.policy.retryInstanceId ?? props.policy.instanceId ?? props.coordinatorId)
+              : (props.policy.instanceId ?? props.coordinatorId)
+          }
+          providers={props.providers}
+          onInstanceChange={(id, model) =>
+            props.onChange(
+              props.fallback
+                ? { ...props.policy, retryInstanceId: id, retryModel: model }
+                : {
+                    ...props.policy,
+                    instanceId: id,
+                    model,
+                    retryInstanceId:
+                      props.policy.retryInstanceId ??
+                      props.policy.instanceId ??
+                      props.coordinatorId,
+                  },
+            )
+          }
           onChange={(model) => props.onChange({ ...props.policy, [modelKey]: model })}
         />
       </Field>
@@ -776,24 +933,66 @@ function ModelControl(props: {
   ariaLabel?: string;
   editable: boolean;
   value: string;
-  models: ReadonlyArray<string>;
+  instanceId: ProviderInstanceId;
+  providers: ReadonlyArray<ServerProvider>;
+  onInstanceChange: (instanceId: ProviderInstanceId, model: string) => void;
   onChange: (model: string) => void;
 }) {
+  const provider = props.providers.find((entry) => entry.instanceId === props.instanceId);
+  const label = provider
+    ? studyBuddyConnectionLabel(provider)
+    : studyBuddyProviderLabel(props.instanceId);
+  const models = [
+    ...new Set([props.value, ...(provider?.models.map((model) => model.slug) ?? [])]),
+  ].filter(Boolean);
   if (!props.editable)
-    return <ReadOnlyValue value={props.value || "Not selected"} icon={<BotIcon />} />;
+    return (
+      <div className="grid gap-1">
+        <span className="text-[10px] normal-case tracking-normal">{label}</span>
+        <ReadOnlyValue value={props.value || "Not selected"} icon={<BotIcon />} />
+      </div>
+    );
   return (
-    <Select value={props.value || null} onValueChange={(value) => value && props.onChange(value)}>
-      <SelectTrigger size="xs" className="!min-w-0 w-full" aria-label={props.ariaLabel}>
-        <SelectValue placeholder="Choose model" />
-      </SelectTrigger>
-      <SelectPopup>
-        {props.models.map((model) => (
-          <SelectItem key={model} value={model}>
-            {model}
-          </SelectItem>
-        ))}
-      </SelectPopup>
-    </Select>
+    <div className="grid min-w-0 gap-1.5">
+      <Select
+        value={props.instanceId}
+        onValueChange={(id) => {
+          const target = props.providers.find((entry) => entry.instanceId === id);
+          if (target) props.onInstanceChange(target.instanceId, target.models[0]?.slug ?? "");
+        }}
+      >
+        <SelectTrigger
+          size="xs"
+          className="!min-w-0 w-full"
+          aria-label={`${props.ariaLabel ?? "Model"} connection`}
+        >
+          <SelectValue>{label}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup>
+          {props.providers.map((entry) => (
+            <SelectItem
+              key={entry.instanceId}
+              value={entry.instanceId}
+              disabled={entry.models.length === 0}
+            >
+              {studyBuddyConnectionLabel(entry)}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+      <Select value={props.value || null} onValueChange={(value) => value && props.onChange(value)}>
+        <SelectTrigger size="xs" className="!min-w-0 w-full" aria-label={props.ariaLabel}>
+          <SelectValue placeholder="Choose model" />
+        </SelectTrigger>
+        <SelectPopup>
+          {models.map((model) => (
+            <SelectItem key={model} value={model}>
+              {model}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </div>
   );
 }
 

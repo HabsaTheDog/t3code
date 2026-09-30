@@ -3,6 +3,7 @@ import {
   type ModelSelection,
   type ProviderOptionSelection,
   type ServerSettings,
+  type ServerProvider,
   type StudyBuddyBuiltInProfileId,
   type StudyBuddyCustomExecutionProfile,
   type StudyBuddyExecutionProfile,
@@ -113,16 +114,159 @@ export function builtInStudyBuddyProfile(
   return STUDY_BUDDY_BUILT_IN_PROFILES.find((profile) => profile.id === normalized);
 }
 
+export type StudyBuddyProfileProvider = Pick<ServerProvider, "instanceId" | "driver" | "models">;
+
+export function isStudyBuddyMixedProfile(profile: StudyBuddyExecutionProfileDefinition): boolean {
+  const coordinator = profile.roles.coordinator.instanceId;
+  return Object.values(studyBuddyProfileOverrides(profile)).some(
+    (role) =>
+      (role.instanceId ?? coordinator) !== coordinator ||
+      (role.retryInstanceId ?? role.instanceId ?? coordinator) !== coordinator,
+  );
+}
+
+export function availableStudyBuddyProviders(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter(
+    (provider) =>
+      ["codex", "antigravity", "claudeAgent"].includes(provider.driver) &&
+      provider.enabled &&
+      provider.installed &&
+      provider.availability !== "unavailable" &&
+      provider.status !== "error" &&
+      provider.status !== "disabled" &&
+      provider.auth.status === "authenticated" &&
+      provider.models.length > 0,
+  );
+}
+
+export function unavailableStudyBuddyProfileConnections(
+  profile: StudyBuddyExecutionProfileDefinition,
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ProviderInstanceId> {
+  const coordinator = profile.roles.coordinator.instanceId;
+  const required = new Set<ProviderInstanceId>([coordinator]);
+  for (const role of Object.values(studyBuddyProfileOverrides(profile))) {
+    required.add(role.instanceId ?? coordinator);
+    required.add(role.retryInstanceId ?? role.instanceId ?? coordinator);
+  }
+  const available = new Set(
+    availableStudyBuddyProviders(providers).map((provider) => provider.instanceId),
+  );
+  return [...required].filter((id) => !available.has(id));
+}
+
+export function studyBuddyProviderLabel(driver: string): string {
+  return (
+    (
+      { codex: "Codex", antigravity: "Google Gemini", claudeAgent: "Claude" } as Record<
+        string,
+        string
+      >
+    )[driver] ?? driver
+  );
+}
+
+export function studyBuddyConnectionLabel(
+  provider: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
+): string {
+  return provider.instanceId === String(provider.driver)
+    ? studyBuddyProviderLabel(provider.driver)
+    : provider.displayName ||
+        `${studyBuddyProviderLabel(provider.driver)} (${provider.instanceId})`;
+}
+
+/** Provider catalogues own model identifiers, including Gemini's opaque ACP ids. */
+export function studyBuddyBuiltInProfiles(
+  provider: StudyBuddyProfileProvider,
+): ReadonlyArray<StudyBuddyExecutionProfileDefinition> {
+  const models = provider.models.filter((model) => !model.isCustom);
+  const sorted = [...(models.length ? models : provider.models)].sort(
+    (a, b) =>
+      b.name.localeCompare(a.name, "en", { numeric: true }) ||
+      b.slug.localeCompare(a.slug, "en", { numeric: true }),
+  );
+  const pick = (patterns: ReadonlyArray<RegExp>, fallback: string): string => {
+    for (const pattern of patterns) {
+      const match = sorted.find((model) => pattern.test(`${model.name} ${model.slug}`));
+      if (match) return match.slug;
+    }
+    return sorted[0]?.slug ?? fallback;
+  };
+  if (provider.driver === "codex") {
+    return STUDY_BUDDY_BUILT_IN_PROFILES.map((profile) => ({
+      ...profile,
+      roles: {
+        ...profile.roles,
+        coordinator: { ...profile.roles.coordinator, instanceId: provider.instanceId },
+      },
+    }));
+  }
+  const claude = provider.driver === "claudeAgent";
+  const cheap = pick(
+    claude ? [/haiku/i, /sonnet/i] : [/flash.*low/i, /flash.*medium/i, /flash/i],
+    claude ? "claude-haiku-4-5" : "gemini-3.8-flash-low",
+  );
+  const medium = pick(
+    claude ? [/sonnet/i, /haiku/i] : [/flash.*medium/i, /flash.*high/i, /flash/i],
+    claude ? "claude-sonnet-4-6" : "gemini-3.8-flash-medium",
+  );
+  const high = pick(
+    claude ? [/opus/i, /sonnet/i] : [/pro.*high/i, /pro/i, /flash.*high/i, /flash/i],
+    claude ? "claude-opus-4-8" : "gemini-pro-agent",
+  );
+  return STUDY_BUDDY_BUILT_IN_PROFILES.map((base) => {
+    const fast = base.id === "fast";
+    const quality = base.id === "quality";
+    const effort = fast ? "low" : quality ? "high" : "medium";
+    const role = (
+      model: string,
+      retryModel = model === high ? medium : high,
+    ): StudyBuddyWorkerRole => worker(model, effort, retryModel, "high");
+    return {
+      ...base,
+      roles: {
+        coordinator: {
+          instanceId: provider.instanceId,
+          model: fast ? cheap : quality ? high : medium,
+          reasoningEffort: effort,
+        },
+        contentAnalyzer: role(fast ? cheap : quality ? high : medium),
+        quizSolver: role(fast ? cheap : quality ? high : medium),
+        artifactPlanner: role(fast ? cheap : quality ? high : medium),
+        artifactBuilder: role(fast ? cheap : high),
+        qualityReviewer: role(fast ? medium : high),
+      },
+      taskOverrides: {
+        source_search: role(cheap, medium),
+        content_repair: role(quality ? high : medium),
+        artifact_repair: role(high),
+      },
+    };
+  });
+}
+
 export function allStudyBuddyProfiles(
   customProfiles: ReadonlyArray<StudyBuddyCustomExecutionProfile>,
+  provider?: StudyBuddyProfileProvider,
 ): ReadonlyArray<StudyBuddyExecutionProfileDefinition> {
-  return [...customProfiles, ...STUDY_BUDDY_BUILT_IN_PROFILES];
+  return [
+    ...customProfiles.filter(
+      (profile) =>
+        !provider ||
+        profile.roles.coordinator.instanceId === provider.instanceId ||
+        isStudyBuddyMixedProfile(profile),
+    ),
+    ...(provider ? studyBuddyBuiltInProfiles(provider) : STUDY_BUDDY_BUILT_IN_PROFILES),
+  ];
 }
 
 export function resolveStudyBuddyProfile(input: {
   activeProfileId?: string | null;
   legacyProfile?: StudyBuddyExecutionProfile | null;
   customProfiles?: ReadonlyArray<StudyBuddyCustomExecutionProfile>;
+  provider?: StudyBuddyProfileProvider;
 }): StudyBuddyExecutionProfileDefinition {
   const customProfiles = input.customProfiles ?? [];
   // Existing settings files only have the legacy enum. Its decoded default
@@ -136,12 +280,20 @@ export function resolveStudyBuddyProfile(input: {
     input.legacyProfile !== "balanced"
       ? input.legacyProfile
       : (input.activeProfileId ?? input.legacyProfile ?? "balanced");
-  return (
-    customProfiles.find((profile) => profile.id === requestedId) ??
-    builtInStudyBuddyProfile(requestedId) ??
-    builtInStudyBuddyProfile(input.legacyProfile) ??
-    STUDY_BUDDY_BUILT_IN_PROFILES[1]!
-  );
+  const builtIns = input.provider
+    ? studyBuddyBuiltInProfiles(input.provider)
+    : STUDY_BUDDY_BUILT_IN_PROFILES;
+  const custom = customProfiles.find((profile) => profile.id === requestedId);
+  return custom &&
+    (!input.provider ||
+      custom.roles.coordinator.instanceId === input.provider.instanceId ||
+      isStudyBuddyMixedProfile(custom))
+    ? custom
+    : (builtIns.find(
+        (profile) => profile.id === (requestedId === "auto" ? "balanced" : requestedId),
+      ) ??
+        builtIns.find((profile) => profile.id === input.legacyProfile) ??
+        builtIns[1]!);
 }
 
 export function resolveStudyBuddyProfileFromSettings(
@@ -179,36 +331,29 @@ export function resolveStudyBuddyProfileForModelSelection(
     | "studyBuddyExecutionProfileId"
     | "studyBuddyCustomExecutionProfiles"
   > &
-    Partial<Pick<ServerSettings, "providerInstances">>,
+    Partial<Pick<ServerSettings, "providerInstances" | "studyBuddyProviderProfileIds">>,
   modelSelection: ModelSelection | null | undefined,
-  options?: { preferDefault?: boolean },
+  options?: { preferDefault?: boolean; providers?: ReadonlyArray<StudyBuddyProfileProvider> },
 ): StudyBuddyExecutionProfileDefinition {
-  // Built-in execution policies follow the selected provider. A custom policy
-  // remains explicit; native providers must never receive GPT worker models.
   const driver = modelSelection
     ? (settings.providerInstances?.[modelSelection.instanceId]?.driver ?? modelSelection.instanceId)
+    : "codex";
+  const provider = modelSelection
+    ? {
+        instanceId: modelSelection.instanceId,
+        driver: driver as ServerProvider["driver"],
+        models:
+          options?.providers?.find((entry) => entry.instanceId === modelSelection.instanceId)
+            ?.models ?? [],
+      }
     : undefined;
-  if (modelSelection && driver !== "codex") {
-    const base = resolveStudyBuddyProfile({
-      activeProfileId:
-        studyBuddyProfileIdFromModelSelection(modelSelection) ??
-        settings.studyBuddyExecutionProfileId,
-      customProfiles: settings.studyBuddyCustomExecutionProfiles,
-    });
-    return adaptStudyBuddyProfileToSelection(base, modelSelection, driver);
-  }
   const explicitId = studyBuddyProfileIdFromModelSelection(modelSelection);
-  if (explicitId) {
-    return resolveStudyBuddyProfile({
-      activeProfileId: explicitId,
-      customProfiles: settings.studyBuddyCustomExecutionProfiles,
-    });
-  }
-
-  if (modelSelection && !options?.preferDefault) {
+  if (!explicitId && modelSelection && !options?.preferDefault && driver === "codex") {
     const effort = reasoningFromModelSelection(modelSelection);
-    const candidates = allStudyBuddyProfiles(settings.studyBuddyCustomExecutionProfiles);
-    const inferred = candidates.find(
+    const inferred = allStudyBuddyProfiles(
+      settings.studyBuddyCustomExecutionProfiles,
+      provider,
+    ).find(
       (profile) =>
         profile.roles.coordinator.instanceId === modelSelection.instanceId &&
         profile.roles.coordinator.model === modelSelection.model &&
@@ -216,8 +361,14 @@ export function resolveStudyBuddyProfileForModelSelection(
     );
     if (inferred) return inferred;
   }
-
-  return resolveStudyBuddyProfileFromSettings(settings);
+  const defaultId =
+    modelSelection && settings.studyBuddyProviderProfileIds?.[modelSelection.instanceId];
+  return resolveStudyBuddyProfile({
+    activeProfileId: explicitId ?? defaultId ?? settings.studyBuddyExecutionProfileId,
+    ...(!explicitId && !defaultId ? { legacyProfile: settings.studyBuddyExecutionProfile } : {}),
+    customProfiles: settings.studyBuddyCustomExecutionProfiles,
+    ...(provider ? { provider } : {}),
+  });
 }
 
 export function baseExecutionProfile(
@@ -228,9 +379,13 @@ export function baseExecutionProfile(
 
 export function studyBuddyCoordinatorOptions(
   profile: StudyBuddyExecutionProfileDefinition,
+  driver: string = profile.roles.coordinator.instanceId,
 ): ReadonlyArray<ProviderOptionSelection> {
   return [
-    { id: "reasoningEffort", value: profile.roles.coordinator.reasoningEffort },
+    {
+      id: driver === "claudeAgent" ? "effort" : "reasoningEffort",
+      value: profile.roles.coordinator.reasoningEffort,
+    },
     ...(profile.roles.coordinator.fastMode ? [{ id: "fastMode", value: true } as const] : []),
     { id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: profile.id },
   ];
@@ -300,35 +455,17 @@ export function studyBuddyProfileOverrides(
   };
 }
 
-/** Keep all native worker roles on the exact provider/model selected by the user. */
+/** Custom assignments are explicit; switching the connection never rewrites them. */
 export function adaptStudyBuddyProfileToSelection(
   profile: StudyBuddyExecutionProfileDefinition,
   selection: ModelSelection,
   driver: string = selection.instanceId,
+  models: ServerProvider["models"] = [],
 ): StudyBuddyExecutionProfileDefinition {
-  if (driver === "codex") return profile;
-  const adapt = (role: StudyBuddyWorkerRole): StudyBuddyWorkerRole => ({
-    ...role,
-    model: selection.model,
-    retryModel: selection.model,
-  });
-  return {
-    ...profile,
-    roles: {
-      coordinator: {
-        ...profile.roles.coordinator,
-        instanceId: selection.instanceId,
-        model: selection.model,
-        fastMode: false,
-      },
-      contentAnalyzer: adapt(profile.roles.contentAnalyzer),
-      quizSolver: adapt(profile.roles.quizSolver),
-      artifactPlanner: adapt(profile.roles.artifactPlanner),
-      artifactBuilder: adapt(profile.roles.artifactBuilder),
-      qualityReviewer: adapt(profile.roles.qualityReviewer),
-    },
-    taskOverrides: Object.fromEntries(
-      Object.entries(profile.taskOverrides ?? {}).map(([key, role]) => [key, adapt(role)]),
-    ),
-  };
+  if (profile.kind === "custom") return profile;
+  return studyBuddyBuiltInProfiles({
+    instanceId: selection.instanceId,
+    driver: driver as ServerProvider["driver"],
+    models,
+  }).find((candidate) => candidate.id === profile.id)!;
 }

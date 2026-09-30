@@ -28,6 +28,7 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import {
   baseExecutionProfile,
   resolveStudyBuddyProfileForModelSelection,
+  unavailableStudyBuddyProfileConnections,
 } from "@t3tools/shared/studyBuddyProfiles";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
@@ -36,6 +37,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { sanitizeThreadTitle } from "../../textGeneration/TextGenerationUtils.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -644,10 +646,23 @@ const make = Effect.gen(function* () {
           : requestedModelSelection
         : input.modelSelection;
     const settings = yield* serverSettingsService.getSettings;
+    const catalogService = yield* Effect.serviceOption(ProviderRegistry);
+    const providers = Option.isSome(catalogService) ? yield* catalogService.value.getProviders : [];
     const studyBuddyExecutionProfileConfig = resolveStudyBuddyProfileForModelSelection(
       settings,
       requestedModelSelection,
+      { providers },
     );
+    const unavailableConnections =
+      providers.length > 0
+        ? unavailableStudyBuddyProfileConnections(studyBuddyExecutionProfileConfig, providers)
+        : [];
+    if (unavailableConnections.length > 0)
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabel(requestedModelSelection.instanceId),
+        method: "thread.turn.start",
+        detail: `This profile needs disconnected connections: ${unavailableConnections.join(", ")}. Connect them in Settings or choose another profile.`,
+      });
     const studyBuddyExecutionProfile = baseExecutionProfile(studyBuddyExecutionProfileConfig);
 
     return {

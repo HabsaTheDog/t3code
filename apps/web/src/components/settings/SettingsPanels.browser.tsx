@@ -157,7 +157,7 @@ vi.mock("@clerk/react", () => ({
   }),
 }));
 
-vi.mock("../../environments/runtime", () => {
+vi.mock("~/environments/runtime", () => {
   const primaryConnection = {
     kind: "primary" as const,
     knownEnvironment: {
@@ -1198,8 +1198,21 @@ describe("GeneralSettingsPanel observability", () => {
     expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
   });
 
-  it("shows an OpenCode server URL field in provider settings", async () => {
-    setServerConfigSnapshot(createBaseServerConfig());
+  it("retains advanced configuration for an existing custom OpenCode connection", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("opencode-custom")]: {
+            driver: ProviderDriverKind.make("opencode"),
+            enabled: true,
+            displayName: "OpenCode",
+            config: {},
+          },
+        },
+      },
+    });
 
     mounted = await render(
       <AppAtomRegistryProvider>

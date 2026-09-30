@@ -79,6 +79,10 @@ vi.mock("~/store", () => ({
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({
     server: {
+      updateSettings: async (patch: Partial<UnifiedSettings>) => {
+        harness.updateSettings(patch);
+        return harness.settings;
+      },
       getProviderSetupCapabilities: async () => structuredClone(harness.capabilities),
       refreshProviders: harness.refreshProviders,
       startProviderSetup: harness.startProviderSetup,
@@ -300,7 +304,7 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
-  it("completes only with a supported authenticated Codex and disables other providers", async () => {
+  it("can continue with connected providers and preserves every configured connection", async () => {
     harness.providers = [
       provider({
         instanceId: "codex-main",
@@ -323,22 +327,13 @@ describe("provider setup", () => {
 
     await vi.waitFor(() => expect(ref.current).not.toBeNull());
     await expect(ref.current?.save()).resolves.toBe(true);
-    expect(harness.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providers: expect.objectContaining({
-          codex: expect.objectContaining({ enabled: true }),
-          claudeAgent: expect.objectContaining({ enabled: false }),
-          cursor: expect.objectContaining({ enabled: false }),
-          opencode: expect.objectContaining({ enabled: false }),
-        }),
-        providerInstances: { codex: { driver: "codex" } },
-      }),
-    );
+    expect(harness.updateSettings).not.toHaveBeenCalled();
+    expect(Object.keys(harness.settings.providerInstances)).toEqual(["codex", "claudeAgent"]);
 
     await screen.unmount();
   });
 
-  it("fails closed when Codex is older than the permission-profile minimum", async () => {
+  it("offers a Codex update while allowing optional setup to be skipped", async () => {
     harness.providers = [
       provider({
         instanceId: "codex-main",
@@ -353,9 +348,9 @@ describe("provider setup", () => {
     const screen = await render(<ProviderSetupStep ref={ref} />);
 
     await vi.waitFor(() => expect(ref.current).not.toBeNull());
-    await expect(ref.current?.save()).resolves.toBe(false);
+    await expect(ref.current?.save()).resolves.toBe(true);
     await expect
-      .element(page.getByText("Update Codex to 0.138.0 or newer before continuing."))
+      .element(page.getByRole("button", { name: "Install the latest Codex" }))
       .toBeInTheDocument();
     expect(harness.updateSettings).not.toHaveBeenCalled();
 
@@ -463,17 +458,22 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
-  it("keeps non-Codex providers out of the Study Buddy setup", async () => {
+  it("offers Codex, Claude and Gemini without unrelated provider families", async () => {
     const screen = await render(<ProviderSetupStep />);
 
     await expect.element(page.getByRole("heading", { name: "Codex" })).toBeInTheDocument();
     await expect.element(page.getByText("Credential boundary")).not.toBeInTheDocument();
-    await expect.element(page.getByText("Claude")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Claude", exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Google Gemini", exact: true }))
+      .toBeInTheDocument();
     await expect.element(page.getByText("Cursor")).not.toBeInTheDocument();
     await expect.element(page.getByText("OpenCode")).not.toBeInTheDocument();
     await expect
       .element(page.getByRole("button", { name: "Sign in to Claude" }))
-      .not.toBeInTheDocument();
+      .toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -509,7 +509,7 @@ describe("provider setup", () => {
       .element(page.getByRole("button", { name: "Install Cursor CLI" }))
       .not.toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: "Sign in to Claude" }))
+      .element(page.getByRole("button", { name: "Sign in to OpenCode" }))
       .not.toBeInTheDocument();
 
     await screen.unmount();

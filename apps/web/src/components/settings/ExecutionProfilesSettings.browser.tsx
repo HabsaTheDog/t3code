@@ -14,6 +14,9 @@ const harness = vi.hoisted(() => {
 
   return {
     settings: {
+      studyBuddyDefaultProviderInstanceId: "codex",
+      studyBuddyProviderProfileIds: {},
+      providerInstances: {},
       studyBuddyExecutionProfile: "custom" as const,
       studyBuddyExecutionProfileId: "custom-fast-copy",
       studyBuddyCustomExecutionProfiles: [
@@ -38,6 +41,24 @@ const harness = vi.hoisted(() => {
         },
       ],
     },
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        models: [
+          { slug: "gpt-specialist", name: "Specialist", isCustom: false },
+          { slug: "gpt-retry", name: "Retry", isCustom: false },
+        ],
+      },
+      {
+        instanceId: "antigravity",
+        driver: "antigravity",
+        models: [
+          { slug: "gemini-flash-medium", name: "Gemini Flash Medium", isCustom: false },
+          { slug: "gemini-pro-high", name: "Gemini Pro High", isCustom: false },
+        ],
+      },
+    ],
     updateSettings: vi.fn(),
   };
 });
@@ -48,9 +69,7 @@ vi.mock("~/hooks/useSettings", () => ({
 }));
 
 vi.mock("~/rpc/serverState", () => ({
-  useServerProviders: () => [
-    { driver: "codex", models: [{ slug: "gpt-specialist" }, { slug: "gpt-retry" }] },
-  ],
+  useServerProviders: () => harness.providers,
 }));
 
 import { ExecutionProfilesSettingsPanel } from "./ExecutionProfilesSettings";
@@ -142,6 +161,42 @@ describe("advanced task assignments (browser-diagnostic)", () => {
     await mounted.unmount();
   });
 
+  it("scopes built-ins to Gemini and persists an explicit mixed worker and fallback", async () => {
+    const mounted = await render(<ExecutionProfilesSettingsPanel />);
+    const apply = async () => {
+      Object.assign(harness.settings, harness.updateSettings.mock.lastCall![0]);
+      await mounted.rerender(<ExecutionProfilesSettingsPanel />);
+    };
+    await page
+      .getByRole("combobox", { name: "Artifact builder primary model connection", exact: true })
+      .click();
+    await page.getByRole("option", { name: "Google Gemini", exact: true }).click();
+    await apply();
+    expect(
+      harness.settings.studyBuddyCustomExecutionProfiles[0]!.roles.artifactBuilder,
+    ).toMatchObject({
+      instanceId: "antigravity",
+      model: "gemini-flash-medium",
+      retryInstanceId: "codex",
+      retryModel: "gpt-5.6-terra",
+    });
+    await page
+      .getByRole("combobox", { name: "Artifact builder fallback model connection", exact: true })
+      .click();
+    await page.getByRole("option", { name: "Google Gemini", exact: true }).click();
+    await apply();
+    expect(
+      harness.settings.studyBuddyCustomExecutionProfiles[0]!.roles.artifactBuilder,
+    ).toMatchObject({ retryInstanceId: "antigravity", retryModel: "gemini-flash-medium" });
+    await page.getByRole("combobox", { name: "Profile connection", exact: true }).click();
+    await page.getByRole("option", { name: "Google Gemini", exact: true }).click();
+    await expect
+      .element(page.getByText("gemini-flash-medium", { exact: true }).first())
+      .toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Balanced", exact: true })).toBeVisible();
+    await mounted.unmount();
+  });
+
   it("shows built-in search and repair choices read-only at a narrow viewport", async () => {
     await page.viewport(390, 844);
     const mounted = await render(<ExecutionProfilesSettingsPanel />);
@@ -156,5 +211,24 @@ describe("advanced task assignments (browser-diagnostic)", () => {
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
     await mounted.unmount();
     await page.viewport(1280, 900);
+  });
+
+  it("saves a mixed default under its coordinator connection", async () => {
+    const profile = harness.settings.studyBuddyCustomExecutionProfiles[0]!;
+    Object.assign(profile.roles.coordinator, {
+      instanceId: "antigravity",
+      model: "gemini-flash-medium",
+    });
+    Object.assign(profile.roles.artifactBuilder, { instanceId: "codex" });
+    const mounted = await render(<ExecutionProfilesSettingsPanel />);
+    await page.getByRole("combobox", { name: "Profile connection", exact: true }).click();
+    await page.getByRole("option", { name: "Codex", exact: true }).click();
+    await page.getByRole("button", { name: "Fast copy", exact: true }).click();
+    await page.getByRole("button", { name: "Set as default", exact: true }).click();
+    expect(harness.updateSettings.mock.lastCall![0]).toMatchObject({
+      studyBuddyDefaultProviderInstanceId: "antigravity",
+      studyBuddyProviderProfileIds: { codex: "balanced", antigravity: "custom-fast-copy" },
+    });
+    await mounted.unmount();
   });
 });

@@ -1305,7 +1305,7 @@ export function ProviderSettingsPanel() {
         }
       >
         <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
-          Connect the providers you want to use. Choose your model in each chat.
+          Connect the providers you want to use. Choose a profile in each chat.
         </p>
         {visibleRows.map((row) => {
           const driverOption = getDriverOption(row.driver);

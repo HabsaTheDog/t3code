@@ -13,6 +13,18 @@ import {
 } from "./serverSettings.ts";
 
 describe("serverSettings helpers", () => {
+  it("replaces provider defaults so deleted profile references cannot survive a patch", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      studyBuddyProviderProfileIds: { codex: "custom-old", antigravity: "quality" },
+    };
+    expect(
+      applyServerSettingsPatch(current, {
+        studyBuddyProviderProfileIds: { [ProviderInstanceId.make("antigravity")]: "balanced" },
+      }).studyBuddyProviderProfileIds,
+    ).toEqual({ antigravity: "balanced" });
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

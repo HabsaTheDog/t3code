@@ -486,6 +486,12 @@ export const ServerSettings = Schema.Struct({
   studyBuddyCustomExecutionProfiles: StudyBuddyCustomExecutionProfiles.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  studyBuddyDefaultProviderInstanceId: ProviderInstanceId.pipe(
+    Schema.withDecodingDefault(Effect.succeed(ProviderInstanceId.make("codex"))),
+  ),
+  studyBuddyProviderProfileIds: Schema.Record(ProviderInstanceId, StudyBuddyProfileId).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -592,6 +598,10 @@ export const ServerSettingsPatch = Schema.Struct({
   studyBuddyExecutionProfile: Schema.optionalKey(StudyBuddyExecutionProfile),
   studyBuddyExecutionProfileId: Schema.optionalKey(StudyBuddyProfileId),
   studyBuddyCustomExecutionProfiles: Schema.optionalKey(StudyBuddyCustomExecutionProfiles),
+  studyBuddyDefaultProviderInstanceId: Schema.optionalKey(ProviderInstanceId),
+  studyBuddyProviderProfileIds: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, StudyBuddyProfileId),
+  ),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({

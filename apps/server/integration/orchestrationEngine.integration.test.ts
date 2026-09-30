@@ -1215,6 +1215,7 @@ it.live("forwards thread.turn.interrupt to claudeAgent provider sessions", () =>
         yield* seedProjectAndThread(harness);
 
         yield* harness.adapterHarness!.queueTurnResponseForNextSession({
+          completeTurn: false,
           events: [
             {
               type: "turn.started",

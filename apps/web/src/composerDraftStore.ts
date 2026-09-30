@@ -1416,8 +1416,11 @@ function normalizePersistedDraftThreads(
           promotedTo: null,
         };
       } else if (
-        draftThreadsByThreadKey[threadKey]?.projectId !== projectRef.projectId ||
-        draftThreadsByThreadKey[threadKey]?.environmentId !== projectRef.environmentId
+        // Modern drafts persist their physical scope separately. Logical keys
+        // (including Quick Chat reservations) must not overwrite that scope.
+        draftThreadsByThreadKey[threadKey]?.logicalProjectKey !== logicalProjectKey &&
+        (draftThreadsByThreadKey[threadKey]?.projectId !== projectRef.projectId ||
+          draftThreadsByThreadKey[threadKey]?.environmentId !== projectRef.environmentId)
       ) {
         draftThreadsByThreadKey[threadKey] = {
           ...draftThreadsByThreadKey[threadKey]!,

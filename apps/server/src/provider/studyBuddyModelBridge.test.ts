@@ -3,7 +3,13 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+  TextGenerationError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -14,6 +20,11 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import type { WorkflowGenerationInput } from "../textGeneration/TextGeneration.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import {
+  duplicateStudyBuddyProfile,
+  STUDY_BUDDY_BUILT_IN_PROFILES,
+} from "@t3tools/shared/studyBuddyProfiles";
 import { modelBridgeEnvironment, studyBuddyModelRouteLayer } from "./studyBuddyModelBridge.ts";
 
 describe("Study Buddy model bridge", () => {
@@ -40,11 +51,43 @@ describe("Study Buddy model bridge", () => {
       const generateWorkflow = vi.fn((_input: WorkflowGenerationInput) =>
         Effect.succeed({ result: "verified output" }),
       );
+      const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "mixed-test");
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        studyBuddyExecutionProfileId: "mixed-test",
+        studyBuddyCustomExecutionProfiles: [
+          {
+            ...profile,
+            roles: {
+              ...profile.roles,
+              coordinator: { ...profile.roles.coordinator, ...selection },
+              artifactBuilder: {
+                ...profile.roles.artifactBuilder,
+                instanceId: ProviderInstanceId.make("codex-secondary"),
+              },
+            },
+          },
+        ],
+      };
+      let connected = true;
       const getInstance = vi.fn(() =>
         Effect.succeed({
           enabled: true,
           textGeneration: { generateWorkflow },
-          snapshot: { getSnapshot: Effect.succeed({ models: [] }) },
+          snapshot: {
+            getSnapshot: Effect.sync(() => ({
+              instanceId: selection.instanceId,
+              driver: ProviderDriverKind.make(driver),
+              installed: true,
+              status: "ready",
+              auth: { status: connected ? "authenticated" : "unauthenticated" },
+              models: [
+                { slug: "selected-model", name: "Selected", isCustom: false },
+                { slug: "gpt-5.6-sol", name: "Builder", isCustom: false },
+                { slug: "foreign-gpt-model", name: "Unassigned", isCustom: false },
+              ],
+            })),
+          },
         } as unknown as ProviderInstance),
       );
       let ownerRunning = true;
@@ -107,6 +150,9 @@ describe("Study Buddy model bridge", () => {
             }),
           ),
           Layer.provide(Layer.mock(ProviderInstanceRegistry)({ getInstance })),
+          Layer.provide(
+            Layer.mock(ServerSettingsService)({ getSettings: Effect.succeed(settings) }),
+          ),
           Layer.provideMerge(NodeServices.layer),
         ),
       );
@@ -160,7 +206,54 @@ describe("Study Buddy model bridge", () => {
         expect(
           (await request({ threadId: "owner", prompt: "", images: [], context: true })).status,
         ).toBe(409);
+        expect(
+          (await request({ threadId: "owner", prompt: "no stopped worker", images: [] })).status,
+        ).toBe(409);
         ownerRunning = true;
+        const mixed = await request({
+          threadId: "owner",
+          instanceId: "codex-secondary",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "medium",
+          prompt: "Mixed evidence α",
+          images: [],
+        });
+        expect(mixed.status).toBe(200);
+        expect(getInstance).toHaveBeenCalledWith("codex-secondary");
+        expect(generateWorkflow.mock.lastCall![0]).toMatchObject({
+          modelSelection: {
+            instanceId: "codex-secondary",
+            model: "gpt-5.6-sol",
+            options: [
+              { id: driver === "claudeAgent" ? "effort" : "reasoningEffort", value: "medium" },
+            ],
+          },
+        });
+        expect(
+          (
+            await request({
+              threadId: "owner",
+              instanceId: "unassigned-account",
+              model: "selected-model",
+              prompt: "do not route",
+              images: [],
+            })
+          ).status,
+        ).toBe(409);
+        connected = false;
+        expect(
+          (
+            await request({
+              threadId: "owner",
+              instanceId: "codex-secondary",
+              model: "gpt-5.6-sol",
+              prompt: "disconnected",
+              images: [],
+            })
+          ).status,
+        ).toBe(409);
+        connected = true;
+        generateWorkflow.mockClear();
         const response = await request({
           threadId: "owner",
           prompt: "Exact evidence: α\nnext line",
@@ -177,6 +270,21 @@ describe("Study Buddy model bridge", () => {
         expect(generateWorkflow.mock.calls[0]?.[0]?.prompt).toContain(
           "Exact evidence: α\nnext line",
         );
+        for (const [detail, status, safeError] of [
+          ["authentication failed secret-token", 401, "Provider authentication failed."],
+          ["insufficient_quota secret-token", 402, "Provider usage limit reached."],
+          ["rate_limit secret-token", 429, "Provider rate limit reached."],
+          ["model overloaded secret-token", 503, "Provider model capacity unavailable."],
+          ["model not found secret-token", 409, "Provider model unavailable."],
+          ["unexpected failure secret-token", 502, "Selected provider worker failed."],
+        ] as const) {
+          generateWorkflow.mockReturnValueOnce(
+            Effect.fail(new TextGenerationError({ operation: "workflow", detail })) as never,
+          );
+          const failed = await request({ threadId: "owner", prompt: "evidence", images: [] });
+          expect(failed.status).toBe(status);
+          expect(await failed.json()).toEqual({ error: safeError });
+        }
       } finally {
         await app.dispose();
         await rm(directory, { recursive: true, force: true });
@@ -184,16 +292,19 @@ describe("Study Buddy model bridge", () => {
     },
   );
 
-  it("exports provider routing only for native workers", () => {
+  it("exports bridge context for native and mixed Codex workers", () => {
     const common = {
       port: 12345,
       workflowToken: "fixture",
       threadId: ThreadId.make("owner"),
       modelSelection: { instanceId: ProviderInstanceId.make("antigravity"), model: "gemini" },
     };
-    expect(modelBridgeEnvironment({ ...common, driver: ProviderDriverKind.make("codex") })).toEqual(
-      {},
-    );
+    expect(
+      modelBridgeEnvironment({ ...common, driver: ProviderDriverKind.make("codex") }),
+    ).toMatchObject({
+      STUDY_BUDDY_MODEL_BRIDGE_PROVIDER: "codex",
+      STUDY_BUDDY_MODEL_BRIDGE_THREAD: "owner",
+    });
     expect(
       modelBridgeEnvironment({ ...common, driver: ProviderDriverKind.make("antigravity") }),
     ).toMatchObject({

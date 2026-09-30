@@ -1,4 +1,3 @@
-import { ProviderModelPicker } from "./ProviderModelPicker";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -23,6 +22,7 @@ import { serializeComposerMentionPath } from "@t3tools/shared/composerTrigger";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   resolveStudyBuddyProfileForModelSelection,
+  availableStudyBuddyProviders,
   studyBuddyProfileIdFromModelSelection,
   studyBuddyCoordinatorOptions,
 } from "@t3tools/shared/studyBuddyProfiles";
@@ -66,7 +66,7 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
-import { StudyBuddyProfilePicker } from "./StudyBuddyProfilePicker";
+import { StudyBuddyProfilePicker, StudyBuddyConnectionPicker } from "./StudyBuddyProfilePicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -806,7 +806,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       providerStatuses,
       explicitSelectedInstanceId,
     ) ?? ProviderDriverKind.make("codex");
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const preferredProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const connectedProviders = availableStudyBuddyProviders(providerStatuses);
+  const isEmptyConversation = (activeThread?.messages.length ?? 0) === 0 && !activeThread?.session;
   const lockedContinuationGroupKey = useMemo((): string | null => {
     if (!lockedProvider || !activeThread) return null;
     const lockedInstanceId =
@@ -839,6 +841,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread?.session?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
       activeProjectDefaultModelSelection?.instanceId,
+      settings.studyBuddyDefaultProviderInstanceId,
     ];
     for (const candidate of candidates) {
       if (!candidate) continue;
@@ -846,6 +849,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (entry) => entry.instanceId === candidate && entry.enabled,
       );
       if (match) {
+        if (
+          isEmptyConversation &&
+          connectedProviders.length > 0 &&
+          !connectedProviders.some((provider) => provider.instanceId === match.instanceId)
+        )
+          continue;
         // When locked to a specific driver kind, ignore persisted instance
         // ids from a different kind or continuation group.
         if (lockedProvider && match.driverKind !== lockedProvider) continue;
@@ -858,17 +867,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return match.instanceId;
       }
     }
-    if (explicitSelectedInstanceId) {
+    if (
+      explicitSelectedInstanceId &&
+      (!isEmptyConversation ||
+        connectedProviders.some((provider) => provider.instanceId === explicitSelectedInstanceId))
+    ) {
       return ProviderInstanceId.make(explicitSelectedInstanceId);
     }
     const byKind = providerInstanceEntries.find(
       (entry) =>
         entry.enabled &&
-        entry.driverKind === selectedProvider &&
+        entry.driverKind === preferredProvider &&
+        (!isEmptyConversation ||
+          connectedProviders.length === 0 ||
+          connectedProviders.some((provider) => provider.instanceId === entry.instanceId)) &&
         (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
     );
     if (byKind) return byKind.instanceId;
-    const anyEnabled = providerInstanceEntries.find((entry) => entry.enabled);
+    const anyEnabled =
+      providerInstanceEntries.find(
+        (entry) =>
+          entry.instanceId === settings.studyBuddyDefaultProviderInstanceId &&
+          connectedProviders.some((provider) => provider.instanceId === entry.instanceId),
+      ) ??
+      providerInstanceEntries.find((entry) =>
+        connectedProviders.some((provider) => provider.instanceId === entry.instanceId),
+      ) ??
+      providerInstanceEntries.find((entry) => entry.enabled);
     return (
       anyEnabled?.instanceId ??
       providerInstanceEntries[0]?.instanceId ??
@@ -885,8 +910,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
-    selectedProvider,
+    preferredProvider,
+    isEmptyConversation,
+    connectedProviders,
+    settings.studyBuddyDefaultProviderInstanceId,
   ]);
+
+  const selectedProvider: ProviderDriverKind =
+    lockedProvider ??
+    resolveProviderDriverKindForInstanceSelection(
+      providerInstanceEntries,
+      providerStatuses,
+      selectedInstanceId,
+    ) ??
+    preferredProvider;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -953,26 +990,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () =>
       resolveStudyBuddyProfileForModelSelection(settings, storedStudyBuddyModelSelection, {
         preferDefault: !hasExplicitStudyBuddyProfile && (activeThread?.messages.length ?? 0) === 0,
+        providers: providerStatuses,
       }),
     [
       activeThread?.messages.length,
       hasExplicitStudyBuddyProfile,
       settings,
       storedStudyBuddyModelSelection,
+      providerStatuses,
     ],
   );
   const selectedModelSelection = useMemo<ModelSelection>(() => {
-    const profileOptions = studyBuddyCoordinatorOptions(activeExecutionProfile).filter(
-      (option) => selectedProvider === "codex" || option.id === "studyBuddyExecutionProfileId",
-    );
+    const profileOptions = studyBuddyCoordinatorOptions(activeExecutionProfile, selectedProvider);
     const controlledIds = new Set(profileOptions.map((option) => option.id));
     const retainedOptions = (selectedModelOptionsForDispatch ?? []).filter(
       (option) => !controlledIds.has(option.id),
     );
-    return createModelSelection(selectedInstanceId, selectedModel, [
-      ...retainedOptions,
-      ...profileOptions,
-    ]);
+    return createModelSelection(
+      activeExecutionProfile.roles.coordinator.instanceId,
+      activeExecutionProfile.roles.coordinator.model,
+      [...retainedOptions, ...profileOptions],
+    );
   }, [
     activeExecutionProfile,
     selectedInstanceId,
@@ -1009,12 +1047,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
   useEffect(() => {
-    if (
-      selectedProvider !== "codex" ||
-      composerDraft.modelSelectionByProvider[selectedInstanceId] ||
-      activeThread
-    )
-      return;
+    if (composerDraft.modelSelectionByProvider[selectedInstanceId] || activeThread) return;
     const coordinator = activeExecutionProfile.roles.coordinator;
     onProviderModelSelect(
       coordinator.instanceId,
@@ -1024,6 +1057,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     activeExecutionProfile,
     activeThread,
+    isEmptyConversation,
     composerDraft.modelSelectionByProvider,
     selectedInstanceId,
     selectedProvider,
@@ -2617,29 +2651,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <ProviderModelPicker
-                  activeInstanceId={selectedInstanceId}
-                  model={selectedModel}
-                  lockedProvider={lockedProvider}
-                  lockedContinuationGroupKey={lockedContinuationGroupKey}
-                  instanceEntries={providerInstanceEntries}
-                  modelOptionsByInstance={
-                    new Map(
-                      providerStatuses.map((provider) => [provider.instanceId, provider.models]),
-                    )
-                  }
-                  compact={isComposerFooterCompact}
-                  onInstanceModelChange={(instanceId, model) =>
-                    onProviderModelSelect(
-                      instanceId,
-                      model,
-                      studyBuddyCoordinatorOptions(activeExecutionProfile).filter(
-                        (option) => option.id === "studyBuddyExecutionProfileId",
-                      ),
-                    )
-                  }
+                <StudyBuddyConnectionPicker
+                  activeProfile={activeExecutionProfile}
+                  providers={providerStatuses}
+                  {...(lockedProvider
+                    ? {
+                        lockedInstanceIds: providerInstanceEntries
+                          .filter(
+                            (entry) =>
+                              entry.driverKind === lockedProvider &&
+                              (!lockedContinuationGroupKey ||
+                                entry.continuationGroupKey === lockedContinuationGroupKey),
+                          )
+                          .map((entry) => entry.instanceId),
+                      }
+                    : {})}
+                  onCoordinatorChange={onProviderModelSelect}
                 />
                 <StudyBuddyProfilePicker
+                  providers={providerStatuses}
+                  {...(lockedProvider
+                    ? {
+                        lockedInstanceIds: providerInstanceEntries
+                          .filter(
+                            (entry) =>
+                              entry.driverKind === lockedProvider &&
+                              (!lockedContinuationGroupKey ||
+                                entry.continuationGroupKey === lockedContinuationGroupKey),
+                          )
+                          .map((entry) => entry.instanceId),
+                      }
+                    : {})}
                   activeProfile={activeExecutionProfile}
                   compact={isComposerFooterCompact}
                   keybindings={keybindings}

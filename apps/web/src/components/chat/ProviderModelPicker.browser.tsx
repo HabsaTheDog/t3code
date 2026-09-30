@@ -261,6 +261,16 @@ function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider
   };
 }
 
+function buildGeminiProvider(models: ServerProvider["models"]): ServerProvider {
+  return {
+    ...TEST_PROVIDERS[0]!,
+    driver: ProviderDriverKind.make("antigravity"),
+    instanceId: ProviderInstanceId.make("antigravity"),
+    displayName: "Google Gemini",
+    models,
+  };
+}
+
 async function mountPicker(props: {
   activeInstanceId?: ProviderInstanceId;
   model: string;
@@ -856,11 +866,11 @@ describe("ProviderModelPicker", () => {
           }),
         },
       ]),
-      buildOpenCodeProvider([
+      buildGeminiProvider([
         {
-          slug: "github-copilot/claude-opus-4.7",
-          name: "Claude Opus 4.7",
-          subProvider: "GitHub Copilot",
+          slug: "gemini-flash-medium",
+          name: "Gemini Flash Medium",
+
           isCustom: false,
           capabilities: createModelCapabilities({
             optionDescriptors: [
@@ -875,19 +885,19 @@ describe("ProviderModelPicker", () => {
       ]),
     ];
     const mounted = await mountPicker({
-      activeInstanceId: OPENCODE_INSTANCE_ID,
-      model: "github-copilot/claude-opus-4.7",
+      activeInstanceId: ProviderInstanceId.make("antigravity"),
+      model: "gemini-flash-medium",
       lockedProvider: null,
       providers,
     });
 
     try {
       await page.getByRole("button").click();
-      await page.getByPlaceholder("Search models...").fill("coplt op");
+      await page.getByPlaceholder("Search models...").fill("gmini flsh");
 
       await vi.waitFor(() => {
         const listText = getModelPickerListText();
-        expect(listText).toContain("Claude Opus 4.7");
+        expect(listText).toContain("Gemini Flash Medium");
         expect(listText).not.toContain("GPT-5 Codex");
       });
     } finally {
@@ -897,11 +907,11 @@ describe("ProviderModelPicker", () => {
 
   it("renders each search result with its own provider branding", async () => {
     const providers: ReadonlyArray<ServerProvider> = [
-      buildOpenCodeProvider([
+      buildGeminiProvider([
         {
-          slug: "github-copilot/claude-opus-4.7",
-          name: "Claude Opus 4.7",
-          subProvider: "GitHub Copilot",
+          slug: "gemini-flash-medium",
+          name: "Gemini Flash Medium",
+
           isCustom: false,
           capabilities: createModelCapabilities({
             optionDescriptors: [
@@ -919,7 +929,7 @@ describe("ProviderModelPicker", () => {
         models: [
           {
             slug: "claude-opus-4-6",
-            name: "Claude Opus 4.6",
+            name: "Claude Medium",
             isCustom: false,
             capabilities: createModelCapabilities({
               optionDescriptors: [
@@ -937,19 +947,19 @@ describe("ProviderModelPicker", () => {
       },
     ];
     const mounted = await mountPicker({
-      activeInstanceId: OPENCODE_INSTANCE_ID,
-      model: "github-copilot/claude-opus-4.7",
+      activeInstanceId: ProviderInstanceId.make("antigravity"),
+      model: "gemini-flash-medium",
       lockedProvider: null,
       providers,
     });
 
     try {
       await page.getByRole("button").click();
-      await page.getByPlaceholder("Search models...").fill("opus");
+      await page.getByPlaceholder("Search models...").fill("medium");
 
       await vi.waitFor(() => {
         const listText = getModelPickerListText();
-        expect(listText).toContain("OpenCode · GitHub Copilot");
+        expect(listText).toContain("Google Gemini");
         expect(listText).toContain("Claude");
         expect(listText).not.toContain("OpenCodeClaude Opus 4.6");
       });
@@ -1261,6 +1271,21 @@ describe("StudyBuddyProfilePicker", () => {
     ] satisfies ResolvedKeybindingsConfig;
     const screen = await render(
       <StudyBuddyProfilePicker
+        providers={[
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            installed: true,
+            version: "fixture",
+            status: "ready",
+            auth: { status: "authenticated" },
+            checkedAt: "2026-09-30T00:00:00Z",
+            models: [{ slug: "gpt-5.6-terra", name: "Terra", isCustom: false, capabilities: null }],
+            slashCommands: [],
+            skills: [],
+          },
+        ]}
         activeProfile={STUDY_BUDDY_BUILT_IN_PROFILES[1]!}
         compact={false}
         keybindings={keybindings}

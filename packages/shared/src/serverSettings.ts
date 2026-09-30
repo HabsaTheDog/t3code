@@ -83,6 +83,9 @@ export function applyServerSettingsPatch(
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
+    ...(patch.studyBuddyProviderProfileIds !== undefined
+      ? { studyBuddyProviderProfileIds: patch.studyBuddyProviderProfileIds }
+      : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {

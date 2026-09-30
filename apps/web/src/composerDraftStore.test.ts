@@ -540,6 +540,41 @@ describe("composerDraftStore project draft thread mapping", () => {
     resetComposerDraftStore();
   });
 
+  it("preserves a Quick Chat's physical scope and mixed profile after persistence", () => {
+    const logicalKey = `quick-chat:${TEST_ENVIRONMENT_ID}:${threadId}`;
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(logicalKey, projectRef, draftId, { threadId });
+    const selection = {
+      instanceId: ProviderInstanceId.make("antigravity"),
+      model: "gemini-flash",
+      options: [{ id: "studyBuddyExecutionProfileId", value: "custom-mixed" }],
+    };
+    store.setModelSelection(draftId, selection);
+    const persist = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persisted: unknown,
+          state: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const options = persist.getOptions();
+    const restored = options.merge(
+      options.partialize(useComposerDraftStore.getState()),
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(restored.draftThreadsByThreadKey[draftId]).toMatchObject({
+      environmentId: TEST_ENVIRONMENT_ID,
+      projectId,
+      threadId,
+      logicalProjectKey: logicalKey,
+    });
+    expect(
+      restored.draftsByThreadKey[draftId]?.modelSelectionByProvider[selection.instanceId],
+    ).toEqual(selection);
+  });
+
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftThreadByProjectRef(projectRef)).toBeNull();

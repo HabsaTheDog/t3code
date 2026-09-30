@@ -1,4 +1,13 @@
-import { type ModelSelection, type ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import {
+  type ModelSelection,
+  type ProviderDriverKind,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  resolveStudyBuddyProfileForModelSelection,
+  studyBuddyProfileOverrides,
+} from "@t3tools/shared/studyBuddyProfiles";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +24,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 
 const route = "/api/study-buddy/model";
 const image = Schema.Struct({
@@ -25,6 +35,8 @@ const requestSchema = Schema.Struct({
   threadId: ThreadId,
   prompt: Schema.String.check(Schema.isMaxLength(200_000)),
   model: Schema.optional(Schema.String),
+  instanceId: Schema.optional(ProviderInstanceId),
+  reasoningEffort: Schema.optional(Schema.Literals(["minimal", "low", "medium", "high", "xhigh"])),
   images: Schema.Array(image).check(Schema.isMaxLength(20)),
   outputSchema: Schema.optional(Schema.Unknown),
   context: Schema.optional(Schema.Boolean),
@@ -40,12 +52,12 @@ export function modelBridgeEnvironment(input: {
   modelSelection: ModelSelection;
   driver: ProviderDriverKind;
 }): Record<string, string> {
-  if (input.driver === "codex") return {};
   return {
     STUDY_BUDDY_MODEL_BRIDGE_URL: `http://127.0.0.1:${input.port}${route}`,
     STUDY_BUDDY_MODEL_BRIDGE_TOKEN: input.workflowToken,
     STUDY_BUDDY_MODEL_BRIDGE_MODEL: input.modelSelection.model,
     STUDY_BUDDY_MODEL_BRIDGE_PROVIDER: input.driver,
+    STUDY_BUDDY_MODEL_BRIDGE_INSTANCE: input.modelSelection.instanceId,
     STUDY_BUDDY_MODEL_BRIDGE_THREAD: input.threadId,
   };
 }
@@ -55,6 +67,7 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
     const config = yield* ServerConfig;
     const registry = yield* ProviderInstanceRegistry;
     const projection = yield* ProjectionSnapshotQuery;
+    const settingsService = yield* ServerSettingsService;
     return HttpRouter.add(
       "POST",
       route,
@@ -120,7 +133,13 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
           });
         }
         const selected = thread.value.modelSelection;
-        const instance = yield* registry.getInstance(selected.instanceId);
+        if (thread.value.latestTurn?.state !== "running")
+          return HttpServerResponse.jsonUnsafe(
+            { error: "Workflow owner is no longer running." },
+            { status: 409 },
+          );
+        const targetId = input.instanceId ?? selected.instanceId;
+        const instance = yield* registry.getInstance(targetId);
         if (!instance?.enabled || !instance.textGeneration.generateWorkflow)
           return HttpServerResponse.jsonUnsafe(
             { error: "Selected provider cannot run workflow workers." },
@@ -128,7 +147,43 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
           );
         const catalog = yield* instance.snapshot.getSnapshot;
         const model = input.model ?? selected.model;
-        if (model !== selected.model && !catalog.models.some((entry) => entry.slug === model))
+        const settings = yield* settingsService.getSettings;
+        const ownerInstance =
+          targetId === selected.instanceId
+            ? instance
+            : yield* registry.getInstance(selected.instanceId);
+        const ownerCatalog = ownerInstance ? yield* ownerInstance.snapshot.getSnapshot : undefined;
+        const profile = resolveStudyBuddyProfileForModelSelection(settings, selected, {
+          providers: ownerCatalog ? [ownerCatalog] : [],
+        });
+        const assignments = Object.values(studyBuddyProfileOverrides(profile));
+        const assigned = assignments.some(
+          (policy) =>
+            ((policy.instanceId ?? profile.roles.coordinator.instanceId) === targetId &&
+              policy.model === model) ||
+            ((policy.retryInstanceId ??
+              policy.instanceId ??
+              profile.roles.coordinator.instanceId) === targetId &&
+              policy.retryModel === model),
+        );
+        if (!assigned && !(targetId === selected.instanceId && model === selected.model))
+          return HttpServerResponse.jsonUnsafe(
+            { error: "Provider/model is not assigned to this profile." },
+            { status: 409 },
+          );
+        if (
+          catalog.auth.status !== "authenticated" ||
+          !catalog.installed ||
+          catalog.status === "error"
+        )
+          return HttpServerResponse.jsonUnsafe(
+            { error: "Assigned provider is not connected." },
+            { status: 409 },
+          );
+        if (
+          (targetId !== selected.instanceId || model !== selected.model) &&
+          !catalog.models.some((entry) => entry.slug === model)
+        )
           return HttpServerResponse.jsonUnsafe(
             { error: "Model is unavailable for the selected provider." },
             { status: 409 },
@@ -144,7 +199,23 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
           );
         const generated = yield* instance.textGeneration
           .generateWorkflow({
-            modelSelection: { ...selected, model },
+            modelSelection: {
+              instanceId: targetId,
+              model,
+              ...(input.reasoningEffort
+                ? {
+                    options: [
+                      {
+                        id: catalog.driver === "claudeAgent" ? "effort" : "reasoningEffort",
+                        value:
+                          catalog.driver === "claudeAgent" && input.reasoningEffort === "minimal"
+                            ? "low"
+                            : input.reasoningEffort,
+                      },
+                    ],
+                  }
+                : {}),
+            },
             images: input.images,
             prompt: [
               "Perform the following Study Buddy transformation from supplied evidence only. Never use tools or delegate further.",
@@ -157,13 +228,33 @@ export const studyBuddyModelRouteLayer = Layer.unwrap(
               "END WORKFLOW PROMPT",
             ].join("\n"),
           })
-          .pipe(Effect.option);
-        return Option.isSome(generated)
-          ? HttpServerResponse.jsonUnsafe({ text: generated.value.result })
-          : HttpServerResponse.jsonUnsafe(
-              { error: "Selected provider worker failed." },
-              { status: 502 },
-            );
+          .pipe(
+            Effect.map((value) => HttpServerResponse.jsonUnsafe({ text: value.result })),
+            Effect.catch((error) => {
+              // Return bounded categories, never provider stderr, prompts, or credentials.
+              const detail = error.detail.toLowerCase();
+              const failure =
+                /authentication|unauthorized|not logged in|login required|forbidden/.test(detail)
+                  ? { status: 401, error: "Provider authentication failed." }
+                  : /usage limit|insufficient_quota|billing_hard_limit|purchase more credits/.test(
+                        detail,
+                      )
+                    ? { status: 402, error: "Provider usage limit reached." }
+                    : /rate.?limit|\b429\b/.test(detail)
+                      ? { status: 429, error: "Provider rate limit reached." }
+                      : /capacity|overload|\b503\b/.test(detail)
+                        ? { status: 503, error: "Provider model capacity unavailable." }
+                        : /model.*(not found|not_found|unsupported|does not exist|unavailable)/.test(
+                              detail,
+                            )
+                          ? { status: 409, error: "Provider model unavailable." }
+                          : { status: 502, error: "Selected provider worker failed." };
+              return Effect.succeed(
+                HttpServerResponse.jsonUnsafe({ error: failure.error }, { status: failure.status }),
+              );
+            }),
+          );
+        return generated;
       }),
     );
   }),

@@ -362,7 +362,9 @@ describe.sequential("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -391,7 +393,9 @@ describe.sequential("first-run privacy and setup", () => {
         }),
       );
     });
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -468,10 +472,14 @@ describe.sequential("first-run privacy and setup", () => {
     setDurableFailure(true);
     const screen = await renderSetup();
 
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
 
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
     await expect
       .element(page.getByText("We couldn’t save your progress. Please try again."))
       .toBeInTheDocument();
@@ -482,7 +490,9 @@ describe.sequential("first-run privacy and setup", () => {
     const first = await renderSetup();
 
     await page.getByRole("button", { name: "Skip" }).click();
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual(
         expect.objectContaining({
@@ -501,11 +511,13 @@ describe.sequential("first-run privacy and setup", () => {
     await first.unmount();
 
     const second = await renderSetup();
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
     await second.unmount();
   });
 
-  it.sequential("resumes, completes required Codex setup, and persists completion", async () => {
+  it.sequential("resumes optional provider setup and persists onboarding completion", async () => {
     resetSettings({
       analyticsConsent: "rejected",
       conversationConsent: "rejected",
@@ -515,7 +527,9 @@ describe.sequential("first-run privacy and setup", () => {
     });
     const resumed = await renderSetup();
 
-    await expect.element(page.getByText("Connect Codex")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Connect your AI providers", exact: true }))
+      .toBeInTheDocument();
     await page.getByRole("button", { name: "Continue" }).click();
     await vi.waitFor(() => {
       expect(getDurableState().calls).toContainEqual({

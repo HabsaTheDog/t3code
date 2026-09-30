@@ -142,6 +142,10 @@ export const StudyBuddyCoordinatorRole = Schema.Struct({
 export type StudyBuddyCoordinatorRole = typeof StudyBuddyCoordinatorRole.Type;
 
 export const StudyBuddyWorkerRole = Schema.Struct({
+  // Old profiles inherit the coordinator's connection. Explicit assignments
+  // allow custom profiles to combine independently authenticated providers.
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+  retryInstanceId: Schema.optionalKey(ProviderInstanceId),
   model: StudyBuddyModelSlug,
   reasoningEffort: StudyBuddyReasoningEffort,
   retryModel: StudyBuddyModelSlug,

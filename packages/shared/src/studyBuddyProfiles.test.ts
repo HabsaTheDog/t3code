@@ -17,7 +17,12 @@ import {
   STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID,
   STUDY_BUDDY_BUILT_IN_PROFILES,
   studyBuddyCoordinatorOptions,
+  studyBuddyBuiltInProfiles,
+  adaptStudyBuddyProfileToSelection,
+  isStudyBuddyMixedProfile,
 } from "./studyBuddyProfiles.ts";
+
+const decodeCustomProfile = Schema.decodeUnknownSync(StudyBuddyCustomExecutionProfile);
 
 describe("Study Buddy execution profiles", () => {
   it("keeps the three built-ins in fast, balanced, quality order", () => {
@@ -220,26 +225,77 @@ describe("profile persistence", () => {
 
 describe("native provider execution policies", () => {
   it.each(["claudeAgent", "antigravity"])(
-    "keeps every %s worker and retry on the selected model",
+    "resolves %s profiles from its catalogue with distinct tiers",
     (driver) => {
       const instanceId = ProviderInstanceId.make(`custom-${driver}`);
+      const slugs =
+        driver === "claudeAgent"
+          ? ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-8"]
+          : ["gemini-flash-low", "gemini-flash-medium", "gemini-pro-high"];
+      const provider = {
+        instanceId,
+        driver: ProviderDriverKind.make(driver),
+        models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+      };
+      const profiles = studyBuddyBuiltInProfiles(provider);
+      expect(profiles.map((profile) => profile.roles.coordinator.model)).toEqual(slugs);
+      for (const profile of profiles) {
+        expect(profile.roles.coordinator.instanceId).toBe(instanceId);
+        for (const policy of Object.values(studyBuddyProfileOverrides(profile))) {
+          expect(slugs).toContain(policy.model);
+          expect(slugs).toContain(policy.retryModel);
+        }
+      }
       const settings = {
         ...DEFAULT_SERVER_SETTINGS,
-        providerInstances: { [instanceId]: { driver: ProviderDriverKind.make(driver) } },
+        providerInstances: { [instanceId]: { driver: provider.driver } },
       };
-      const selection = {
-        instanceId,
-        model: "selected-native-model",
-        options: [{ id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" }],
-      };
-      const profile = resolveStudyBuddyProfileForModelSelection(settings, selection);
-      expect(profile.roles.coordinator.instanceId).toBe(instanceId);
-      for (const policy of Object.values(studyBuddyProfileOverrides(profile))) {
-        expect(policy.model).toBe("selected-native-model");
-        expect(policy.retryModel).toBe("selected-native-model");
-      }
+      const resolved = resolveStudyBuddyProfileForModelSelection(
+        settings,
+        {
+          instanceId,
+          model: slugs[0]!,
+          options: [{ id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" }],
+        },
+        { providers: [provider] },
+      );
+      expect(resolved).toEqual(profiles[2]);
     },
   );
+
+  it("preserves explicit mixed assignments when selecting a native coordinator", () => {
+    const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "mixed");
+    const mixed = {
+      ...profile,
+      roles: {
+        ...profile.roles,
+        artifactBuilder: {
+          ...profile.roles.artifactBuilder,
+          instanceId: ProviderInstanceId.make("antigravity"),
+          model: "gemini-pro",
+          retryInstanceId: ProviderInstanceId.make("claudeAgent"),
+          retryModel: "claude-sonnet",
+        },
+      },
+    };
+    expect(isStudyBuddyMixedProfile(mixed)).toBe(true);
+    expect(
+      adaptStudyBuddyProfileToSelection(mixed, {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        model: "gemini",
+      }),
+    ).toBe(mixed);
+    expect(
+      allStudyBuddyProfiles([profile, mixed], {
+        instanceId: ProviderInstanceId.make("antigravity"),
+        driver: ProviderDriverKind.make("antigravity"),
+        models: [],
+      })
+        .filter((profile) => profile.kind === "custom")
+        .map((profile) => profile.id),
+    ).toEqual(["mixed"]);
+    expect(decodeCustomProfile(JSON.parse(JSON.stringify(mixed)))).toEqual(mixed);
+  });
   it("preserves the GPT role policies for a custom Codex instance", () => {
     const instanceId = ProviderInstanceId.make("work-codex");
     const settings = {

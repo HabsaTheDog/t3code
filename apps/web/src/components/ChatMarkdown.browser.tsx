@@ -15,12 +15,12 @@ const { openInPreferredEditorMock, openInSystemApplicationMock, readLocalApiMock
   }),
 );
 
-vi.mock("../editorPreferences", () => ({
+vi.mock("~/editorPreferences", () => ({
   openInPreferredEditor: openInPreferredEditorMock,
   openInSystemApplication: openInSystemApplicationMock,
 }));
 
-vi.mock("../localApi", () => ({
+vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(() => {
     throw new Error("ensureLocalApi not implemented in browser test");
   }),

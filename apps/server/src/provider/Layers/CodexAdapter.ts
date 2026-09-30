@@ -55,6 +55,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { providerWorkflowEnvironment } from "../studyBuddyModelBridge.ts";
 import { captureStudyBuddyEmailApprovalRequest } from "../../custom-skills/sources/emailSendApprovals.ts";
 import { captureStudyBuddyQuizApprovalRequest } from "../../custom-skills/sources/quizApprovals.ts";
 import {
@@ -1499,12 +1500,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const workflowEnvironment =
+          serverConfig.mode === "desktop"
+            ? yield* providerWorkflowEnvironment({
+                threadId: input.threadId,
+                modelSelection: input.modelSelection,
+                driver: PROVIDER,
+                cwd: input.cwd,
+              }).pipe(
+                Effect.provideService(ServerConfig, serverConfig),
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+              )
+            : undefined;
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
-          ...(options?.environment ? { environment: options.environment } : {}),
+          ...(workflowEnvironment || options?.environment
+            ? { environment: { ...(options?.environment ?? process.env), ...workflowEnvironment } }
+            : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
