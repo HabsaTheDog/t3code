@@ -305,6 +305,25 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(instructions, /zero-length prompt must fail before any run directory/i);
     assert.match(instructions, /source-evidence/);
+    assert.match(instructions, /user's actual request is the primary guide to scope/);
+    assert.match(
+      instructions,
+      /do not force every request through a fixed source order, all-course crawl or answer template/,
+    );
+    assert.match(instructions, /Missing information is not evidence that nothing exists/);
+    assert.match(
+      instructions,
+      /Narrow to dated deadlines only when the user requests that restriction/,
+    );
+    assert.match(
+      instructions,
+      /When that mapping or a date conflict remains unresolved, expose the actionable uncertainty/,
+    );
+    assert.match(instructions, /Acquisition completeness and answer completeness are separate/);
+    assert.match(
+      instructions,
+      /establish which items are completed, outstanding or upcoming from the evidence/,
+    );
     assert.match(instructions, /Write for the learner in ordinary language/);
     assert.match(
       instructions,
