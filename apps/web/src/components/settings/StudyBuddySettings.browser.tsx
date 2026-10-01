@@ -228,7 +228,7 @@ describe("Study Buddy source settings", () => {
       [false, false, false, "mail-x", "Email off"],
       [true, false, false, "mail-search", "Read email"],
       [true, true, false, "mail-plus", "Email drafts"],
-      [true, true, true, "mail-question-mark", "Email approval"],
+      [true, true, true, "mail-send", "Email approval"],
     ] as const) {
       harness.getInventory.mockResolvedValueOnce(
         optimisticEmailPermissionInventory(harness.inventory, "university-email", {
@@ -245,6 +245,11 @@ describe("Study Buddy source settings", () => {
         expect(trigger.element().getAttribute("title")).toContain(label);
         expect(trigger.element().querySelector(`.lucide-${icon}`)).toBeTruthy();
       });
+      if (send && import.meta.env.VITE_COMPOSER_REVIEW_DIR) {
+        await trigger.screenshot({
+          path: `${import.meta.env.VITE_COMPOSER_REVIEW_DIR}/email-ask-to-send.png`,
+        });
+      }
       await trigger.click();
       await expect
         .element(page.getByRole("switch", { name: "Read email for University email", exact: true }))

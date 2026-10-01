@@ -1,9 +1,9 @@
 import type { StudyBuddySourceInventory } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
+  createLucideIcon,
   MailIcon,
   MailPlusIcon,
-  MailQuestionMarkIcon,
   MailSearchIcon,
   MailXIcon,
 } from "lucide-react";
@@ -21,6 +21,13 @@ import {
   PopoverTrigger,
 } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
+
+const MailSendIcon = createLucideIcon("MailSend", [
+  ["path", { d: "M22 10.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h7.5", key: "envelope" }],
+  ["path", { d: "m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7", key: "flap" }],
+  ["path", { d: "m14 17 8-3-3 8-1.5-3.5Z", key: "paper-plane" }],
+  ["path", { d: "m17.5 18.5 4.5-4.5", key: "fold" }],
+]);
 
 export function EmailPermissionsComposerControl({ compact }: { compact: boolean }) {
   const [inventory, setInventory] = useState<StudyBuddySourceInventory | null>(null);
@@ -44,7 +51,7 @@ export function EmailPermissionsComposerControl({ compact }: { compact: boolean 
   const label = useMemo(() => emailAccessLabel(inventory), [inventory]);
   const EmailIcon =
     label === "Email approval"
-      ? MailQuestionMarkIcon
+      ? MailSendIcon
       : label === "Email drafts"
         ? MailPlusIcon
         : label === "Read email"
