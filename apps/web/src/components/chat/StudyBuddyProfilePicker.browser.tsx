@@ -213,7 +213,7 @@ describe("provider tabs inside the profile picker (browser-diagnostic)", () => {
     await screen.unmount();
   });
 
-  it("honors conversation locks on tabs and profiles, including shortcuts", async () => {
+  it("allows browsing locked providers while preventing profile changes, including shortcuts", async () => {
     harness.customProfiles = [
       { ...duplicateStudyBuddyProfile(balanced(gemini), "personal"), name: "My Gemini" },
     ];
@@ -226,14 +226,29 @@ describe("provider tabs inside the profile picker (browser-diagnostic)", () => {
         onCoordinatorChange={changed}
       />,
     );
+    const geminiTab = page.getByRole("tab", { name: "Google Gemini", exact: true });
+    await expect.element(geminiTab).toBeEnabled();
+    await geminiTab.click();
+    await expect.element(geminiTab).toHaveAttribute("aria-selected", "true");
+    await expect.element(page.getByRole("option", { name: "Fast", exact: true })).toBeDisabled();
     await expect
-      .element(page.getByRole("tab", { name: "Google Gemini", exact: true }))
+      .element(page.getByRole("option", { name: "Balanced", exact: true }))
       .toBeDisabled();
+    await expect
+      .element(page.getByText("Start a new chat to use Google Gemini profiles."))
+      .toBeVisible();
+    await capturePicker("locked-provider-browsing");
     await expect.element(page.getByRole("option", { name: "My Gemini" })).toBeDisabled();
     window.dispatchEvent(
       new KeyboardEvent("keydown", { key: "1", ctrlKey: true, bubbles: true, cancelable: true }),
     );
     expect(changed).not.toHaveBeenCalled();
+    expect(harness.updateSettings).not.toHaveBeenCalled();
+    await page.getByRole("tab", { name: "Codex", exact: true }).click();
+    await expect.element(page.getByRole("option", { name: "Quality", exact: true })).toBeEnabled();
+    await expect
+      .element(page.getByText("Start a new chat to use Google Gemini profiles."))
+      .not.toBeInTheDocument();
     await screen.unmount();
   });
 

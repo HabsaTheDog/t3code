@@ -206,7 +206,19 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       ))}
     </div>
   );
-  const builtIns = renderProfiles(builtInProfiles, "Built-in profiles");
+  const providerLocked = Boolean(
+    provider && props.lockedInstanceIds && !props.lockedInstanceIds.includes(provider.instanceId),
+  );
+  const builtIns = (
+    <>
+      {providerLocked && provider ? (
+        <p className="px-2 pb-1.5 text-xs text-muted-foreground">
+          Start a new chat to use {studyBuddyConnectionLabel(provider)} profiles.
+        </p>
+      ) : null}
+      {renderProfiles(builtInProfiles, "Built-in profiles")}
+    </>
+  );
 
   return (
     <Popover open={props.open} onOpenChange={props.onOpenChange}>
@@ -251,54 +263,55 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
             <div className="mx-2 my-1 h-px bg-border" />
           </>
         ) : null}
-        <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Built in</div>
         {connected.length > 1 && provider ? (
           <Tabs.Root
             value={provider.instanceId}
             onValueChange={(value) => setBrowsedInstanceId(value as ProviderInstanceId)}
           >
-            <Tabs.List
-              aria-label="Built-in profile providers"
-              activateOnFocus
-              className="mx-1 mb-1 flex gap-1 rounded-md bg-muted/50 p-1"
-            >
-              {connected.map((entry) => {
-                const label = studyBuddyConnectionLabel(entry);
-                const locked = Boolean(
-                  props.lockedInstanceIds && !props.lockedInstanceIds.includes(entry.instanceId),
-                );
-                return (
-                  <Tooltip key={entry.instanceId}>
-                    <TooltipTrigger
-                      render={
-                        <Tabs.Tab
-                          value={entry.instanceId}
-                          disabled={locked}
-                          aria-label={label}
-                          title={locked ? `${label}: start a new chat to switch providers` : label}
-                          className="flex min-h-8 min-w-0 flex-1 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-active:bg-background data-active:text-foreground data-active:shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
-                        />
-                      }
-                    >
-                      <ProviderInstanceIcon
-                        driverKind={entry.driver}
-                        displayName={label}
-                        showBadge={
-                          connected.filter((candidate) => candidate.driver === entry.driver)
-                            .length > 1
+            <div className="flex items-center justify-between gap-2 px-2">
+              <span className="py-1.5 text-xs font-medium text-muted-foreground">Built in</span>
+              <Tabs.List
+                aria-label="Built-in profile providers"
+                activateOnFocus
+                className="flex shrink-0 gap-1"
+              >
+                {connected.map((entry) => {
+                  const label = studyBuddyConnectionLabel(entry);
+                  return (
+                    <Tooltip key={entry.instanceId}>
+                      <TooltipTrigger
+                        render={
+                          <Tabs.Tab
+                            value={entry.instanceId}
+                            aria-label={label}
+                            title={label}
+                            className="flex size-8 cursor-pointer items-center justify-center rounded-t-sm border-b-2 border-transparent text-muted-foreground outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring data-active:border-primary data-active:text-foreground"
+                          />
                         }
-                        iconClassName="size-4"
-                      />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{label}</TooltipPopup>
-                  </Tooltip>
-                );
-              })}
-            </Tabs.List>
+                      >
+                        <ProviderInstanceIcon
+                          driverKind={entry.driver}
+                          displayName={label}
+                          showBadge={
+                            connected.filter((candidate) => candidate.driver === entry.driver)
+                              .length > 1
+                          }
+                          iconClassName="size-4"
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{label}</TooltipPopup>
+                    </Tooltip>
+                  );
+                })}
+              </Tabs.List>
+            </div>
             <Tabs.Panel value={provider.instanceId}>{builtIns}</Tabs.Panel>
           </Tabs.Root>
         ) : (
-          builtIns
+          <>
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Built in</div>
+            {builtIns}
+          </>
         )}
         {builtInProfiles.length === 0 ? (
           <p className="px-3 py-2 text-xs text-muted-foreground">
