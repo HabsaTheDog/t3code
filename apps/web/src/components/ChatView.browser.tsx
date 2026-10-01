@@ -7000,7 +7000,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         });
       });
 
-      expect(document.activeElement?.closest('[data-slot="select-item"]')).not.toBeNull();
+      expect(document.activeElement?.closest('[role="option"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }

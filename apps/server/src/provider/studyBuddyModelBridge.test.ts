@@ -63,6 +63,8 @@ describe("Study Buddy model bridge", () => {
               coordinator: { ...profile.roles.coordinator, ...selection },
               artifactBuilder: {
                 ...profile.roles.artifactBuilder,
+                // A saved mixed assignment stays pinned when built-in defaults change.
+                model: "gpt-5.6-sol",
                 instanceId: ProviderInstanceId.make("codex-secondary"),
               },
             },

@@ -40,7 +40,7 @@ describe("resolveQuickChatModelSelection", () => {
 
     expect(selection).toMatchObject({
       instanceId: "codex",
-      model: "gpt-5.6-terra",
+      model: "gpt-6.1-sol",
       options: expect.arrayContaining([
         { id: "reasoningEffort", value: "medium" },
         { id: "studyBuddyExecutionProfileId", value: "balanced" },
@@ -108,7 +108,7 @@ describe("resolveQuickChatModelSelection", () => {
         settings,
         providers: [codexProvider(["gpt-5.6-terra"]), gemini],
       }),
-    ).toMatchObject({ instanceId: "antigravity", model: "gemini-pro-high" });
+    ).toMatchObject({ instanceId: "antigravity", model: "gemini-flash-medium" });
     const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "mixed-missing");
     const mixed = {
       ...profile,

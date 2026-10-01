@@ -46,6 +46,9 @@ const harness = vi.hoisted(() => {
         instanceId: "codex",
         driver: "codex",
         models: [
+          { slug: "gpt-6-luna", name: "Luna", isCustom: false },
+          { slug: "gpt-6.1-sol", name: "Sol", isCustom: false },
+          { slug: "gpt-6-astra", name: "Astra", isCustom: false },
           { slug: "gpt-specialist", name: "Specialist", isCustom: false },
           { slug: "gpt-retry", name: "Retry", isCustom: false },
         ],
@@ -204,7 +207,7 @@ describe("advanced task assignments (browser-diagnostic)", () => {
     await page.getByText("Advanced task assignments", { exact: true }).click();
     await page.getByText("Content analyst tasks", { exact: true }).click();
     const task = page.getByRole("group", { name: "Source search", exact: true });
-    await expect.element(task.getByText("gpt-5.6-luna", { exact: true })).toBeVisible();
+    await expect.element(task.getByText("gpt-6-luna", { exact: true })).toBeVisible();
     await expect
       .element(task.getByRole("button", { name: "Override task" }))
       .not.toBeInTheDocument();

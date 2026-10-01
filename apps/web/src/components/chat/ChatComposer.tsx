@@ -66,7 +66,7 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
-import { StudyBuddyProfilePicker, StudyBuddyConnectionPicker } from "./StudyBuddyProfilePicker";
+import { StudyBuddyProfilePicker } from "./StudyBuddyProfilePicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -2651,23 +2651,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <StudyBuddyConnectionPicker
-                  activeProfile={activeExecutionProfile}
-                  providers={providerStatuses}
-                  {...(lockedProvider
-                    ? {
-                        lockedInstanceIds: providerInstanceEntries
-                          .filter(
-                            (entry) =>
-                              entry.driverKind === lockedProvider &&
-                              (!lockedContinuationGroupKey ||
-                                entry.continuationGroupKey === lockedContinuationGroupKey),
-                          )
-                          .map((entry) => entry.instanceId),
-                      }
-                    : {})}
-                  onCoordinatorChange={onProviderModelSelect}
-                />
                 <StudyBuddyProfilePicker
                   providers={providerStatuses}
                   {...(lockedProvider

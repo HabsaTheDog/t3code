@@ -1281,7 +1281,7 @@ describe("StudyBuddyProfilePicker", () => {
             status: "ready",
             auth: { status: "authenticated" },
             checkedAt: "2026-09-30T00:00:00Z",
-            models: [{ slug: "gpt-5.6-terra", name: "Terra", isCustom: false, capabilities: null }],
+            models: [{ slug: "gpt-6.1-sol", name: "Sol", isCustom: false, capabilities: null }],
             slashCommands: [],
             skills: [],
           },

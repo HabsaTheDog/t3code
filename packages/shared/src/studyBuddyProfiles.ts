@@ -35,74 +35,74 @@ export const STUDY_BUDDY_BUILT_IN_PROFILES: ReadonlyArray<StudyBuddyExecutionPro
   {
     id: "fast",
     name: "Fast",
-    description: "Quick drafts and direct answers with the lowest practical latency.",
+    description: "Sol with light reasoning and Luna workers for quick drafts and direct answers.",
     kind: "built-in",
     icon: "zap",
     taskOverrides: {
-      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
-      content_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
-      artifact_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
+      source_search: worker("gpt-6-luna", "medium", "gpt-6.1-sol", "medium"),
+      content_repair: worker("gpt-6.1-sol", "high", "gpt-6-sol", "high"),
+      artifact_repair: worker("gpt-6.1-sol", "high", "gpt-6-sol", "high"),
     },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
-        model: "gpt-5.6-terra",
+        model: "gpt-6.1-sol",
         reasoningEffort: "low",
-        fastMode: true,
       },
-      contentAnalyzer: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "high"),
-      quizSolver: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
-      artifactPlanner: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
-      artifactBuilder: worker("gpt-5.6-luna", "high", "gpt-5.6-terra", "high"),
-      qualityReviewer: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "medium"),
+      contentAnalyzer: worker("gpt-6-luna", "medium", "gpt-6.1-sol", "high"),
+      quizSolver: worker("gpt-6-luna", "high", "gpt-6.1-sol", "high"),
+      artifactPlanner: worker("gpt-6-luna", "high", "gpt-6.1-sol", "high"),
+      artifactBuilder: worker("gpt-6-luna", "high", "gpt-6.1-sol", "high"),
+      qualityReviewer: worker("gpt-6.1-sol", "high", "gpt-6-sol", "medium"),
     },
   },
   {
     id: "balanced",
     name: "Balanced",
-    description: "The normal balance of speed, cost, and dependable study quality.",
+    description: "Sol for dependable everyday study work, with Luna search and bounded fallbacks.",
     kind: "built-in",
     icon: "gauge",
     taskOverrides: {
-      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
-      content_repair: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "medium"),
-      artifact_repair: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
+      source_search: worker("gpt-6-luna", "medium", "gpt-6.1-sol", "medium"),
+      content_repair: worker("gpt-6.1-sol", "high", "gpt-6-sol", "medium"),
+      artifact_repair: worker("gpt-6.1-sol", "high", "gpt-6-sol", "xhigh"),
     },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
-        model: "gpt-5.6-terra",
+        model: "gpt-6.1-sol",
         reasoningEffort: "medium",
       },
-      contentAnalyzer: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
-      quizSolver: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "high"),
-      artifactPlanner: worker("gpt-5.6-terra", "medium", "gpt-5.6-sol", "medium"),
-      artifactBuilder: worker("gpt-5.6-sol", "medium", "gpt-5.6-terra", "high"),
-      qualityReviewer: worker("gpt-5.6-terra", "medium", "gpt-5.6-terra", "medium"),
+      contentAnalyzer: worker("gpt-6.1-sol", "medium", "gpt-6-sol", "medium"),
+      quizSolver: worker("gpt-6.1-sol", "high", "gpt-6-sol", "high"),
+      artifactPlanner: worker("gpt-6.1-sol", "medium", "gpt-6-sol", "medium"),
+      artifactBuilder: worker("gpt-6.1-sol", "medium", "gpt-6-sol", "high"),
+      qualityReviewer: worker("gpt-6.1-sol", "medium", "gpt-6-sol", "medium"),
     },
   },
   {
     id: "quality",
     name: "Quality",
-    description: "Deeper planning, construction, and review for final or difficult work.",
+    description:
+      "Astra for demanding reasoning, building, and review; uses higher-cost models than Balanced.",
     kind: "built-in",
     icon: "gem",
     taskOverrides: {
-      source_search: worker("gpt-5.6-luna", "medium", "gpt-5.6-terra", "medium"),
-      content_repair: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
-      artifact_repair: worker("gpt-5.6-sol", "xhigh", "gpt-5.6-sol", "xhigh"),
+      source_search: worker("gpt-6-luna", "medium", "gpt-6.1-sol", "medium"),
+      content_repair: worker("gpt-6-astra", "high", "gpt-6.1-sol", "xhigh"),
+      artifact_repair: worker("gpt-6-astra", "high", "gpt-6.1-sol", "xhigh"),
     },
     roles: {
       coordinator: {
         instanceId: codexInstanceId,
-        model: "gpt-5.6-sol",
-        reasoningEffort: "high",
+        model: "gpt-6-astra",
+        reasoningEffort: "low",
       },
-      contentAnalyzer: worker("gpt-5.6-terra", "high", "gpt-5.6-sol", "medium"),
-      quizSolver: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
-      artifactPlanner: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
-      artifactBuilder: worker("gpt-5.6-sol", "high", "gpt-5.6-sol", "xhigh"),
-      qualityReviewer: worker("gpt-5.6-terra", "high", "gpt-5.6-terra", "high"),
+      contentAnalyzer: worker("gpt-6.1-sol", "high", "gpt-6-astra", "medium"),
+      quizSolver: worker("gpt-6-astra", "high", "gpt-6.1-sol", "xhigh"),
+      artifactPlanner: worker("gpt-6-astra", "high", "gpt-6.1-sol", "xhigh"),
+      artifactBuilder: worker("gpt-6-astra", "high", "gpt-6.1-sol", "xhigh"),
+      qualityReviewer: worker("gpt-6-astra", "medium", "gpt-6.1-sol", "high"),
     },
   },
 ];
@@ -187,20 +187,89 @@ export function studyBuddyBuiltInProfiles(
       b.name.localeCompare(a.name, "en", { numeric: true }) ||
       b.slug.localeCompare(a.slug, "en", { numeric: true }),
   );
+  const flashVersion = (model: ServerProvider["models"][number]) =>
+    /gemini[- ](\d+(?:\.\d+)*).*flash/i.exec(`${model.name} ${model.slug}`)?.[1];
+  const flashModels = sorted.filter(
+    (model) =>
+      /flash/i.test(`${model.name} ${model.slug}`) &&
+      !/lite|live|tts|cyber|image/i.test(`${model.name} ${model.slug}`),
+  );
+  const latestFlashVersion = flashModels
+    .map(flashVersion)
+    .filter((version): version is string => Boolean(version))
+    .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))[0];
+  const nativeModels =
+    provider.driver === "antigravity" && flashModels.length > 0
+      ? flashModels.filter(
+          (model) => !latestFlashVersion || flashVersion(model) === latestFlashVersion,
+        )
+      : sorted;
   const pick = (patterns: ReadonlyArray<RegExp>, fallback: string): string => {
     for (const pattern of patterns) {
-      const match = sorted.find((model) => pattern.test(`${model.name} ${model.slug}`));
+      const match = nativeModels.find((model) => pattern.test(`${model.name} ${model.slug}`));
       if (match) return match.slug;
     }
-    return sorted[0]?.slug ?? fallback;
+    return nativeModels[0]?.slug ?? fallback;
   };
   if (provider.driver === "codex") {
+    // Account catalogues can lag rollouts. Every known catalogue selection stays usable.
+    const select = (preferred: string, alternatives: ReadonlyArray<string>) =>
+      sorted.length === 0
+        ? preferred
+        : ([preferred, ...alternatives].find((slug) =>
+            sorted.some((model) => model.slug === slug),
+          ) ?? sorted[0]!.slug);
+    const replacements: Record<string, string> = {
+      "gpt-6.1-sol": select("gpt-6.1-sol", ["gpt-6-sol", "gpt-5.6-terra", "gpt-5.6-sol"]),
+      "gpt-6-sol": select("gpt-6-sol", ["gpt-6.1-sol", "gpt-5.6-sol", "gpt-5.6-terra"]),
+      "gpt-6-luna": select("gpt-6-luna", [
+        "gpt-5.6-luna",
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-5.6-terra",
+      ]),
+      "gpt-6-astra": select("gpt-6-astra", [
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+      ]),
+    };
+    const adaptWorker = (role: StudyBuddyWorkerRole): StudyBuddyWorkerRole => ({
+      ...role,
+      model: replacements[role.model] ?? role.model,
+      retryModel: replacements[role.retryModel] ?? role.retryModel,
+    });
     return STUDY_BUDDY_BUILT_IN_PROFILES.map((profile) => ({
       ...profile,
+      description: profile.description
+        .replace(
+          /Astra/g,
+          replacements["gpt-6-astra"] === "gpt-6-astra" ? "Astra" : replacements["gpt-6-astra"]!,
+        )
+        .replace(
+          /Sol/g,
+          replacements["gpt-6.1-sol"] === "gpt-6.1-sol" ? "Sol" : replacements["gpt-6.1-sol"]!,
+        )
+        .replace(
+          /Luna/g,
+          replacements["gpt-6-luna"] === "gpt-6-luna" ? "Luna" : replacements["gpt-6-luna"]!,
+        ),
       roles: {
-        ...profile.roles,
-        coordinator: { ...profile.roles.coordinator, instanceId: provider.instanceId },
+        coordinator: {
+          ...profile.roles.coordinator,
+          model: replacements[profile.roles.coordinator.model]!,
+          instanceId: provider.instanceId,
+        },
+        contentAnalyzer: adaptWorker(profile.roles.contentAnalyzer),
+        quizSolver: adaptWorker(profile.roles.quizSolver),
+        artifactPlanner: adaptWorker(profile.roles.artifactPlanner),
+        artifactBuilder: adaptWorker(profile.roles.artifactBuilder),
+        qualityReviewer: adaptWorker(profile.roles.qualityReviewer),
       },
+      taskOverrides: Object.fromEntries(
+        Object.entries(profile.taskOverrides ?? {}).map(([id, role]) => [id, adaptWorker(role)]),
+      ),
     }));
   }
   const claude = provider.driver === "claudeAgent";
@@ -213,24 +282,46 @@ export function studyBuddyBuiltInProfiles(
     claude ? "claude-sonnet-4-6" : "gemini-3.8-flash-medium",
   );
   const high = pick(
-    claude ? [/opus/i, /sonnet/i] : [/pro.*high/i, /pro/i, /flash.*high/i, /flash/i],
+    claude ? [/opus/i, /sonnet/i] : [/flash.*high/i, /flash/i, /pro.*high/i, /pro/i],
     claude ? "claude-opus-4-8" : "gemini-pro-agent",
   );
-  return STUDY_BUDDY_BUILT_IN_PROFILES.map((base) => {
+  const bases = claude
+    ? STUDY_BUDDY_BUILT_IN_PROFILES
+    : STUDY_BUDDY_BUILT_IN_PROFILES.filter((profile) => profile.id !== "quality");
+  const profiles = bases.map((base): StudyBuddyExecutionProfileDefinition => {
     const fast = base.id === "fast";
     const quality = base.id === "quality";
     const effort = fast ? "low" : quality ? "high" : "medium";
+    const effortForModel = (model: string) =>
+      /low/i.test(model)
+        ? "low"
+        : /high/i.test(model)
+          ? "high"
+          : /medium/i.test(model)
+            ? "medium"
+            : effort;
     const role = (
       model: string,
       retryModel = model === high ? medium : high,
-    ): StudyBuddyWorkerRole => worker(model, effort, retryModel, "high");
+    ): StudyBuddyWorkerRole =>
+      worker(
+        model,
+        claude ? effort : effortForModel(model),
+        retryModel,
+        claude ? "high" : effortForModel(retryModel),
+      );
     return {
       ...base,
+      description: claude
+        ? `${base.name} study work using the available Claude model tiers.`
+        : base.id === "fast"
+          ? "Flash with lighter thinking for quick answers and drafts."
+          : "Flash with medium coordination and deeper thinking for building and review.",
       roles: {
         coordinator: {
           instanceId: provider.instanceId,
           model: fast ? cheap : quality ? high : medium,
-          reasoningEffort: effort,
+          reasoningEffort: claude ? effort : effortForModel(fast ? cheap : medium),
         },
         contentAnalyzer: role(fast ? cheap : quality ? high : medium),
         quizSolver: role(fast ? cheap : quality ? high : medium),
@@ -245,6 +336,10 @@ export function studyBuddyBuiltInProfiles(
       },
     };
   });
+  // Without distinct model/thinking variants, multiple Gemini presets would be duplicates.
+  return !claude && cheap === medium && medium === high
+    ? profiles.filter((profile) => profile.id === "balanced")
+    : profiles;
 }
 
 export function allStudyBuddyProfiles(
@@ -293,7 +388,8 @@ export function resolveStudyBuddyProfile(input: {
         (profile) => profile.id === (requestedId === "auto" ? "balanced" : requestedId),
       ) ??
         builtIns.find((profile) => profile.id === input.legacyProfile) ??
-        builtIns[1]!);
+        builtIns.find((profile) => profile.id === "balanced") ??
+        builtIns[0]!);
 }
 
 export function resolveStudyBuddyProfileFromSettings(
@@ -360,6 +456,20 @@ export function resolveStudyBuddyProfileForModelSelection(
         (effort === undefined || profile.roles.coordinator.reasoningEffort === effort),
     );
     if (inferred) return inferred;
+    // Profiles predating persisted ids used the old Sol/Terra coordinator matrix.
+    const legacyId =
+      modelSelection.model === "gpt-5.6-sol"
+        ? "quality"
+        : modelSelection.model === "gpt-5.6-terra"
+          ? effort === "low"
+            ? "fast"
+            : "balanced"
+          : undefined;
+    if (legacyId)
+      return resolveStudyBuddyProfile({
+        activeProfileId: legacyId,
+        ...(provider ? { provider } : {}),
+      });
   }
   const defaultId =
     modelSelection && settings.studyBuddyProviderProfileIds?.[modelSelection.instanceId];
@@ -463,9 +573,12 @@ export function adaptStudyBuddyProfileToSelection(
   models: ServerProvider["models"] = [],
 ): StudyBuddyExecutionProfileDefinition {
   if (profile.kind === "custom") return profile;
-  return studyBuddyBuiltInProfiles({
-    instanceId: selection.instanceId,
-    driver: driver as ServerProvider["driver"],
-    models,
-  }).find((candidate) => candidate.id === profile.id)!;
+  return resolveStudyBuddyProfile({
+    activeProfileId: profile.id,
+    provider: {
+      instanceId: selection.instanceId,
+      driver: driver as ServerProvider["driver"],
+      models,
+    },
+  });
 }

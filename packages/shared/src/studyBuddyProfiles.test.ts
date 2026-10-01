@@ -43,9 +43,9 @@ describe("Study Buddy execution profiles", () => {
       "qualityReviewer",
     ]);
     expect(STUDY_BUDDY_BUILT_IN_PROFILES[1]!.roles.quizSolver).toEqual({
-      model: "gpt-5.6-terra",
+      model: "gpt-6.1-sol",
       reasoningEffort: "high",
-      retryModel: "gpt-5.6-sol",
+      retryModel: "gpt-6-sol",
       retryReasoningEffort: "high",
     });
   });
@@ -54,33 +54,103 @@ describe("Study Buddy execution profiles", () => {
     const [fast, balanced, quality] = STUDY_BUDDY_BUILT_IN_PROFILES;
 
     expect(fast?.roles).toMatchObject({
-      coordinator: { model: "gpt-5.6-terra", reasoningEffort: "low" },
-      contentAnalyzer: { model: "gpt-5.6-luna", retryModel: "gpt-5.6-terra" },
-      quizSolver: { model: "gpt-5.6-luna", retryModel: "gpt-5.6-terra" },
-      artifactPlanner: { model: "gpt-5.6-luna", retryModel: "gpt-5.6-terra" },
-      artifactBuilder: { model: "gpt-5.6-luna", retryModel: "gpt-5.6-terra" },
-      qualityReviewer: { model: "gpt-5.6-terra", retryModel: "gpt-5.6-sol" },
-    });
-    expect(balanced?.roles).toMatchObject({
-      coordinator: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
-      contentAnalyzer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
-      quizSolver: { model: "gpt-5.6-terra", reasoningEffort: "high" },
-      artifactPlanner: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
-      artifactBuilder: {
-        model: "gpt-5.6-sol",
+      coordinator: { model: "gpt-6.1-sol", reasoningEffort: "low" },
+      contentAnalyzer: {
+        model: "gpt-6-luna",
         reasoningEffort: "medium",
-        retryModel: "gpt-5.6-terra",
+        retryModel: "gpt-6.1-sol",
         retryReasoningEffort: "high",
       },
-      qualityReviewer: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
+      quizSolver: {
+        model: "gpt-6-luna",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "high",
+      },
+      artifactPlanner: {
+        model: "gpt-6-luna",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "high",
+      },
+      artifactBuilder: {
+        model: "gpt-6-luna",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "high",
+      },
+      qualityReviewer: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "medium",
+      },
+    });
+    expect(balanced?.roles).toMatchObject({
+      coordinator: { model: "gpt-6.1-sol", reasoningEffort: "medium" },
+      contentAnalyzer: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "medium",
+      },
+      quizSolver: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "high",
+      },
+      artifactPlanner: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "medium",
+      },
+      artifactBuilder: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "high",
+      },
+      qualityReviewer: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "medium",
+        retryModel: "gpt-6-sol",
+        retryReasoningEffort: "medium",
+      },
     });
     expect(quality?.roles).toMatchObject({
-      coordinator: { model: "gpt-5.6-sol", reasoningEffort: "high" },
-      contentAnalyzer: { model: "gpt-5.6-terra", retryReasoningEffort: "medium" },
-      quizSolver: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
-      artifactPlanner: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
-      artifactBuilder: { model: "gpt-5.6-sol", retryReasoningEffort: "xhigh" },
-      qualityReviewer: { model: "gpt-5.6-terra", retryReasoningEffort: "high" },
+      coordinator: { model: "gpt-6-astra", reasoningEffort: "low" },
+      contentAnalyzer: {
+        model: "gpt-6.1-sol",
+        reasoningEffort: "high",
+        retryModel: "gpt-6-astra",
+        retryReasoningEffort: "medium",
+      },
+      quizSolver: {
+        model: "gpt-6-astra",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "xhigh",
+      },
+      artifactPlanner: {
+        model: "gpt-6-astra",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "xhigh",
+      },
+      artifactBuilder: {
+        model: "gpt-6-astra",
+        reasoningEffort: "high",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "xhigh",
+      },
+      qualityReviewer: {
+        model: "gpt-6-astra",
+        reasoningEffort: "medium",
+        retryModel: "gpt-6.1-sol",
+        retryReasoningEffort: "high",
+      },
     });
   });
 
@@ -116,10 +186,9 @@ describe("Study Buddy execution profiles", () => {
     expect(resolved.id).toBe("fast");
     expect(studyBuddyCoordinatorOptions(resolved)).toEqual([
       { id: "reasoningEffort", value: "low" },
-      { id: "fastMode", value: true },
       { id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "fast" },
     ]);
-    expect(resolved.roles.coordinator.model).toBe("gpt-5.6-terra");
+    expect(resolved.roles.coordinator.model).toBe("gpt-6.1-sol");
   });
 
   it("prefers a chat's persisted profile over the default setting", () => {
@@ -131,7 +200,7 @@ describe("Study Buddy execution profiles", () => {
       },
       {
         instanceId: ProviderInstanceId.make("codex"),
-        model: "gpt-5.6-sol",
+        model: "gpt-6-astra",
         options: [
           { id: "reasoningEffort", value: "high" },
           { id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" },
@@ -238,7 +307,9 @@ describe("native provider execution policies", () => {
         models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
       };
       const profiles = studyBuddyBuiltInProfiles(provider);
-      expect(profiles.map((profile) => profile.roles.coordinator.model)).toEqual(slugs);
+      expect(profiles.map((profile) => profile.roles.coordinator.model)).toEqual(
+        driver === "claudeAgent" ? slugs : slugs.slice(0, 2),
+      );
       for (const profile of profiles) {
         expect(profile.roles.coordinator.instanceId).toBe(instanceId);
         for (const policy of Object.values(studyBuddyProfileOverrides(profile))) {
@@ -259,7 +330,7 @@ describe("native provider execution policies", () => {
         },
         { providers: [provider] },
       );
-      expect(resolved).toEqual(profiles[2]);
+      expect(resolved).toEqual(driver === "claudeAgent" ? profiles[2] : profiles[1]);
     },
   );
 
@@ -304,9 +375,103 @@ describe("native provider execution policies", () => {
     };
     const profile = resolveStudyBuddyProfileForModelSelection(settings, {
       instanceId,
-      model: "gpt-5.6-terra",
+      model: "gpt-6.1-sol",
       options: [{ id: STUDY_BUDDY_EXECUTION_PROFILE_OPTION_ID, value: "quality" }],
     });
-    expect(profile.roles.artifactBuilder.model).toBe("gpt-5.6-sol");
+    expect(profile.roles.artifactBuilder.model).toBe("gpt-6-astra");
+  });
+});
+
+describe("catalogue-aware current profile defaults", () => {
+  const catalogue = (driver: string, slugs: string[]) => ({
+    instanceId: ProviderInstanceId.make(driver),
+    driver: ProviderDriverKind.make(driver),
+    models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+  });
+  it("uses only offered Codex models when current families have not rolled out", () => {
+    const provider = catalogue("codex", ["gpt-5.6-terra", "gpt-5.6-luna"]);
+    for (const profile of studyBuddyBuiltInProfiles(provider)) {
+      expect(provider.models.map((model) => model.slug)).toContain(profile.roles.coordinator.model);
+      for (const role of Object.values(studyBuddyProfileOverrides(profile))) {
+        expect(provider.models.map((model) => model.slug)).toContain(role.model);
+        expect(provider.models.map((model) => model.slug)).toContain(role.retryModel);
+      }
+    }
+    expect(studyBuddyBuiltInProfiles(provider)[2]!.description).not.toContain("Astra");
+  });
+  it("reserves Astra for Quality and leaves automatic fast billing off", () => {
+    const provider = catalogue("codex", ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]);
+    const profiles = studyBuddyBuiltInProfiles(provider);
+    expect(profiles.map((profile) => profile.roles.coordinator.model)).toEqual([
+      "gpt-6.1-sol",
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+    ]);
+    for (const profile of profiles.slice(0, 2)) {
+      expect(profile.roles.coordinator.fastMode).not.toBe(true);
+      expect(
+        Object.values(studyBuddyProfileOverrides(profile)).some(
+          (role) => role.model === "gpt-6-astra" || role.retryModel === "gpt-6-astra",
+        ),
+      ).toBe(false);
+    }
+  });
+  it("uses latest Flash thinking variants for two Gemini presets without an older Pro tier", () => {
+    const provider = catalogue("antigravity", [
+      "gemini-3.7-flash-low",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-high",
+      "gemini-pro-agent",
+    ]);
+    const profiles = studyBuddyBuiltInProfiles(provider);
+    expect(profiles.map((profile) => profile.id)).toEqual(["fast", "balanced"]);
+    for (const profile of profiles) {
+      for (const role of Object.values(studyBuddyProfileOverrides(profile))) {
+        expect(role.model).toMatch(/^gemini-3.8-flash/);
+        expect(role.retryModel).toMatch(/^gemini-3.8-flash/);
+      }
+    }
+    expect(profiles[1]!.roles.artifactBuilder).toMatchObject({
+      model: "gemini-3.8-flash-high",
+      reasoningEffort: "high",
+      retryModel: "gemini-3.8-flash-medium",
+      retryReasoningEffort: "medium",
+    });
+    expect(resolveStudyBuddyProfile({ activeProfileId: "quality", provider })).toEqual(profiles[1]);
+  });
+  it("collapses Gemini to Balanced when only one Flash model exists and resolves old ids safely", () => {
+    const provider = catalogue("antigravity", [
+      "gemini-3.8-flash",
+      "gemini-3.7-flash-low",
+      "gemini-pro-agent",
+    ]);
+    expect(studyBuddyBuiltInProfiles(provider).map((profile) => profile.id)).toEqual(["balanced"]);
+    for (const id of ["fast", "balanced", "quality", "auto", "missing"]) {
+      expect(
+        resolveStudyBuddyProfile({ activeProfileId: id, provider }).roles.coordinator.model,
+      ).toBe("gemini-3.8-flash");
+    }
+    expect(
+      adaptStudyBuddyProfileToSelection(
+        STUDY_BUDDY_BUILT_IN_PROFILES[2]!,
+        { instanceId: provider.instanceId, model: "gemini-3.8-flash" },
+        provider.driver,
+        provider.models,
+      ).id,
+    ).toBe("balanced");
+  });
+  it("keeps saved custom model assignments intact during a built-in refresh", () => {
+    const custom = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "saved-custom");
+    const saved = {
+      ...custom,
+      roles: {
+        ...custom.roles,
+        coordinator: { ...custom.roles.coordinator, model: "gpt-5.6-terra" },
+      },
+    };
+    const provider = catalogue("codex", ["gpt-6.1-sol", "gpt-6-luna", "gpt-6-astra"]);
+    expect(
+      resolveStudyBuddyProfile({ activeProfileId: saved.id, customProfiles: [saved], provider }),
+    ).toBe(saved);
   });
 });
