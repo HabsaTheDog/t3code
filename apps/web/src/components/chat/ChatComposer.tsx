@@ -71,6 +71,7 @@ import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommand
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { EmailPermissionsComposerControl } from "./EmailPermissionsComposerControl";
+import { quizAccessIcons } from "./quizAccessIcons";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import {
   ComposerVoiceInput,
@@ -105,7 +106,6 @@ import {
   LockIcon,
   LockOpenIcon,
   PenLineIcon,
-  ShieldCheckIcon,
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -282,6 +282,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   const quizAccessOption = QUIZ_ACCESS_MODE_OPTIONS.find(
     (option) => option.value === props.quizAccessMode,
   );
+  const QuizAccessIcon = quizAccessIcons[props.quizAccessMode];
 
   return (
     <>
@@ -322,10 +323,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           size="sm"
           className="font-medium"
           aria-label="Runtime mode"
-          title={runtimeModeOption.description}
+          title={`${runtimeModeOption.label}: ${runtimeModeOption.description}`}
         >
-          <RuntimeModeIcon className="size-4" />
-          <SelectValue>{runtimeModeOption.label}</SelectValue>
+          <RuntimeModeIcon className="size-4" aria-hidden="true" />
+          <SelectValue>Computer</SelectValue>
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {runtimeModeOptions.map((mode) => {
@@ -348,11 +349,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </SelectPopup>
       </Select>
 
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
       <EmailPermissionsComposerControl compact={false} />
-
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
       <Select
         value={props.quizAccessMode}
@@ -367,35 +364,38 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           size="sm"
           className="font-medium"
           aria-label="Quiz access mode"
-          title={quizAccessOption?.description}
+          title={`${quizAccessOption?.label}: ${quizAccessOption?.description}`}
           disabled={props.quizAccessDisabled}
         >
-          <ShieldCheckIcon className="size-4" />
-          <SelectValue>{quizAccessOption?.label ?? "Quiz access"}</SelectValue>
+          <QuizAccessIcon className="size-4" aria-hidden="true" />
+          <SelectValue>Quizzes</SelectValue>
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
-          {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
-            <Tooltip key={option.value}>
-              <TooltipTrigger
-                delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
-                render={
-                  <SelectItem value={option.value} className="min-w-56 py-2">
-                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                      <ShieldCheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                      {option.label}
-                    </span>
-                  </SelectItem>
-                }
-              />
-              <TooltipPopup
-                side="left"
-                sideOffset={8}
-                className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
-              >
-                {option.description}
-              </TooltipPopup>
-            </Tooltip>
-          ))}
+          {QUIZ_ACCESS_MODE_OPTIONS.map((option) => {
+            const OptionIcon = quizAccessIcons[option.value];
+            return (
+              <Tooltip key={option.value}>
+                <TooltipTrigger
+                  delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
+                  render={
+                    <SelectItem value={option.value} className="min-w-56 py-2">
+                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        {option.label}
+                      </span>
+                    </SelectItem>
+                  }
+                />
+                <TooltipPopup
+                  side="left"
+                  sideOffset={8}
+                  className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
+                >
+                  {option.description}
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
         </SelectPopup>
       </Select>
 

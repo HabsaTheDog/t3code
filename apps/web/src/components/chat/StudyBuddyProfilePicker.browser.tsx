@@ -94,6 +94,23 @@ async function capturePicker(name: string) {
 }
 
 describe("provider tabs inside the profile picker (browser-diagnostic)", () => {
+  it("shows just the preset name and preserves a custom name verbatim", async () => {
+    const screen = await render(<StudyBuddyProfilePicker {...defaults} open={false} />);
+    const trigger = page.getByRole("button", { name: "Execution profile", exact: true });
+    await expect.element(trigger).toHaveTextContent(/^Balanced$/);
+    await screen.unmount();
+
+    const custom = {
+      ...duplicateStudyBuddyProfile(balanced(codex), "custom-short-label"),
+      name: "My profile",
+    };
+    const customScreen = await render(
+      <StudyBuddyProfilePicker {...defaults} activeProfile={custom} open={false} />,
+    );
+    await expect.element(trigger).toHaveTextContent(/^My profile$/);
+    await customScreen.unmount();
+  });
+
   afterEach(() => {
     document.body.innerHTML = "";
     harness.updateSettings.mockClear();

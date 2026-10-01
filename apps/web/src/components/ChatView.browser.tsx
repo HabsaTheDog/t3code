@@ -1458,6 +1458,22 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
+async function captureComposer(name: string) {
+  const directory = import.meta.env.VITE_COMPOSER_REVIEW_DIR;
+  if (!directory) return;
+  const wasDark = document.documentElement.classList.contains("dark");
+  document.documentElement.classList.add("dark");
+  try {
+    const composer = document.querySelector('[data-chat-composer-form="true"]');
+    if (!composer) throw new Error("Composer not found for visual review.");
+    await page.elementLocator(composer).screenshot({
+      path: `${directory}/${name}.png`,
+    });
+  } finally {
+    if (!wasDark) document.documentElement.classList.remove("dark");
+  }
+}
+
 async function pressComposerKey(key: string): Promise<void> {
   const composerEditor = await waitForComposerEditor();
   composerEditor.focus();
@@ -3571,6 +3587,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ),
       ).toBe(true);
       expect(emailControl.querySelectorAll("svg")).toHaveLength(2);
+      const profileControl = footer?.querySelector('[data-chat-execution-profile-picker="true"]');
+      expect(profileControl?.textContent?.trim()).toBe("Fast");
+      expect(runtimeControl.textContent?.trim()).toBe("Computer");
+      expect(emailControl.textContent?.trim()).toBe("Email");
+      expect(quizControl.textContent?.trim()).toBe("Quizzes");
+      expect(quizControl.querySelector(".lucide-shield-info")).toBeTruthy();
+      expect(footer?.querySelectorAll('[data-slot="separator"]')).toHaveLength(1);
+      await captureComposer("composer-desktop");
+      await mounted.setViewport(COMPACT_FOOTER_VIEWPORT);
+      await waitForLayout();
+      await captureComposer("composer-narrow");
     } finally {
       await mounted.cleanup();
     }
@@ -3996,7 +4023,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const runtimeModeSelect = await waitForButtonByText("Full access");
+      const runtimeModeSelect = await waitForButtonByText("Computer");
       runtimeModeSelect.click();
 
       expect((await waitForSelectItemContainingText("Supervised")).textContent).toContain(
@@ -4008,6 +4035,72 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect((await waitForSelectItemContainingText("Full access")).textContent).toContain(
         "Allow commands and edits without prompts",
       );
+      autoAcceptItem.click();
+      await vi.waitFor(() => {
+        const trigger = document.querySelector('[aria-label="Runtime mode"]');
+        expect(trigger?.textContent?.trim()).toBe("Computer");
+        expect(trigger?.querySelector(".lucide-pen-line")).toBeTruthy();
+        expect(trigger?.getAttribute("title")).toContain("Auto-accept edits");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps quiz labels short while showing and saving each permission mode", async () => {
+    setDraftThreadWithoutWorktree();
+    let accessMode = "review-only";
+    const configuration = () => ({
+      exists: true,
+      moodleUsername: "",
+      moodleDashboardUrl: "",
+      moodlePasswordConfigured: false,
+      cisUsername: "",
+      cisUrl: "",
+      cisPasswordConfigured: false,
+      calendarUrl: "",
+      calendarUrlConfigured: false,
+      quiz: {
+        accessMode,
+        minimumTimeLimitMinutes: 10,
+        minimumAttemptsLeft: 2,
+        fillConfidenceThreshold: 0.85,
+      },
+    });
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.serverGetStudyBuddyConfiguration) {
+          return configuration();
+        }
+        if (body._tag === WS_METHODS.serverUpdateStudyBuddyConfiguration) {
+          const patch = body.patch as { quiz: { accessMode: string } };
+          accessMode = patch.quiz.accessMode;
+          return configuration();
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      for (const [mode, label, icon] of [
+        ["ask-before-attempt", "Ask before opening a quiz", "shield-question-mark"],
+        ["quiz-assist", "Help during quizzes", "shield-check"],
+        ["review-only", "Review completed quizzes", "shield-info"],
+      ]) {
+        const trigger = await waitForButtonByText("Quizzes");
+        await vi.waitFor(() => expect(trigger.disabled).toBe(false));
+        await page.getByRole("combobox", { name: "Quiz access mode", exact: true }).click();
+        await page.getByRole("option", { name: label!, exact: true }).click();
+        await vi.waitFor(() => {
+          expect(accessMode).toBe(mode);
+          expect(trigger.textContent?.trim()).toBe("Quizzes");
+          expect(trigger.querySelector(`.lucide-${icon}`)).toBeTruthy();
+          expect(trigger.title).toContain(label);
+        });
+        await captureComposer(`composer-${mode}`);
+      }
     } finally {
       await mounted.cleanup();
     }

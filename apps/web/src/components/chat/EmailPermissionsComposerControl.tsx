@@ -1,5 +1,12 @@
 import type { StudyBuddySourceInventory } from "@t3tools/contracts";
-import { ChevronDownIcon, MailIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  MailIcon,
+  MailPlusIcon,
+  MailQuestionMarkIcon,
+  MailSearchIcon,
+  MailXIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -35,6 +42,16 @@ export function EmailPermissionsComposerControl({ compact }: { compact: boolean 
   }, []);
 
   const label = useMemo(() => emailAccessLabel(inventory), [inventory]);
+  const EmailIcon =
+    label === "Email approval"
+      ? MailQuestionMarkIcon
+      : label === "Email drafts"
+        ? MailPlusIcon
+        : label === "Read email"
+          ? MailSearchIcon
+          : label === "Email off"
+            ? MailXIcon
+            : MailIcon;
 
   return (
     <Popover>
@@ -47,12 +64,12 @@ export function EmailPermissionsComposerControl({ compact }: { compact: boolean 
             type="button"
             className="shrink-0 whitespace-nowrap px-2 font-medium text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
             aria-label="Email access permissions"
-            title="Choose what Study Buddy may do with each email account"
+            title={`${label}: choose what Study Buddy may do with each email account`}
           />
         }
       >
-        <MailIcon className="size-4" aria-hidden="true" />
-        <span className={compact ? "sr-only" : undefined}>{label}</span>
+        <EmailIcon className="size-4" aria-hidden="true" />
+        <span className={compact ? "sr-only" : undefined}>Email</span>
         <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverPopup

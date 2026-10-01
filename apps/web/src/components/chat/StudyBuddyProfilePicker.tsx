@@ -237,9 +237,7 @@ export const StudyBuddyProfilePicker = memo(function StudyBuddyProfilePicker(pro
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <StudyBuddyProfileIconView icon={props.activeProfile.icon} className="size-4 shrink-0" />
-          <span className="truncate">
-            {props.compact ? props.activeProfile.name : `${props.activeProfile.name} profile`}
-          </span>
+          <span className="truncate">{props.activeProfile.name}</span>
         </span>
       </PopoverTrigger>
       <PopoverPopup

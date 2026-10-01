@@ -9,8 +9,8 @@ import {
   MessageCircleIcon,
   MonitorCogIcon,
   PenLineIcon,
-  ShieldCheckIcon,
 } from "lucide-react";
+import { quizAccessIcons } from "./quizAccessIcons";
 import {
   isQuizAccessMode,
   QUIZ_ACCESS_MODE_OPTIONS,
@@ -57,6 +57,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   onQuizAccessModeChange: (mode: QuizAccessMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const QuizAccessIcon = quizAccessIcons[props.quizAccessMode];
   return (
     <Menu>
       <MenuTrigger
@@ -114,7 +115,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         <MenuSub>
           <MenuSubTrigger>
             <MonitorCogIcon className="size-4 text-muted-foreground" />
-            Computer access
+            Computer
           </MenuSubTrigger>
           <MenuSubPopup className="min-w-52">
             <MenuRadioGroup
@@ -140,8 +141,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         </MenuSub>
         <MenuSub>
           <MenuSubTrigger disabled={props.quizAccessDisabled}>
-            <ShieldCheckIcon className="size-4 text-muted-foreground" />
-            Quiz access
+            <QuizAccessIcon className="size-4 text-muted-foreground" />
+            Quizzes
           </MenuSubTrigger>
           <MenuSubPopup className="min-w-52">
             <MenuRadioGroup
@@ -151,28 +152,31 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                 props.onQuizAccessModeChange(value);
               }}
             >
-              {QUIZ_ACCESS_MODE_OPTIONS.map((option) => (
-                <Tooltip key={option.value}>
-                  <TooltipTrigger
-                    delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
-                    render={
-                      <MenuRadioItem value={option.value}>
-                        <span className="flex items-center gap-2">
-                          <ShieldCheckIcon className="size-4 text-muted-foreground" />
-                          {option.label}
-                        </span>
-                      </MenuRadioItem>
-                    }
-                  />
-                  <TooltipPopup
-                    side="left"
-                    sideOffset={8}
-                    className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
-                  >
-                    {option.description}
-                  </TooltipPopup>
-                </Tooltip>
-              ))}
+              {QUIZ_ACCESS_MODE_OPTIONS.map((option) => {
+                const OptionIcon = quizAccessIcons[option.value];
+                return (
+                  <Tooltip key={option.value}>
+                    <TooltipTrigger
+                      delay={QUIZ_ACCESS_TOOLTIP_DELAY_MS}
+                      render={
+                        <MenuRadioItem value={option.value}>
+                          <span className="flex items-center gap-2">
+                            <OptionIcon className="size-4 text-muted-foreground" />
+                            {option.label}
+                          </span>
+                        </MenuRadioItem>
+                      }
+                    />
+                    <TooltipPopup
+                      side="left"
+                      sideOffset={8}
+                      className="max-w-80 whitespace-normal px-3 py-2 leading-relaxed"
+                    >
+                      {option.description}
+                    </TooltipPopup>
+                  </Tooltip>
+                );
+              })}
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>

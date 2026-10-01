@@ -337,13 +337,13 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).not.toContain("Mode");
       expect(text).not.toContain("Chat");
       expect(text).not.toContain("Plan");
-      expect(text).toContain("Computer access");
-      expect(text).toContain("Quiz access");
+      expect(text).toContain("Computer");
+      expect(text).toContain("Quizzes");
       expect(text).not.toContain("Supervised");
       expect(text).not.toContain("Full access");
     });
 
-    await openCategory("Computer access");
+    await openCategory("Computer");
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
@@ -361,12 +361,12 @@ describe("CompactComposerControlsMenu", () => {
     await page.getByLabelText("More composer controls").click();
 
     const text = document.body.textContent ?? "";
-    const categories = ["Reasoning", "Mode", "Computer access", "Quiz access"];
+    const categories = ["Reasoning", "Mode", "Computer", "Quizzes"];
     const positions = categories.map((category) => text.indexOf(category));
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
 
-    await openCategory("Quiz access");
+    await openCategory("Quizzes");
 
     await vi.waitFor(() => {
       const submenuText = document.body.textContent ?? "";

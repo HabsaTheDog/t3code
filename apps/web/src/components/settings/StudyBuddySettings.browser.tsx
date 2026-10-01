@@ -1,4 +1,5 @@
 import "../../index.css";
+import type { StudyBuddySourceInventory } from "@t3tools/contracts";
 
 import { page } from "vite-plus/test/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -22,7 +23,7 @@ const harness = vi.hoisted(() => {
       fillConfidenceThreshold: 0.85,
     },
   };
-  const inventory = {
+  const inventory: StudyBuddySourceInventory = {
     version: 1 as const,
     revision: 0,
     adapters: [],
@@ -213,11 +214,48 @@ vi.mock("~/lib/desktopSpeechReactQuery", () => ({
 }));
 
 import { StudyBuddySettingsPanel } from "./StudyBuddySettings";
+import { EmailPermissionsComposerControl } from "../chat/EmailPermissionsComposerControl";
+import { optimisticEmailPermissionInventory } from "./StudyBuddyEmailPermissions.logic";
 
 describe("Study Buddy source settings", () => {
   beforeEach(() => harness.reset());
   afterEach(() => {
     document.body.innerHTML = "";
+  });
+
+  it("keeps the composer Email label fixed and exposes each account permission through its icon", async () => {
+    for (const [read, draft, send, icon, label] of [
+      [false, false, false, "mail-x", "Email off"],
+      [true, false, false, "mail-search", "Read email"],
+      [true, true, false, "mail-plus", "Email drafts"],
+      [true, true, true, "mail-question-mark", "Email approval"],
+    ] as const) {
+      harness.getInventory.mockResolvedValueOnce(
+        optimisticEmailPermissionInventory(harness.inventory, "university-email", {
+          read,
+          draft,
+          send,
+          senderEmail: "student@example.edu",
+        }),
+      );
+      const mounted = await render(<EmailPermissionsComposerControl compact={false} />);
+      const trigger = page.getByRole("button", { name: "Email access permissions", exact: true });
+      await expect.element(trigger).toHaveTextContent(/^Email$/);
+      await vi.waitFor(() => {
+        expect(trigger.element().getAttribute("title")).toContain(label);
+        expect(trigger.element().querySelector(`.lucide-${icon}`)).toBeTruthy();
+      });
+      await trigger.click();
+      await expect
+        .element(page.getByRole("switch", { name: "Read email for University email", exact: true }))
+        .toHaveAttribute("aria-checked", String(read));
+      await expect
+        .element(
+          page.getByRole("switch", { name: "Prepare drafts for University email", exact: true }),
+        )
+        .toHaveAttribute("aria-checked", String(draft));
+      await mounted.unmount();
+    }
   });
 
   it("shows source blocks with only safe public origins", async () => {
