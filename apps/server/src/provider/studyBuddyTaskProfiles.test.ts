@@ -58,6 +58,9 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
   expect(instructions).toContain("YOU are the single document author");
   expect(instructions).toContain("syntaxExamplePath before writing");
   expect(instructions).toContain("never LaTeX left/right");
+  expect(instructions).toContain("only after actually reading them in that material");
+  expect(instructions).toContain("not formula provenance");
+  expect(instructions).toContain("supplemental standard knowledge as your own explanation");
   expect(instructions).toContain("/app/task document");
   expect(instructions).toContain("/app/task sources");
   expect(instructions).toContain(
