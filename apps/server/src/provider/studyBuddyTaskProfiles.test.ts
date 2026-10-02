@@ -56,6 +56,8 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
     environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
   })!;
   expect(instructions).toContain("YOU are the single document author");
+  expect(instructions).toContain("syntaxExamplePath before writing");
+  expect(instructions).toContain("never LaTeX left/right");
   expect(instructions).toContain("/app/task document");
   expect(instructions).toContain("/app/task sources");
   expect(instructions).toContain(
