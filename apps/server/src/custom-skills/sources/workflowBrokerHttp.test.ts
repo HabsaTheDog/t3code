@@ -108,6 +108,18 @@ describe("Study Buddy workflow broker process termination", () => {
 });
 
 describe("Study Buddy workflow broker request identity", () => {
+  it("prepares default doc before applying any owning-thread worker profile", () => {
+    const input = {
+      args: ["doc", "Exact request", "--execution-profile=fast"],
+      workspace: "/workspace",
+      threadId: "owner",
+    };
+    const result = applyWorkflowExecutionProfile(input, STUDY_BUDDY_BUILT_IN_PROFILES[2]!);
+    expect(result).toEqual({
+      ...input,
+      args: ["document", JSON.stringify({ op: "prepare", prompt: "Exact request" })],
+    });
+  });
   it.each(["sources", "document"])(
     "keeps %s model-free without worker-profile arguments",
     (command) => {
@@ -179,7 +191,7 @@ describe("Study Buddy workflow broker request identity", () => {
     const result = applyWorkflowExecutionProfile(
       {
         args: [
-          "doc",
+          "extract",
           "Build a guide",
           "--codex-model",
           "stale-coordinator-model",

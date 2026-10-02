@@ -33,6 +33,7 @@ import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
 import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
 import {
   executeStudyBuddyWorkflow,
+  normalizeDocumentWorkflowRequest,
   type StudyBuddyWorkflowInvocation,
   type StudyBuddyWorkflowRequest,
   type StudyBuddyWorkflowResult,
@@ -42,9 +43,10 @@ export const STUDY_BUDDY_WORKFLOW_ROUTE = "/api/study-buddy/workflow";
 
 /** Bind every model stage to the owning thread's selected profile. */
 export function applyWorkflowExecutionProfile(
-  input: StudyBuddyWorkflowRequest,
+  rawInput: StudyBuddyWorkflowRequest,
   profile: StudyBuddyExecutionProfileDefinition,
 ): StudyBuddyWorkflowRequest {
+  const input = normalizeDocumentWorkflowRequest(rawInput);
   if (["source-runtime-probe", "sources", "document"].includes(input.args[0] ?? "")) return input;
   const args = input.args.slice(0, 2);
   for (let index = 2; index < input.args.length; index += 1) {
@@ -420,7 +422,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
 
         const outcome = yield* Effect.tryPromise({
           try: async (signal) => {
-            const input = decodeRequest(body.value);
+            const input = normalizeDocumentWorkflowRequest(decodeRequest(body.value));
             const workspace = await realpath(path.resolve(input.workspace));
             if (!(await stat(workspace)).isDirectory()) {
               throw new StudyBuddyWorkflowBrokerRequestError({});
@@ -467,32 +469,34 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               if (!ownerWorkspace || (await realpath(ownerWorkspace)) !== workspace)
                 throw new Error("Workflow thread does not own this workspace.");
               modelEnvironment.STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID = ownerThread.id;
-              const instance = await runPromise(
-                registry.getInstance(ownerThread.modelSelection.instanceId),
-              );
-              if (!instance) throw new Error("Selected workflow provider is unavailable.");
-              const settings = await runPromise(settingsService.getSettings);
-              const catalog = await runPromise(instance.snapshot.getSnapshot);
-              const profile = resolveStudyBuddyProfileForModelSelection(
-                settings,
-                ownerThread.modelSelection,
-                { providers: [catalog] },
-              );
-              executionRequest = applyWorkflowExecutionProfile(input, profile);
-              if (instance.driverKind === "codex") {
-                modelEnvironment.STUDY_BUDDY_CODEX_PATH = configuredWorkflowCodexPath(
-                  settings.providerInstances[ownerThread.modelSelection.instanceId]?.config,
+              if (!["sources", "document"].includes(input.args[0] ?? "")) {
+                const instance = await runPromise(
+                  registry.getInstance(ownerThread.modelSelection.instanceId),
+                );
+                if (!instance) throw new Error("Selected workflow provider is unavailable.");
+                const settings = await runPromise(settingsService.getSettings);
+                const catalog = await runPromise(instance.snapshot.getSnapshot);
+                const profile = resolveStudyBuddyProfileForModelSelection(
+                  settings,
+                  ownerThread.modelSelection,
+                  { providers: [catalog] },
+                );
+                executionRequest = applyWorkflowExecutionProfile(input, profile);
+                if (instance.driverKind === "codex") {
+                  modelEnvironment.STUDY_BUDDY_CODEX_PATH = configuredWorkflowCodexPath(
+                    settings.providerInstances[ownerThread.modelSelection.instanceId]?.config,
+                  );
+                }
+                Object.assign(
+                  modelEnvironment,
+                  modelBridgeEnvironment({
+                    ...runtimeState.value,
+                    threadId: ownerThread.id,
+                    modelSelection: ownerThread.modelSelection,
+                    driver: instance.driverKind,
+                  }),
                 );
               }
-              Object.assign(
-                modelEnvironment,
-                modelBridgeEnvironment({
-                  ...runtimeState.value,
-                  threadId: ownerThread.id,
-                  modelSelection: ownerThread.modelSelection,
-                  driver: instance.driverKind,
-                }),
-              );
             }
             return executeStudyBuddyWorkflow(
               createBrokerExecutionRequest(executionRequest, workspace),

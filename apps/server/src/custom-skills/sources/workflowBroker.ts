@@ -79,6 +79,49 @@ export interface StudyBuddyWorkflowBrokerDependencies {
   ) => Promise<StudyBuddyWorkflowResult>;
 }
 
+/** The default PDF entry prepares files for the native owner, never a worker chain. */
+export function normalizeDocumentWorkflowRequest(
+  input: StudyBuddyWorkflowRequest,
+): StudyBuddyWorkflowRequest {
+  if (input.args[0] !== "doc") return input;
+  validateRequest(input);
+  const prompt = input.args[1];
+  if (!prompt?.trim()) throw new Error("Study Buddy doc prompt must be non-empty.");
+  const metadata = new Map<string, string>();
+  const allowed = new Set(["--original-user-prompt", "--language", "--execution-profile"]);
+  for (let index = 2; index < input.args.length; index += 1) {
+    const argument = input.args[index]!;
+    const separator = argument.indexOf("=");
+    const option = separator >= 0 ? argument.slice(0, separator) : argument;
+    if (REJECTED_OVERRIDE_OPTIONS.has(option)) {
+      throw new Error(`Study Buddy workflow may not override ${option}.`);
+    }
+    if (!allowed.has(option) || metadata.has(option)) {
+      throw new Error(`Unsupported or duplicate Study Buddy doc option: ${option}.`);
+    }
+    const value = separator >= 0 ? argument.slice(separator + 1) : input.args[++index];
+    if (!value?.trim() || (separator < 0 && value.startsWith("--"))) {
+      throw new Error(`Study Buddy doc option ${option} requires a value.`);
+    }
+    if (option === "--language" && value !== "de" && value !== "en") {
+      throw new Error("Study Buddy doc language must be de or en.");
+    }
+    if (option === "--execution-profile" && !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(value)) {
+      throw new Error("Study Buddy doc profile metadata is invalid.");
+    }
+    metadata.set(option, value);
+  }
+  // Language/profile are compatibility metadata for the native caller, not
+  // runtime overrides. The selected app agent continues authoring this request.
+  return {
+    ...input,
+    args: [
+      "document",
+      JSON.stringify({ op: "prepare", prompt: metadata.get("--original-user-prompt") ?? prompt }),
+    ],
+  };
+}
+
 function validateRequest(input: StudyBuddyWorkflowRequest): void {
   const [command] = input.args;
   if (!command || !BROKERED_STUDY_BUDDY_COMMANDS.has(command)) {
@@ -245,9 +288,10 @@ function validateRejectedArgumentOverrides(input: StudyBuddyWorkflowRequest): vo
 }
 
 export async function executeStudyBuddyWorkflow(
-  input: StudyBuddyWorkflowRequest,
+  rawInput: StudyBuddyWorkflowRequest,
   dependencies: StudyBuddyWorkflowBrokerDependencies,
 ): Promise<StudyBuddyWorkflowResult> {
+  const input = normalizeDocumentWorkflowRequest(rawInput);
   validateRequest(input);
   validateRejectedArgumentOverrides(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({

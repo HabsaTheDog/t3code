@@ -762,47 +762,6 @@ function extractSourceArgsFor(prompt) {
   return COMBINED_SOURCE_PATTERN.test(prompt) ? ["--cis-url", defaultCisUrl] : ["--no-cis"];
 }
 
-async function runStagedDocument(prompt, args) {
-  const workflowArgs = args.some(
-    (arg) => arg === "--execution-profile" || arg.startsWith("--execution-profile="),
-  )
-    ? args
-    : [...args, "--execution-profile", "quality"];
-  const workflowDir = prepareRunDir(prompt);
-  const extractionDir = path.join(workflowDir, "extraction");
-  const renderDir = path.join(workflowDir, "render");
-  acquireArtifactLock(workflowDir);
-  console.log(`Workflow directory: ${workflowDir}`);
-  try {
-    const extractionCode = await runAgentInDir(prompt, extractionDir, [
-      "--stage",
-      "extract",
-      ...sourceArgsFor(prompt),
-      ...workflowArgs,
-    ]);
-    if (extractionCode !== 0 || !isValidExtractionHandoff(extractionDir)) {
-      return fail("Extraction did not produce a valid handoff; render stage will not start.");
-    }
-    const renderCode = await runAgentInDir(prompt, renderDir, [
-      "--stage",
-      "render",
-      "--source-run-dir",
-      extractionDir,
-      "--max-pages",
-      "0",
-      "--max-cis-pages",
-      "0",
-      "--no-downloads",
-      "--no-cis",
-      ...workflowArgs,
-    ]);
-    if (renderCode === 0) console.log(`PDF ready: ${path.join(renderDir, "document.pdf")}`);
-    return renderCode;
-  } finally {
-    releaseArtifactLock();
-  }
-}
-
 function cancelRun(runDir) {
   const pidFile = path.join(runDir, "pid.json");
   const resolvedPidFile = resolveContainedRegularFile(runDir, pidFile);
@@ -1066,9 +1025,13 @@ async function main(argv = process.argv.slice(2)) {
     });
   }
 
+  if (action === "doc")
+    return fail(
+      "Default doc must be prepared by the app-owned broker. Use document prepare and continue authoring with the same native agent.",
+      2,
+    );
   const prompt = requirePrompt(args);
   const extra = args.slice(1);
-  if (action === "doc") return runStagedDocument(prompt, extra);
   if (action === "render") {
     const sourceRunDir = extra[0];
     if (!sourceRunDir || !isValidExtractionHandoff(sourceRunDir)) {

@@ -56,6 +56,8 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
     environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
   })!;
   expect(instructions).toContain("YOU are the single document author");
+  expect(instructions).toContain("compatibility entry only prepares this same direct document");
+  expect(instructions).toContain("does not start background extraction");
   expect(instructions).toContain("syntaxExamplePath before writing");
   expect(instructions).toContain("Update the existing file or write it once");
   expect(instructions).toContain("validate generated question premises independently of answers");

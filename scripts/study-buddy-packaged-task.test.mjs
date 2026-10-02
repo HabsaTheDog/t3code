@@ -21,6 +21,27 @@ import {
 
 const adapterPath = fileURLToPath(new URL("./study-buddy-packaged-task.mjs", import.meta.url));
 
+it("refuses an unnormalized broker doc without a legacy workflow fallback", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "packaged-raw-doc-"));
+  try {
+    const result = spawnSync(process.execPath, [adapterPath, "doc", "Create exact notes"], {
+      cwd: temp,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        STUDY_BUDDY_BROKER_EXECUTION: "1",
+        STUDY_BUDDY_ROOT: temp,
+        STUDY_BUDDY_WORKSPACE: temp,
+      },
+    });
+    assert.equal(result.status, 2, result.stderr);
+    assert.include(result.stderr, "Default doc must be prepared by the app-owned broker");
+    assert.isFalse(existsSync(path.join(temp, "study-buddy-data")));
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 it("keeps brokered Unix workflows in the broker wrapper process group", () => {
   assert.isFalse(shouldDetachWorkflow({ STUDY_BUDDY_BROKER_EXECUTION: "1" }, "linux"));
   assert.isTrue(shouldDetachWorkflow({}, "linux"));
