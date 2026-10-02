@@ -108,6 +108,23 @@ describe("Study Buddy workflow broker process termination", () => {
 });
 
 describe("Study Buddy workflow broker request identity", () => {
+  it.each(["sources", "document"])(
+    "keeps %s model-free without worker-profile arguments",
+    (command) => {
+      const input = {
+        args: [
+          command,
+          JSON.stringify({
+            op: command === "sources" ? "courses" : "prepare",
+            ...(command === "document" ? { prompt: "Study request" } : {}),
+          }),
+        ],
+        workspace: path.resolve("/workspace"),
+        threadId: "native-owner",
+      };
+      expect(applyWorkflowExecutionProfile(input, STUDY_BUDDY_BUILT_IN_PROFILES[1]!)).toBe(input);
+    },
+  );
   it("propagates Balanced instead of an omitted or stale caller profile", () => {
     const profile = STUDY_BUDDY_BUILT_IN_PROFILES.find((entry) => entry.id === "balanced")!;
     const prompt = "Can you please do the mini test for my next math lesson?";

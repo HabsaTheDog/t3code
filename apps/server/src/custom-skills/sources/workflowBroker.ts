@@ -2,6 +2,8 @@
 import path from "node:path";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
+  "sources",
+  "document",
   "prompt",
   "source-evidence",
   "combined",
@@ -81,6 +83,39 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
   const [command] = input.args;
   if (!command || !BROKERED_STUDY_BUDDY_COMMANDS.has(command)) {
     throw new Error(`Unsupported Study Buddy workflow command: ${command || "<missing>"}.`);
+  }
+  if (command === "sources" || command === "document") {
+    if (input.args.length !== 2) {
+      throw new Error("Direct Study Buddy tools require exactly one JSON request.");
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(input.args[1] ?? "");
+    } catch {
+      throw new Error("Direct Study Buddy tool request must be JSON.");
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("Direct Study Buddy tool request must be an object.");
+    }
+    const request = payload as Record<string, unknown>;
+    const allowed =
+      command === "sources"
+        ? {
+            courses: ["op", "query"],
+            page: ["op", "url"],
+            download: ["op", "url", "sourceID", "resourceID"],
+            text: ["op", "sourceID", "pages"],
+            pages: ["op", "sourceID", "pages"],
+          }
+        : {
+            prepare: ["op", "prompt"],
+            compile: ["op", "runDir"],
+            publish: ["op", "runDir", "filename"],
+          };
+    const keys = allowed[request.op as keyof typeof allowed] as readonly string[] | undefined;
+    if (!keys || Object.keys(request).some((key) => !keys.includes(key))) {
+      throw new Error("Direct Study Buddy tool request has an unsupported operation or field.");
+    }
   }
   if (!path.isAbsolute(input.workspace)) {
     throw new Error("Study Buddy workflow workspace must be an absolute path.");

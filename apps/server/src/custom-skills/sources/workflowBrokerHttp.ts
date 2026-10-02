@@ -45,7 +45,7 @@ export function applyWorkflowExecutionProfile(
   input: StudyBuddyWorkflowRequest,
   profile: StudyBuddyExecutionProfileDefinition,
 ): StudyBuddyWorkflowRequest {
-  if (input.args[0] === "source-runtime-probe") return input;
+  if (["source-runtime-probe", "sources", "document"].includes(input.args[0] ?? "")) return input;
   const args = input.args.slice(0, 2);
   for (let index = 2; index < input.args.length; index += 1) {
     const argument = input.args[index]!;
@@ -455,6 +455,8 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               (thread) => thread.id === input.threadId && thread.deletedAt === null,
             );
             if (input.threadId && !ownerThread) throw new Error("Workflow thread is unavailable.");
+            if (["sources", "document"].includes(input.args[0] ?? "") && !ownerThread)
+              throw new Error("Direct Study Buddy tools require an owning native thread.");
             const modelEnvironment: Record<string, string> = {};
             let executionRequest = input;
             if (ownerThread) {
@@ -464,6 +466,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               const ownerWorkspace = ownerThread.worktreePath ?? ownerProject?.workspaceRoot;
               if (!ownerWorkspace || (await realpath(ownerWorkspace)) !== workspace)
                 throw new Error("Workflow thread does not own this workspace.");
+              modelEnvironment.STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID = ownerThread.id;
               const instance = await runPromise(
                 registry.getInstance(ownerThread.modelSelection.instanceId),
               );

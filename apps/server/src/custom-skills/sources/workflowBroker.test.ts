@@ -384,3 +384,57 @@ describe("Study Buddy workflow broker", () => {
     expect(JSON.stringify(result)).not.toContain(calendarUrl);
   });
 });
+
+describe("direct native-owner tools", () => {
+  it.each([
+    ["sources", '{"op":"courses","query":"topic"}'],
+    ["document", '{"op":"prepare","prompt":"Create my study document"}'],
+  ])("brokers %s without a worker profile or extra stage", async (command, payload) => {
+    const spawnWorkflow = vi.fn(async (input: StudyBuddyWorkflowInvocation) => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ command: input.args.slice(1) }),
+      stderr: "",
+    }));
+    const result = await executeStudyBuddyWorkflow(
+      { args: [command, payload], workspace: path.resolve("/workspace") },
+      {
+        packagedRoot: path.resolve("/app"),
+        nodeExecutable: "/usr/bin/node",
+        baseEnvironment: {},
+        resolveWorkflowEnvironment: async () => ({ MOODLE_PASSWORD: "private-canary" }),
+        spawnWorkflow,
+      },
+    );
+    expect(JSON.parse(result.stdout).command).toEqual([command, payload]);
+    expect(spawnWorkflow.mock.calls[0]![0].environment.STUDY_BUDDY_BROKER_EXECUTION).toBe("1");
+  });
+  it.each([
+    ["sources", '{"op":"page","url":"https://example.edu","workspace":"/other"}'],
+    ["sources", '{"op":"submit","url":"https://example.edu"}'],
+    [
+      "document",
+      '{"op":"compile","runDir":"/workspace/run","environment":{"MOODLE_PASSWORD":"x"}}',
+    ],
+    ["document", "not-json"],
+  ])(
+    "rejects malformed or authority-overriding %s before resolving credentials",
+    async (command, payload) => {
+      const resolveWorkflowEnvironment = vi.fn(async () => ({}));
+      const spawnWorkflow = vi.fn();
+      await expect(
+        executeStudyBuddyWorkflow(
+          { args: [command, payload], workspace: path.resolve("/workspace") },
+          {
+            packagedRoot: path.resolve("/app"),
+            nodeExecutable: "/usr/bin/node",
+            baseEnvironment: {},
+            resolveWorkflowEnvironment,
+            spawnWorkflow,
+          },
+        ),
+      ).rejects.toThrow("Direct Study Buddy");
+      expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+      expect(spawnWorkflow).not.toHaveBeenCalled();
+    },
+  );
+});

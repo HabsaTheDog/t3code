@@ -24,6 +24,8 @@ const brokeredExitCode = await maybeRunBrokeredWorkflow(process.argv.slice(2));
 if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 
 const USAGE = `Usage:
+  study_buddy_task sources "<JSON: courses/page/download/text/pages>"
+  study_buddy_task document "<JSON: prepare/compile/publish>"
   study_buddy_task source-evidence "<prompt>" [extra args]
   study_buddy_task prompt "<natural language prompt>" [extra args]
   study_buddy_task combined "<natural language prompt>" [extra args]
@@ -1041,6 +1043,27 @@ async function main(argv = process.argv.slice(2)) {
     const result = sourceRuntimeProbe();
     console.log(JSON.stringify(result.payload));
     return result.exitCode;
+  }
+
+  if (action === "sources" || action === "document") {
+    if (process.env.STUDY_BUDDY_BROKER_EXECUTION !== "1")
+      return fail("Direct Study Buddy tools require the app-owned workflow broker.");
+    if (args.length !== 1 || !args[0]?.trim())
+      return fail("Direct Study Buddy tools require exactly one JSON request.", 2);
+    const { entry, staticArgs } = resolveScript(
+      action === "sources" ? "moodle:sources" : "moodle:document",
+    );
+    const tsx = path.join(packagedRoot, "node_modules", "tsx", "dist", "cli.mjs");
+    const child = spawn(process.execPath, [tsx, entry, ...staticArgs, args[0]], {
+      cwd: packagedRoot,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    return await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => resolve(signal ? 1 : (code ?? 1)));
+    });
   }
 
   const prompt = requirePrompt(args);

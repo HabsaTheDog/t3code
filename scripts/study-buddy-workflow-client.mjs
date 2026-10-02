@@ -26,6 +26,8 @@ export function requestBroker(url, init) {
 }
 
 const BROKERED_COMMANDS = new Set([
+  "sources",
+  "document",
   "prompt",
   "source-evidence",
   "combined",

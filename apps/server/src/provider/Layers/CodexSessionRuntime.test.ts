@@ -282,7 +282,10 @@ describe("buildTurnStartParams", () => {
 
     const instructions = params.collaborationMode?.settings.developer_instructions ?? "";
     assert.match(instructions, /Active Study Buddy execution profile: `quality` \(`quality`\)/);
-    assert.match(instructions, /doc "<exact user prompt>" --execution-profile "quality"/);
+    assert.match(
+      instructions,
+      /source-evidence "<exact user prompt>" --execution-profile "quality"/,
+    );
     assert.match(
       instructions,
       /interactive-study-guide "<exact user prompt>" --execution-profile "quality"[\s\S]*canonical end-to-end route/,
@@ -436,7 +439,7 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /doc "<exact user prompt>" --execution-profile "balanced" --codex-model "gpt-5\.6-terra"/,
+      /prompt "<user prompt>" --execution-profile "balanced" --codex-model "gpt-5\.6-terra"/,
     );
   });
 });

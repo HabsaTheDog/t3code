@@ -40,7 +40,7 @@ describe("profile task handoff", () => {
         },
       },
     })!;
-    expect(instructions).toContain("every Study Buddy wrapper and web-layout command");
+    expect(instructions).toContain("every model-backed Study Buddy wrapper and web-layout command");
     expect(instructions.match(/--profile-overrides-json/g)).toHaveLength(1);
     const match = instructions.match(/--profile-overrides-json '([^']+)'/)!;
     expect(JSON.parse(match[1]!)).toMatchObject({
@@ -49,4 +49,20 @@ describe("profile task handoff", () => {
       content_repair: base.taskOverrides!.content_repair,
     });
   });
+});
+
+it("uses one native owner and direct deterministic tools for PDFs", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  expect(instructions).toContain("YOU are the single document author");
+  expect(instructions).toContain("/app/task document");
+  expect(instructions).toContain("/app/task sources");
+  expect(instructions).toContain(
+    "no additional model-backed extraction, formatting or review stage",
+  );
+  expect(instructions).toContain("Stop after three unsuccessful compile/validation attempts");
+  expect(instructions).toContain("Never submit final Moodle quiz/exam attempts");
+  expect(instructions).not.toContain("only PDF orchestration route");
+  expect(instructions).not.toContain("A Moodle PDF is publishable only when its extraction");
 });
