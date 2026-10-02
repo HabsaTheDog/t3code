@@ -62,6 +62,8 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
   expect(instructions).toContain("never LaTeX left/right");
   expect(instructions).toContain("actual small local Python or shell calculation");
   expect(instructions).toContain("does not insert delimiters");
+  expect(instructions).toContain("quoted strings containing dollar math print raw markup");
+  expect(instructions).toContain("technical terms verbatim in attributed definitions");
   expect(instructions).toContain("frac(full numerator, full denominator)");
   expect(instructions).toContain("only after actually reading them in that material");
   expect(instructions).toContain("not formula provenance");
