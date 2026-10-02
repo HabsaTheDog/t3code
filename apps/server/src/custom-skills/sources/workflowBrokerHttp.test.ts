@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- verifies native process-tree termination contracts.
 // @effect-diagnostics globalDate:off -- Permission fixtures require future wall-clock expiry.
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,11 +8,17 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createBrokerExecutionRequest,
+  applyWorkflowExecutionProfile,
+  configuredWorkflowCodexPath,
   safeBaseEnvironment,
   spawnWorkflow,
   stageQuizPermissionRequest,
   terminateWorkflowTree,
 } from "./workflowBrokerHttp.ts";
+import {
+  STUDY_BUDDY_BUILT_IN_PROFILES,
+  studyBuddyProfileOverrides,
+} from "@t3tools/shared/studyBuddyProfiles";
 import {
   captureStudyBuddyQuizApprovalRequest,
   clearStudyBuddyQuizApprovalsForTest,
@@ -102,6 +108,86 @@ describe("Study Buddy workflow broker process termination", () => {
 });
 
 describe("Study Buddy workflow broker request identity", () => {
+  it("propagates Balanced instead of an omitted or stale caller profile", () => {
+    const profile = STUDY_BUDDY_BUILT_IN_PROFILES.find((entry) => entry.id === "balanced")!;
+    const prompt = "Can you please do the mini test for my next math lesson?";
+    const result = applyWorkflowExecutionProfile(
+      {
+        args: [
+          "prompt",
+          prompt,
+          "--language",
+          "en",
+          "--auto-answer",
+          "--execution-profile=quality",
+          "--profile-overrides-json",
+          "{}",
+        ],
+        workspace: "/workspace",
+        threadId: "owner",
+      },
+      profile,
+    );
+    expect(result.args).toEqual([
+      "prompt",
+      prompt,
+      "--language",
+      "en",
+      "--auto-answer",
+      "--execution-profile",
+      "balanced",
+      "--profile-overrides-json",
+      JSON.stringify(studyBuddyProfileOverrides(profile)),
+    ]);
+    expect(result.threadId).toBe("owner");
+  });
+
+  it("keeps custom worker assignments and does not add flags to a runtime probe", () => {
+    const profile = {
+      ...STUDY_BUDDY_BUILT_IN_PROFILES[0]!,
+      id: "my-profile",
+      kind: "custom" as const,
+      roles: {
+        ...STUDY_BUDDY_BUILT_IN_PROFILES[0]!.roles,
+        contentAnalyzer: {
+          ...STUDY_BUDDY_BUILT_IN_PROFILES[0]!.roles.contentAnalyzer,
+          model: "catalog-custom-analyzer",
+        },
+        quizSolver: {
+          ...STUDY_BUDDY_BUILT_IN_PROFILES[0]!.roles.quizSolver,
+          model: "catalog-custom-quiz-solver",
+        },
+      },
+    };
+    const result = applyWorkflowExecutionProfile(
+      {
+        args: [
+          "doc",
+          "Build a guide",
+          "--codex-model",
+          "stale-coordinator-model",
+          "--codex-reasoning-effort=xhigh",
+        ],
+        workspace: "/workspace",
+      },
+      profile,
+    );
+    expect(result.args).toContain("custom");
+    expect(result.args).not.toContain("stale-coordinator-model");
+    expect(result.args).not.toContain("--codex-model");
+    expect(result.args).not.toContain("--codex-reasoning-effort=xhigh");
+    expect(JSON.parse(result.args.at(-1)!)).toEqual(studyBuddyProfileOverrides(profile));
+    const probe = { args: ["source-runtime-probe"], workspace: "/workspace" };
+    expect(applyWorkflowExecutionProfile(probe, profile)).toBe(probe);
+  });
+
+  it("uses the configured coordinator CLI instead of choosing a bundled worker runtime", () => {
+    expect(configuredWorkflowCodexPath({ binaryPath: "/runtime/codex-current" })).toBe(
+      "/runtime/codex-current",
+    );
+    expect(configuredWorkflowCodexPath({ binaryPath: "" })).toBe("codex");
+    expect(configuredWorkflowCodexPath(undefined)).toBe("codex");
+  });
   it("replaces caller-controlled thread ids with a server-owned execution scope", () => {
     expect(
       createBrokerExecutionRequest(
@@ -119,6 +205,48 @@ describe("Study Buddy workflow broker request identity", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "resolves bare Codex through the same managed PATH as the coordinator",
+  async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "workflow-provider-path-"));
+    try {
+      const codexHome = path.join(directory, "codex-home");
+      const managedBin = path.join(codexHome, "bin");
+      const hostBin = path.join(directory, "host-bin");
+      await mkdir(managedBin, { recursive: true });
+      await mkdir(hostBin);
+      for (const [bin, label] of [
+        [managedBin, "managed-current"],
+        [hostBin, "host-obsolete"],
+      ]) {
+        const executable = path.join(bin!, "codex");
+        await writeFile(executable, `#!/bin/sh\nprintf '${label}\\n'\n`);
+        await chmod(executable, 0o700);
+      }
+      const environment = safeBaseEnvironment(
+        { PATH: hostBin, MOODLE_PASSWORD: "canary-secret" },
+        codexHome,
+        directory,
+      );
+      const result = await spawnWorkflow({
+        command: process.execPath,
+        args: [
+          "-e",
+          'process.stdout.write(require("node:child_process").execFileSync("codex", [], { encoding: "utf8" }))',
+        ],
+        cwd: directory,
+        environment,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("managed-current\n");
+      expect(environment.CODEX_HOME).toBe(codexHome);
+      expect(environment.MOODLE_PASSWORD).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 describe("Study Buddy quiz permission staging", () => {
   it("copies a valid workspace request into private server state", async () => {

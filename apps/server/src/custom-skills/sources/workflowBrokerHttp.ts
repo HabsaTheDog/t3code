@@ -1,5 +1,10 @@
 import { modelBridgeEnvironment } from "../../provider/studyBuddyModelBridge.ts";
 import { ProviderInstanceRegistry } from "../../provider/Services/ProviderInstanceRegistry.ts";
+import {
+  resolveStudyBuddyProfileForModelSelection,
+  studyBuddyProfileOverrides,
+} from "@t3tools/shared/studyBuddyProfiles";
+import type { StudyBuddyExecutionProfileDefinition } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off -- Owns the local packaged-workflow process boundary.
 // @effect-diagnostics globalTimers:off -- Native child-process escalation must outlive Effect scopes.
 // @effect-diagnostics globalDate:off -- Permission expiry is wall-clock security state.
@@ -17,8 +22,12 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { resolveStudyBuddyCodexPolicyPaths } from "../../provider/setup/studyBuddyCodexPolicy.ts";
+import {
+  resolveStudyBuddyCodexPolicyPaths,
+  studyBuddyCodexEnvironment,
+} from "../../provider/setup/studyBuddyCodexPolicy.ts";
 import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
 import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
@@ -30,6 +39,47 @@ import {
 } from "./workflowBroker.ts";
 
 export const STUDY_BUDDY_WORKFLOW_ROUTE = "/api/study-buddy/workflow";
+
+/** Bind every model stage to the owning thread's selected profile. */
+export function applyWorkflowExecutionProfile(
+  input: StudyBuddyWorkflowRequest,
+  profile: StudyBuddyExecutionProfileDefinition,
+): StudyBuddyWorkflowRequest {
+  if (input.args[0] === "source-runtime-probe") return input;
+  const args = input.args.slice(0, 2);
+  for (let index = 2; index < input.args.length; index += 1) {
+    const argument = input.args[index]!;
+    const option = argument.split("=", 1)[0];
+    if (
+      option === "--execution-profile" ||
+      option === "--profile-overrides-json" ||
+      option === "--codex-model" ||
+      option === "--codex-reasoning-effort"
+    ) {
+      if (!argument.includes("=")) index += 1;
+      continue;
+    }
+    args.push(argument);
+  }
+  return {
+    ...input,
+    args: [
+      ...args,
+      "--execution-profile",
+      profile.kind === "built-in" ? profile.id : "custom",
+      "--profile-overrides-json",
+      JSON.stringify(studyBuddyProfileOverrides(profile)),
+    ],
+  };
+}
+
+export function configuredWorkflowCodexPath(configuration: unknown): string {
+  if (!configuration || typeof configuration !== "object" || !("binaryPath" in configuration))
+    return "codex";
+  return typeof configuration.binaryPath === "string" && configuration.binaryPath.trim()
+    ? configuration.binaryPath.trim()
+    : "codex";
+}
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const PROCESS_TREE_KILL_GRACE_MS = 2_000;
 const MAX_PERMISSION_REQUEST_BYTES = 64 * 1024;
@@ -71,13 +121,20 @@ export function safeBaseEnvironment(
   stateDir: string,
 ): NodeJS.ProcessEnv {
   return {
-    ...Object.fromEntries(
-      Object.entries(source).filter(
-        (entry): entry is [string, string] =>
-          SAFE_BASE_ENVIRONMENT_NAMES.has(entry[0]) && Boolean(entry[1]),
+    ...studyBuddyCodexEnvironment(
+      {
+        codexHome,
+        configPath: path.join(codexHome, "config.toml"),
+        configRoot: stateDir,
+        deniedPaths: [],
+      },
+      Object.fromEntries(
+        Object.entries(source).filter(
+          (entry): entry is [string, string] =>
+            SAFE_BASE_ENVIRONMENT_NAMES.has(entry[0]) && Boolean(entry[1]),
+        ),
       ),
     ),
-    CODEX_HOME: codexHome,
     STUDY_BUDDY_SOURCE_CACHE_ROOT: path.join(stateDir, "study-buddy-data", "cache", "sources"),
   };
 }
@@ -306,6 +363,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
     const secretStore = yield* ServerSecretStore.ServerSecretStore;
     const sourcePlatform = createStudyBuddySourcePlatform(config, secretStore);
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const settingsService = yield* ServerSettingsService;
     const codexHome = resolveStudyBuddyCodexPolicyPaths(config).codexHome;
 
     return HttpRouter.add(
@@ -398,6 +456,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
             );
             if (input.threadId && !ownerThread) throw new Error("Workflow thread is unavailable.");
             const modelEnvironment: Record<string, string> = {};
+            let executionRequest = input;
             if (ownerThread) {
               const ownerProject = snapshot.value.projects.find(
                 (project) => project.id === ownerThread.projectId,
@@ -409,6 +468,19 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                 registry.getInstance(ownerThread.modelSelection.instanceId),
               );
               if (!instance) throw new Error("Selected workflow provider is unavailable.");
+              const settings = await runPromise(settingsService.getSettings);
+              const catalog = await runPromise(instance.snapshot.getSnapshot);
+              const profile = resolveStudyBuddyProfileForModelSelection(
+                settings,
+                ownerThread.modelSelection,
+                { providers: [catalog] },
+              );
+              executionRequest = applyWorkflowExecutionProfile(input, profile);
+              if (instance.driverKind === "codex") {
+                modelEnvironment.STUDY_BUDDY_CODEX_PATH = configuredWorkflowCodexPath(
+                  settings.providerInstances[ownerThread.modelSelection.instanceId]?.config,
+                );
+              }
               Object.assign(
                 modelEnvironment,
                 modelBridgeEnvironment({
@@ -419,20 +491,23 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                 }),
               );
             }
-            return executeStudyBuddyWorkflow(createBrokerExecutionRequest(input, workspace), {
-              packagedRoot,
-              taskModulePath,
-              nodeExecutable,
-              baseEnvironment: {
-                ...safeBaseEnvironment(process.env, codexHome, config.stateDir),
-                ...modelEnvironment,
+            return executeStudyBuddyWorkflow(
+              createBrokerExecutionRequest(executionRequest, workspace),
+              {
+                packagedRoot,
+                taskModulePath,
+                nodeExecutable,
+                baseEnvironment: {
+                  ...safeBaseEnvironment(process.env, codexHome, config.stateDir),
+                  ...modelEnvironment,
+                },
+                resolveWorkflowEnvironment: (selection) =>
+                  sourcePlatform.resolveWorkflowEnvironment(selection),
+                stageQuizPermissionRequest: (permission) =>
+                  stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
+                spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
               },
-              resolveWorkflowEnvironment: (selection) =>
-                sourcePlatform.resolveWorkflowEnvironment(selection),
-              stageQuizPermissionRequest: (permission) =>
-                stageQuizPermissionRequest({ ...permission, stateDir: config.stateDir }),
-              spawnWorkflow: (invocation) => spawnWorkflow(invocation, signal),
-            });
+            );
           },
           catch: (cause) => new StudyBuddyWorkflowBrokerRequestError({ cause }),
         }).pipe(Effect.result);

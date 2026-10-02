@@ -62,6 +62,41 @@ describe("Study Buddy Codex policy", () => {
     });
   });
 
+  it("keeps desktop workflow routing in core-only shells without exposing credentials", () => {
+    const paths = resolveStudyBuddyCodexPolicyPaths(config);
+    const rendered = buildStudyBuddyCodexConfig(paths, {
+      STUDY_BUDDY_ROOT: "/workspace/Study Buddy",
+      STUDY_BUDDY_T3_ROOT: "/workspace/Study Buddy/t3code-fork",
+      STUDY_BUDDY_TASK_WRAPPER: "/workspace/Study Buddy/t3code-fork/scripts/study-buddy-dev-task",
+      STUDY_BUDDY_TASK_MODULE:
+        "/workspace/Study Buddy/t3code-fork/scripts/study-buddy-packaged-task.mjs",
+      STUDY_BUDDY_NODE_EXECUTABLE: "/runtime/electron",
+      STUDY_BUDDY_RUNTIME_STATE_ROOT: "/state/desktop-dev",
+      MOODLE_USERNAME: "private-user-canary",
+      MOODLE_PASSWORD: "private-password-canary",
+      CIS_CALENDAR_URL: "https://calendar.example/private-calendar-canary",
+      STUDY_BUDDY_SOURCE_LOGIN_SECRET: "private-source-canary",
+      STUDY_BUDDY_BROKER_EXECUTION: "1",
+      STUDY_BUDDY_WORKSPACE: "/stale/previous-chat",
+    });
+    const shellSettings = rendered.split("[shell_environment_policy.set]\n")[1]!;
+    expect(shellSettings).toContain(
+      'STUDY_BUDDY_TASK_WRAPPER = "/workspace/Study Buddy/t3code-fork/scripts/study-buddy-dev-task"',
+    );
+    expect(shellSettings).toContain('STUDY_BUDDY_NODE_EXECUTABLE = "/runtime/electron"');
+    expect(shellSettings).toContain('STUDY_BUDDY_RUNTIME_STATE_ROOT = "/state/desktop-dev"');
+    expect(shellSettings).toContain('STUDY_BUDDY_ROOT = "/workspace/Study Buddy"');
+    expect(shellSettings).not.toMatch(/MOODLE_|CIS_|SECRET|BROKER_EXECUTION|WORKSPACE|canary/);
+    expect(rendered).toContain('inherit = "core"');
+    expect(rendered).toContain('"**/.env.*" = "deny"');
+  });
+
+  it("uses the current server state for broker discovery when no desktop override exists", () => {
+    const rendered = buildStudyBuddyCodexConfig(resolveStudyBuddyCodexPolicyPaths(config), {});
+    expect(rendered).toContain('STUDY_BUDDY_RUNTIME_STATE_ROOT = "/state/userdata"');
+    expect(rendered).not.toContain("STUDY_BUDDY_TASK_WRAPPER =");
+  });
+
   it("does not alter the Windows installer location or PATH contract", () => {
     const paths = resolveStudyBuddyCodexPolicyPaths(config);
     expect(studyBuddyCodexEnvironment(paths, { PATH: "C:\\Windows" }, "win32")).toEqual({
