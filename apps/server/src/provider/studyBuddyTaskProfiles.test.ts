@@ -60,6 +60,10 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
   expect(instructions).toContain("never LaTeX left/right");
   expect(instructions).toContain("only after actually reading them in that material");
   expect(instructions).toContain("not formula provenance");
+  expect(instructions).toContain(
+    "every technical definition, variable legend and explanatory note",
+  );
+  expect(instructions).toContain("derivative order agrees with the displayed operator");
   expect(instructions).toContain("supplemental standard knowledge as your own explanation");
   expect(instructions).toContain("/app/task document");
   expect(instructions).toContain("/app/task sources");
