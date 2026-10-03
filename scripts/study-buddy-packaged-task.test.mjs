@@ -42,6 +42,63 @@ it("refuses an unnormalized broker doc without a legacy workflow fallback", () =
   }
 });
 
+it("dispatches brokered quiz JSON directly without model or legacy worker arguments", () => {
+  const temp = mkdtempSync(path.join(tmpdir(), "packaged-direct-quiz-"));
+  try {
+    const launcher = path.join(temp, "node_modules", "tsx", "dist");
+    mkdirSync(launcher, { recursive: true });
+    writeFileSync(
+      path.join(temp, "package.json"),
+      JSON.stringify({
+        scripts: { "moodle:quiz": "tsx src/custom-skills/moodle/directQuizCli.ts" },
+      }),
+    );
+    writeFileSync(
+      path.join(launcher, "cli.mjs"),
+      "console.log(JSON.stringify({args:process.argv.slice(2),broker:process.env.STUDY_BUDDY_BROKER_EXECUTION}));",
+    );
+    const request = JSON.stringify({
+      op: "read",
+      runDir: "/owned/quiz",
+      permissionRequestPath: "/approved.json",
+    });
+    const result = spawnSync(process.execPath, [adapterPath, "quiz", request], {
+      cwd: temp,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH,
+        STUDY_BUDDY_BROKER_EXECUTION: "1",
+        STUDY_BUDDY_ROOT: temp,
+        STUDY_BUDDY_WORKSPACE: temp,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      broker: "1",
+      args: [path.join(temp, "src/custom-skills/moodle/directQuizCli.ts"), request],
+    });
+    assert.isFalse(existsSync(path.join(temp, "study-buddy-data")));
+    const unsupported = spawnSync(
+      process.execPath,
+      [adapterPath, "quiz", request, "--codex-model", "other"],
+      {
+        cwd: temp,
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH,
+          STUDY_BUDDY_BROKER_EXECUTION: "1",
+          STUDY_BUDDY_ROOT: temp,
+          STUDY_BUDDY_WORKSPACE: temp,
+        },
+      },
+    );
+    assert.equal(unsupported.status, 2);
+    assert.include(unsupported.stderr, "exactly one JSON request");
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 it("keeps brokered Unix workflows in the broker wrapper process group", () => {
   assert.isFalse(shouldDetachWorkflow({ STUDY_BUDDY_BROKER_EXECUTION: "1" }, "linux"));
   assert.isTrue(shouldDetachWorkflow({}, "linux"));

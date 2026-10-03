@@ -120,14 +120,17 @@ describe("Study Buddy workflow broker request identity", () => {
       args: ["document", JSON.stringify({ op: "prepare", prompt: "Exact request" })],
     });
   });
-  it.each(["sources", "document"])(
+  it.each(["sources", "document", "quiz"])(
     "keeps %s model-free without worker-profile arguments",
     (command) => {
       const input = {
         args: [
           command,
           JSON.stringify({
-            op: command === "sources" ? "courses" : "prepare",
+            op: command === "sources" ? "courses" : command === "quiz" ? "inspect" : "prepare",
+            ...(command === "quiz"
+              ? { url: "https://moodle.example.test/mod/quiz/view.php?id=7" }
+              : {}),
             ...(command === "document" ? { prompt: "Study request" } : {}),
           }),
         ],

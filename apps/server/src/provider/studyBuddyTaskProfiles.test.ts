@@ -16,14 +16,20 @@ it("requires a working artifact for answer-checking exercises while preserving c
   expect(buildStudyBuddyDeveloperInstructions({ environment: {} })).toBeUndefined();
 });
 
-it("keeps multi-quiz execution in one batch while preserving every exact approval", () => {
+it("keeps quiz solving native and binds continuation to the first attempt", () => {
   const instructions = buildStudyBuddyDeveloperInstructions({
-    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
-  });
-  expect(instructions).toContain("keep all requested quizzes in one batch prompt");
-  expect(instructions).toContain("permissionRequestPaths");
-  expect(instructions).toContain("repeated `--approve-quiz-request");
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  expect(instructions).toContain("/app/task quiz");
+  expect(instructions).toContain("Delegate independent questions to native subagents");
+  expect(instructions).toContain("serialize browser operations within each attempt");
+  expect(instructions).toContain("permissionRequestPath");
+  expect(instructions).toContain("packetDigest");
+  expect(instructions).toContain("Only persisted:true establishes a successful save");
+  expect(instructions).toContain("Recovery reads only the bound first attempt");
+  expect(instructions).toContain("Never use the second attempt");
   expect(instructions).toContain("Never apply one quiz's approval to another");
+  expect(instructions).not.toContain('prompt "<exact quiz prompt>" --auto-answer');
 });
 
 describe("profile task handoff", () => {

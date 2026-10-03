@@ -47,7 +47,8 @@ export function applyWorkflowExecutionProfile(
   profile: StudyBuddyExecutionProfileDefinition,
 ): StudyBuddyWorkflowRequest {
   const input = normalizeDocumentWorkflowRequest(rawInput);
-  if (["source-runtime-probe", "sources", "document"].includes(input.args[0] ?? "")) return input;
+  if (["source-runtime-probe", "sources", "document", "quiz"].includes(input.args[0] ?? ""))
+    return input;
   const args = input.args.slice(0, 2);
   for (let index = 2; index < input.args.length; index += 1) {
     const argument = input.args[index]!;
@@ -138,6 +139,7 @@ export function safeBaseEnvironment(
       ),
     ),
     STUDY_BUDDY_SOURCE_CACHE_ROOT: path.join(stateDir, "study-buddy-data", "cache", "sources"),
+    STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT: path.join(stateDir, "study-buddy-data", "quiz-attempts"),
   };
 }
 
@@ -457,7 +459,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               (thread) => thread.id === input.threadId && thread.deletedAt === null,
             );
             if (input.threadId && !ownerThread) throw new Error("Workflow thread is unavailable.");
-            if (["sources", "document"].includes(input.args[0] ?? "") && !ownerThread)
+            if (["sources", "document", "quiz"].includes(input.args[0] ?? "") && !ownerThread)
               throw new Error("Direct Study Buddy tools require an owning native thread.");
             const modelEnvironment: Record<string, string> = {};
             let executionRequest = input;
@@ -469,7 +471,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               if (!ownerWorkspace || (await realpath(ownerWorkspace)) !== workspace)
                 throw new Error("Workflow thread does not own this workspace.");
               modelEnvironment.STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID = ownerThread.id;
-              if (!["sources", "document"].includes(input.args[0] ?? "")) {
+              if (!["sources", "document", "quiz"].includes(input.args[0] ?? "")) {
                 const instance = await runPromise(
                   registry.getInstance(ownerThread.modelSelection.instanceId),
                 );

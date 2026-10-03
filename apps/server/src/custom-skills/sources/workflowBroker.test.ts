@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native path fixtures validate cross-platform argv.
 import path from "node:path";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,130 @@ import { executeStudyBuddyWorkflow, type StudyBuddyWorkflowInvocation } from "./
 import { spawnWorkflow as spawnNativeWorkflow } from "./workflowBrokerHttp.ts";
 
 describe("Study Buddy workflow broker", () => {
+  it("stages direct quiz approval through the native grant boundary and forwards only trusted proof", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "direct-quiz-broker-"));
+    try {
+      const staged = path.join(directory, "server-approved.json");
+      await writeFile(staged, JSON.stringify({ requestId: "native-approved-id" }));
+      const stageQuizPermissionRequest = vi.fn(async () => staged);
+      let invocation: StudyBuddyWorkflowInvocation | undefined;
+      await executeStudyBuddyWorkflow(
+        {
+          args: [
+            "quiz",
+            JSON.stringify({
+              op: "start",
+              runDir: "/workspace/run",
+              permissionRequestPath: "/workspace/pending.json",
+            }),
+          ],
+          workspace: path.resolve("/workspace"),
+          threadId: "owner",
+        },
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: {
+            STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT: "/private/ledger",
+            STUDY_BUDDY_QUIZ_APPROVED_REQUEST_IDS: '["forged"]',
+          },
+          resolveWorkflowEnvironment: async () => ({}),
+          stageQuizPermissionRequest,
+          spawnWorkflow: async (input) => {
+            invocation = input;
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+      );
+      expect(stageQuizPermissionRequest).toHaveBeenCalledWith({
+        requestPath: "/workspace/pending.json",
+        workspace: path.resolve("/workspace"),
+        workflowEnvironment: {},
+      });
+      expect(JSON.parse(invocation!.args[2]!)).toMatchObject({ permissionRequestPath: staged });
+      expect(invocation!.environment.STUDY_BUDDY_QUIZ_APPROVED_REQUEST_IDS).toBe(
+        '["native-approved-id"]',
+      );
+      expect(invocation!.environment.STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT).toBe("/private/ledger");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { op: "submit", runDir: "/workspace/run" },
+    { op: "start", runDir: "/workspace/run", attemptId: "second" },
+    { op: "read", runDir: "/workspace/run", model: "override" },
+    {
+      op: "inspect",
+      url: "https://moodle.example/mod/quiz/view.php?id=1",
+      ledgerRoot: "/override",
+    },
+  ])("rejects direct quiz control overrides before resolving credentials: $op", async (payload) => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({}));
+    const spawnWorkflow = vi.fn();
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: ["quiz", JSON.stringify(payload)],
+          workspace: path.resolve("/workspace"),
+          threadId: "owner",
+        },
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow();
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("requires a native owner and refuses unstaged direct quiz approvals", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({}));
+    const spawnWorkflow = vi.fn();
+    const dependencies = {
+      packagedRoot: "/app",
+      nodeExecutable: process.execPath,
+      baseEnvironment: {},
+      resolveWorkflowEnvironment,
+      spawnWorkflow,
+    };
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: [
+            "quiz",
+            JSON.stringify({ op: "inspect", url: "https://moodle.example/mod/quiz/view.php?id=1" }),
+          ],
+          workspace: path.resolve("/workspace"),
+        },
+        dependencies,
+      ),
+    ).rejects.toThrow("owning native thread");
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    await expect(
+      executeStudyBuddyWorkflow(
+        {
+          args: [
+            "quiz",
+            JSON.stringify({
+              op: "start",
+              runDir: "/workspace/run",
+              permissionRequestPath: "/workspace/pending.json",
+            }),
+          ],
+          workspace: path.resolve("/workspace"),
+          threadId: "owner",
+        },
+        dependencies,
+      ),
+    ).rejects.toThrow("staging");
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
   it.each(["interactive-study-guide", "source-evidence"])(
     "injects source credentials only at the server-owned child-process boundary for %s",
     async (command) => {

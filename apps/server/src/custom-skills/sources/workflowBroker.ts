@@ -1,9 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned workflow process boundary.
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
   "sources",
   "document",
+  "quiz",
   "prompt",
   "source-evidence",
   "combined",
@@ -127,7 +129,10 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
   if (!command || !BROKERED_STUDY_BUDDY_COMMANDS.has(command)) {
     throw new Error(`Unsupported Study Buddy workflow command: ${command || "<missing>"}.`);
   }
-  if (command === "sources" || command === "document") {
+  if (command === "sources" || command === "document" || command === "quiz") {
+    if (command === "quiz" && !input.threadId?.trim()) {
+      throw new Error("Direct quiz tools require an owning native thread.");
+    }
     if (input.args.length !== 2) {
       throw new Error("Direct Study Buddy tools require exactly one JSON request.");
     }
@@ -150,11 +155,21 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
             text: ["op", "sourceID", "pages"],
             pages: ["op", "sourceID", "pages"],
           }
-        : {
-            prepare: ["op", "prompt"],
-            compile: ["op", "runDir"],
-            publish: ["op", "runDir", "filename"],
-          };
+        : command === "quiz"
+          ? {
+              inspect: ["op", "url", "prompt"],
+              start: ["op", "runDir", "permissionRequestPath"],
+              read: ["op", "runDir", "page", "permissionRequestPath"],
+              fill: ["op", "runDir", "answers", "packetDigest", "permissionRequestPath"],
+              next: ["op", "runDir", "permissionRequestPath"],
+              recover: ["op", "runDir", "permissionRequestPath"],
+              status: ["op", "runDir"],
+            }
+          : {
+              prepare: ["op", "prompt"],
+              compile: ["op", "runDir"],
+              publish: ["op", "runDir", "filename"],
+            };
     const keys = allowed[request.op as keyof typeof allowed] as readonly string[] | undefined;
     if (!keys || Object.keys(request).some((key) => !keys.includes(key))) {
       throw new Error("Direct Study Buddy tool request has an unsupported operation or field.");
@@ -298,7 +313,34 @@ export async function executeStudyBuddyWorkflow(
     args: input.args,
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
   });
-  const sanitizedArgs = await sanitizeArgumentOverrides(input, dependencies, workflowEnvironment);
+  let sanitizedArgs = await sanitizeArgumentOverrides(input, dependencies, workflowEnvironment);
+  const approvedQuizRequestIds: string[] = [];
+  if (input.args[0] === "quiz") {
+    const request = JSON.parse(input.args[1]!) as Record<string, unknown>;
+    if (request.op === "inspect" && typeof request.url === "string") {
+      request.url = validateSelectedSourceUrl("--url", request.url, workflowEnvironment);
+    }
+    if (request.permissionRequestPath !== undefined) {
+      if (
+        typeof request.permissionRequestPath !== "string" ||
+        !request.permissionRequestPath.trim()
+      )
+        throw new Error("Direct quiz permission request path must be non-empty.");
+      if (!dependencies.stageQuizPermissionRequest)
+        throw new Error("Study Buddy quiz permission staging is unavailable.");
+      const stagedPath = await dependencies.stageQuizPermissionRequest({
+        requestPath: request.permissionRequestPath,
+        workspace: input.workspace,
+        workflowEnvironment,
+      });
+      const staged = JSON.parse(await readFile(stagedPath, "utf8")) as { requestId?: unknown };
+      if (typeof staged.requestId !== "string" || !staged.requestId.trim())
+        throw new Error("Server-staged quiz approval has no request identity.");
+      request.permissionRequestPath = stagedPath;
+      approvedQuizRequestIds.push(staged.requestId);
+    }
+    sanitizedArgs = ["quiz", JSON.stringify(request)];
+  }
   const result = await dependencies.spawnWorkflow({
     command: dependencies.nodeExecutable,
     args: [
@@ -314,6 +356,13 @@ export async function executeStudyBuddyWorkflow(
       STUDY_BUDDY_BROKER_EXECUTION: "1",
       STUDY_BUDDY_ROOT: dependencies.packagedRoot,
       STUDY_BUDDY_WORKSPACE: input.workspace,
+      STUDY_BUDDY_QUIZ_APPROVED_REQUEST_IDS: JSON.stringify(approvedQuizRequestIds),
+      ...(dependencies.baseEnvironment.STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT
+        ? {
+            STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT:
+              dependencies.baseEnvironment.STUDY_BUDDY_QUIZ_ATTEMPT_LEDGER_ROOT,
+          }
+        : {}),
       ...(input.threadId ? { STUDY_BUDDY_THREAD_ID: input.threadId } : {}),
     },
   });

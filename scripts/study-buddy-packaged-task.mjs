@@ -1004,13 +1004,17 @@ async function main(argv = process.argv.slice(2)) {
     return result.exitCode;
   }
 
-  if (action === "sources" || action === "document") {
+  if (action === "sources" || action === "document" || action === "quiz") {
     if (process.env.STUDY_BUDDY_BROKER_EXECUTION !== "1")
       return fail("Direct Study Buddy tools require the app-owned workflow broker.");
     if (args.length !== 1 || !args[0]?.trim())
       return fail("Direct Study Buddy tools require exactly one JSON request.", 2);
     const { entry, staticArgs } = resolveScript(
-      action === "sources" ? "moodle:sources" : "moodle:document",
+      action === "sources"
+        ? "moodle:sources"
+        : action === "quiz"
+          ? "moodle:quiz"
+          : "moodle:document",
     );
     const tsx = path.join(packagedRoot, "node_modules", "tsx", "dist", "cli.mjs");
     const child = spawn(process.execPath, [tsx, entry, ...staticArgs, args[0]], {
