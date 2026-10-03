@@ -86,3 +86,21 @@ it("uses one native owner and direct deterministic tools for PDFs", () => {
   expect(instructions).not.toContain("only PDF orchestration route");
   expect(instructions).not.toContain("A Moodle PDF is publishable only when its extraction");
 });
+
+it("links durable workspace deliverables instead of temporary T3 attachment copies", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  expect(instructions).toContain("study-buddy-deliverables/");
+  expect(instructions).toContain("Link the returned deliveryPath directly");
+  expect(instructions).toContain(
+    "Temporary-file delivery instructions in shared skills apply to external T3 sessions",
+  );
+  expect(instructions).toContain(
+    "do not copy the final attachment to a system temporary directory",
+  );
+  expect(instructions).not.toContain("/tmp/<descriptive-filename>.pdf");
+  expect(instructions).toContain("[study-guide.pdf](<returned deliveryPath>)");
+  expect(instructions).toContain("[study-guide.pdf](study-buddy-deliverables/study-guide.pdf)");
+  expect(instructions).not.toContain("a workspace/output path as the final delivery link");
+});
