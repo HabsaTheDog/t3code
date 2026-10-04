@@ -3,7 +3,45 @@ import {
   duplicateStudyBuddyProfile,
   STUDY_BUDDY_BUILT_IN_PROFILES,
 } from "@t3tools/shared/studyBuddyProfiles";
-import { buildStudyBuddyDeveloperInstructions } from "./CodexDeveloperInstructions.js";
+import {
+  appendStudyBuddyDeveloperInstructions,
+  buildStudyBuddyDeveloperInstructions,
+} from "./CodexDeveloperInstructions.js";
+
+const CLI_DEFAULT_TOOL_RULES = `Use the \`request_user_input\` tool only when it is listed in the available tools for this turn.
+Use the \`request_user_input\` tool only for optional questions where the answer would materially improve the quality of the work.
+If \`request_user_input\` returns no answers, continue with best judgment instead of asking again or treating the turn as blocked.
+Never use the \`request_user_input\` tool for permission requests or permission-related escalations.`;
+
+it("keeps CLI system permission restrictions while distinguishing the Study Buddy application choice", () => {
+  const instructions = appendStudyBuddyDeveloperInstructions(CLI_DEFAULT_TOOL_RULES, {
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  });
+  expect(instructions.startsWith(`${CLI_DEFAULT_TOOL_RULES}\n\n`)).toBe(true);
+  const core = instructions.slice(
+    instructions.indexOf("## Core Rule"),
+    instructions.indexOf("## Tooling"),
+  );
+  expect(core).toContain("application-domain choice");
+  expect(core).toContain("not a Codex filesystem/network permission request or escalation");
+  expect(core).toContain("System permissions still use the Codex permission protocol");
+  expect(core).toContain("when the native tool is listed, call it");
+  expect(core).toContain("actual tool error before claiming the approval UI is unavailable");
+  const safety = instructions.slice(instructions.indexOf("## Safety And Output"));
+  expect(safety).toContain("no answer does not grant quiz access");
+  expect(safety).toContain(
+    "Do not send a final assistant response while this permission is pending",
+  );
+  expect(safety).toContain(
+    "If the user declines, stop without changing the configured access mode",
+  );
+});
+
+it("does not override the CLI tool constraints outside the Study Buddy branch", () => {
+  expect(appendStudyBuddyDeveloperInstructions(CLI_DEFAULT_TOOL_RULES, { environment: {} })).toBe(
+    CLI_DEFAULT_TOOL_RULES,
+  );
+});
 
 it("requires a working artifact for answer-checking exercises while preserving conversational requests", () => {
   const instructions = buildStudyBuddyDeveloperInstructions({
