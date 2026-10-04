@@ -219,7 +219,7 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /Reuse that same approval-request path for every technical continuation run/,
+      /Reuse that path for start\/read\/fill\/next\/recover of the same attempt/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
@@ -231,7 +231,7 @@ describe("buildTurnStartParams", () => {
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
-      /\[descriptive-filename\.pdf\]\(\/tmp\/descriptive-filename\.pdf\)/,
+      /Use the workflow's durable deliveryPath or publishedPath in the final Markdown link/,
     );
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",

@@ -10,6 +10,32 @@ import { executeStudyBuddyWorkflow, type StudyBuddyWorkflowInvocation } from "./
 import { spawnWorkflow as spawnNativeWorkflow } from "./workflowBrokerHttp.ts";
 
 describe("Study Buddy workflow broker", () => {
+  it.each([
+    ["prompt", "Please work on the upcoming math mini test", "--auto-answer"],
+    ["prompt", "Solve and fill the math quiz", "--auto-answer=true", "--no-cis"],
+    ["quiz-url", "https://moodle.example/mod/quiz/view.php?id=7"],
+    ["combined", "Work on my quiz", "--auto-answer"],
+    ["prompt", "Solve and fill the math quiz"],
+    ["prompt", "Bearbeite den nächsten Minitest"],
+  ])("rejects stale native quiz entry %j before credentials and workers", async (...args) => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({}));
+    const spawnWorkflow = vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" }));
+    await expect(
+      executeStudyBuddyWorkflow(
+        { args, workspace: path.resolve("/workspace"), threadId: "native-owner" },
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      ),
+    ).rejects.toThrow(/agent-owned.*sources.*quiz.*inspect/i);
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
   it("stages direct quiz approval through the native grant boundary and forwards only trusted proof", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "direct-quiz-broker-"));
     try {

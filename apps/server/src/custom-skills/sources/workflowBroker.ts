@@ -129,6 +129,25 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
   if (!command || !BROKERED_STUDY_BUDDY_COMMANDS.has(command)) {
     throw new Error(`Unsupported Study Buddy workflow command: ${command || "<missing>"}.`);
   }
+  if (
+    command === "quiz-url" ||
+    // Match the packaged wrapper's existing implicit --auto-answer route too.
+    // This only refuses that obsolete route; the native owner chooses the target.
+    (command === "prompt" &&
+      /(quiz|test|minitest|kurztest|testblock|selbstcheck|selfcheck|moodle\s*test)/iu.test(
+        input.args[1] ?? "",
+      ) &&
+      /(mach|mache|bearbeit|füll|fuell|ausfüll|ausfuell|lös|loes|answer|solve|fill|complete|start)/iu.test(
+        input.args[1] ?? "",
+      )) ||
+    input.args
+      .slice(2)
+      .some((argument) => argument === "--auto-answer" || argument.startsWith("--auto-answer="))
+  ) {
+    throw new Error(
+      'Quiz execution is agent-owned. Use sources JSON tools to discover the exact quiz, then quiz with op:"inspect". Continue with the direct quiz start/read/fill/next/recover tools; legacy --auto-answer and quiz-url worker routes are unavailable in the app.',
+    );
+  }
   if (command === "sources" || command === "document" || command === "quiz") {
     if (command === "quiz" && !input.threadId?.trim()) {
       throw new Error("Direct quiz tools require an owning native thread.");

@@ -32,6 +32,57 @@ it("keeps quiz solving native and binds continuation to the first attempt", () =
   expect(instructions).not.toContain('prompt "<exact quiz prompt>" --auto-answer');
 });
 
+it("gives execution of a real quiz priority before generic routing or a loaded legacy skill", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  const priority = instructions.indexOf(
+    "Real Moodle quiz attempts take priority over generic source routing",
+  );
+  expect(priority).toBeGreaterThan(instructions.indexOf("## Core Rule"));
+  expect(priority).toBeLessThan(instructions.indexOf("## Tooling"));
+  expect(instructions).toContain(
+    "use /app/task quiz '<JSON>' and read-only /app/task sources '<JSON>'",
+  );
+  expect(instructions).toContain(
+    "including when a loaded skill recommends the legacy auto-answer pipeline",
+  );
+  expect(instructions).toContain("The app broker rejects legacy --auto-answer execution");
+});
+
+it("preserves the exact quiz request in inspect JSON instead of forcing a positional legacy prompt", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  })!;
+  expect(instructions).toContain(
+    "For quiz JSON tools, put the exact latest user message in inspect.prompt",
+  );
+  expect(instructions).toContain(
+    "do not create a positional prompt command or rephrase the request to force a legacy route",
+  );
+  expect(instructions).toContain(
+    "For model-backed wrapper commands that accept a positional prompt",
+  );
+  expect(instructions).not.toContain(
+    "Pass the latest user message as a non-empty, safely quoted literal in the same wrapper command.",
+  );
+});
+
+it("separates informational mini-test overviews from executing an actual quiz", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  expect(instructions).toContain(
+    "Weekly preparation, task status, mini-test information and self-study overviews only",
+  );
+  expect(instructions).toContain(
+    "This route does not execute quiz attempts; doing, solving or filling a real quiz uses Direct Quiz",
+  );
+  expect(instructions).not.toContain(
+    "Weekly preparation, tasks, mini-tests and self-study overviews:",
+  );
+});
+
 describe("profile task handoff", () => {
   it("includes specialized tasks once and requires them for every workflow route", () => {
     const base = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "custom-task");
