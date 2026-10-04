@@ -486,6 +486,65 @@ interface CodexThreadOpenClient {
   ) => Effect.Effect<CodexRpc.ClientRequestResponsesByMethod[M], CodexErrors.CodexAppServerError>;
 }
 
+export interface CodexInstructionDelivery {
+  readonly threadId: string;
+  readonly instructions: string;
+}
+
+export const invalidateCodexInstructionDelivery = (
+  delivery: Ref.Ref<CodexInstructionDelivery | undefined>,
+  threadId: string,
+): Effect.Effect<void> =>
+  Ref.update(delivery, (current) => (current?.threadId === threadId ? undefined : current));
+
+/** Inject current app instructions into model-visible history through the supported protocol. */
+export const sendCodexTurn = (input: {
+  readonly client: {
+    readonly request: (
+      method: "thread/inject_items",
+      params: EffectCodexSchema.V2ThreadInjectItemsParams,
+    ) => Effect.Effect<
+      EffectCodexSchema.V2ThreadInjectItemsResponse,
+      CodexErrors.CodexAppServerError
+    >;
+    readonly raw: {
+      readonly request: (
+        method: "turn/start",
+        params: CodexTurnStartParamsWithCollaborationMode,
+      ) => Effect.Effect<unknown, CodexErrors.CodexAppServerError>;
+    };
+  };
+  readonly params: CodexTurnStartParamsWithCollaborationMode;
+  readonly studyBuddyActive: boolean;
+  readonly delivery: Ref.Ref<CodexInstructionDelivery | undefined>;
+}): Effect.Effect<unknown, CodexErrors.CodexAppServerError> =>
+  Effect.gen(function* () {
+    if (!input.studyBuddyActive) return yield* input.client.raw.request("turn/start", input.params);
+    const instructions = input.params.collaborationMode?.settings.developer_instructions;
+    if (!instructions?.trim()) {
+      return yield* new CodexErrors.CodexAppServerProtocolParseError({
+        detail: "Missing current Study Buddy developer instructions.",
+      });
+    }
+    const previous = yield* Ref.get(input.delivery);
+    if (previous?.threadId !== input.params.threadId || previous.instructions !== instructions) {
+      yield* input.client.request("thread/inject_items", {
+        threadId: input.params.threadId,
+        items: [
+          {
+            type: "message",
+            role: "developer",
+            content: [{ type: "input_text", text: instructions }],
+          },
+        ],
+      });
+      // Never suppress a retry after failed injection. Successful history survives failed turns.
+      yield* Ref.set(input.delivery, { threadId: input.params.threadId, instructions });
+    }
+    const { collaborationMode: _collaborationMode, ...params } = input.params;
+    return yield* input.client.raw.request("turn/start", params);
+  });
+
 export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
@@ -843,6 +902,7 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
+    const instructionDeliveryRef = yield* Ref.make<CodexInstructionDelivery | undefined>(undefined);
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
@@ -891,6 +951,16 @@ export const makeCodexSessionRuntime = (
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
         const payload = notification.params;
+        if (
+          notification.method === "thread/compacted" ||
+          (notification.method === "item/completed" &&
+            notification.params.item.type === "contextCompaction")
+        ) {
+          yield* invalidateCodexInstructionDelivery(
+            instructionDeliveryRef,
+            notification.params.threadId,
+          );
+        }
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
         const childParentTurnId = (() => {
@@ -1361,7 +1431,12 @@ export const makeCodexSessionRuntime = (
               : {}),
             ...(options.personalityPrompt ? { personalityPrompt: options.personalityPrompt } : {}),
           });
-          const rawResponse = yield* client.raw.request("turn/start", params);
+          const rawResponse = yield* sendCodexTurn({
+            client,
+            params,
+            studyBuddyActive,
+            delivery: instructionDeliveryRef,
+          });
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
               toProtocolParseError("Invalid turn/start response payload", error),

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { describe, it } from "vite-plus/test";
 import { DEFAULT_MODEL, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
+import {
+  duplicateStudyBuddyProfile,
+  STUDY_BUDDY_BUILT_IN_PROFILES,
+} from "@t3tools/shared/studyBuddyProfiles";
 
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
@@ -16,8 +21,220 @@ import {
   buildTurnStartParams,
   isRecoverableThreadResumeError,
   openCodexThread,
+  sendCodexTurn,
+  invalidateCodexInstructionDelivery,
+  type CodexInstructionDelivery,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("native Study Buddy instruction transport", () => {
+  function fixture(failInjection = false, failTurn = false) {
+    const calls: Array<{ method: string; payload: unknown }> = [];
+    const delivery = Effect.runSync(Ref.make<CodexInstructionDelivery | undefined>(undefined));
+    const client = {
+      request: (
+        _method: "thread/inject_items",
+        payload: CodexRpc.ClientRequestParamsByMethod["thread/inject_items"],
+      ): Effect.Effect<
+        CodexRpc.ClientRequestResponsesByMethod["thread/inject_items"],
+        CodexErrors.CodexAppServerError
+      > => {
+        calls.push({ method: "thread/inject_items", payload });
+        return failInjection
+          ? Effect.fail(
+              new CodexErrors.CodexAppServerProtocolParseError({ detail: "injection refused" }),
+            )
+          : Effect.succeed({});
+      },
+      raw: {
+        request: (
+          _method: "turn/start",
+          payload: unknown,
+        ): Effect.Effect<unknown, CodexErrors.CodexAppServerError> => {
+          calls.push({ method: "turn/start", payload });
+          return failTurn
+            ? Effect.fail(
+                new CodexErrors.CodexAppServerProtocolParseError({ detail: "model turn failed" }),
+              )
+            : Effect.succeed({ marker: "raw-turn-result" });
+        },
+      },
+    };
+    return { calls, client, delivery };
+  }
+
+  function appParams(
+    personality = "Current user personality",
+    threadId = "provider-thread-1",
+    profileName = "Current selected profile",
+    interactionMode: "plan" | "default" = "plan",
+  ) {
+    const profile = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "current-custom");
+    return Effect.runSync(
+      buildTurnStartParams({
+        threadId,
+        runtimeMode: "approval-required",
+        cwd: "/project",
+        environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+        prompt: "Exact original prompt",
+        model: "gpt-6.1-sol",
+        effort: "high",
+        interactionMode,
+        personalityPrompt: personality,
+        studyBuddyExecutionProfile: "custom",
+        studyBuddyExecutionProfileConfig: { ...profile, name: profileName },
+        attachments: [{ type: "image", url: "data:image/png;base64,abc" }],
+      }),
+    );
+  }
+
+  it("injects complete current profile/personality/mode before the actual turn without unsupported collaboration delivery", async () => {
+    const params = appParams();
+    const { client, calls, delivery } = fixture();
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      ["thread/inject_items", "turn/start"],
+    );
+    const instructions = params.collaborationMode!.settings.developer_instructions;
+    assert.deepStrictEqual(calls[0]?.payload, {
+      threadId: params.threadId,
+      items: [
+        {
+          type: "message",
+          role: "developer",
+          content: [{ type: "input_text", text: instructions }],
+        },
+      ],
+    });
+    assert.match(instructions!, /Current selected profile/);
+    assert.match(instructions!, /Current user personality/);
+    assert.match(instructions!, /# Plan Mode \(Conversational\)/);
+    assert.match(instructions!, /study_buddy_quiz_permission_v1/);
+    const { collaborationMode: _mode, ...expectedTurn } = params;
+    assert.deepStrictEqual(calls[1]?.payload, expectedTurn);
+  });
+
+  it("skips only exact same-thread instructions and reinjects changes or a new runtime", async () => {
+    const { client, calls, delivery } = fixture();
+    const params = appParams();
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    await Effect.runPromise(
+      sendCodexTurn({
+        client,
+        params: appParams(
+          "Changed personality",
+          "provider-thread-1",
+          "Changed selected profile",
+          "default",
+        ),
+        studyBuddyActive: true,
+        delivery,
+      }),
+    );
+    await Effect.runPromise(
+      sendCodexTurn({
+        client,
+        params: appParams(
+          "Changed personality",
+          "another-thread",
+          "Changed selected profile",
+          "default",
+        ),
+        studyBuddyActive: true,
+        delivery,
+      }),
+    );
+    const restarted = Effect.runSync(Ref.make<CodexInstructionDelivery | undefined>(undefined));
+    await Effect.runPromise(
+      sendCodexTurn({ client, params, studyBuddyActive: true, delivery: restarted }),
+    );
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      [
+        "thread/inject_items",
+        "turn/start",
+        "turn/start",
+        "thread/inject_items",
+        "turn/start",
+        "thread/inject_items",
+        "turn/start",
+        "thread/inject_items",
+        "turn/start",
+      ],
+    );
+  });
+
+  it("reinjects after its own compaction while unrelated thread compaction leaves delivery intact", async () => {
+    const { client, calls, delivery } = fixture();
+    const params = appParams();
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    await Effect.runPromise(invalidateCodexInstructionDelivery(delivery, "another-thread"));
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    await Effect.runPromise(invalidateCodexInstructionDelivery(delivery, params.threadId));
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery }));
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      ["thread/inject_items", "turn/start", "turn/start", "thread/inject_items", "turn/start"],
+    );
+  });
+
+  it("never sends a turn or caches delivery after failed injection", async () => {
+    const { client, calls, delivery } = fixture(true);
+    for (let n = 0; n < 2; n++)
+      await assert.rejects(
+        Effect.runPromise(
+          sendCodexTurn({ client, params: appParams(), studyBuddyActive: true, delivery }),
+        ),
+      );
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      ["thread/inject_items", "thread/inject_items"],
+    );
+    assert.equal(Effect.runSync(Ref.get(delivery)), undefined);
+  });
+
+  it("retains a successful injection after model failure without creating another thread", async () => {
+    const { client, calls, delivery } = fixture(false, true);
+    for (let n = 0; n < 2; n++)
+      await assert.rejects(
+        Effect.runPromise(
+          sendCodexTurn({ client, params: appParams(), studyBuddyActive: true, delivery }),
+        ),
+      );
+    assert.deepStrictEqual(
+      calls.map((call) => call.method),
+      ["thread/inject_items", "turn/start", "turn/start"],
+    );
+  });
+
+  it("keeps non-Study Buddy turns unchanged without injecting instructions", async () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "hello",
+        interactionMode: "default",
+      }),
+    );
+    const { client, calls, delivery } = fixture();
+    await Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: false, delivery }));
+    assert.deepStrictEqual(calls, [{ method: "turn/start", payload: params }]);
+    assert.equal(Effect.runSync(Ref.get(delivery)), undefined);
+  });
+
+  it("fails before any RPC when an app turn has no current instructions", async () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({ threadId: "provider-thread-1", runtimeMode: "full-access" }),
+    );
+    const { client, calls, delivery } = fixture();
+    await assert.rejects(
+      Effect.runPromise(sendCodexTurn({ client, params, studyBuddyActive: true, delivery })),
+    );
+    assert.deepStrictEqual(calls, []);
+  });
+});
 
 function makeThreadOpenResponse(
   threadId: string,
