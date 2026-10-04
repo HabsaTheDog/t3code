@@ -14,7 +14,13 @@ import {
   spawnWorkflow,
   stageQuizPermissionRequest,
   terminateWorkflowTree,
+  publicStudyBuddyWorkflowErrorMessage,
 } from "./workflowBrokerHttp.ts";
+import {
+  executeStudyBuddyWorkflow,
+  StudyBuddyQuizRoutingError,
+  STUDY_BUDDY_QUIZ_ROUTING_MESSAGE,
+} from "./workflowBroker.ts";
 import {
   STUDY_BUDDY_BUILT_IN_PROFILES,
   studyBuddyProfileOverrides,
@@ -26,6 +32,49 @@ import {
 } from "./quizApprovals.ts";
 
 afterEach(clearStudyBuddyQuizApprovalsForTest);
+
+describe("Study Buddy workflow HTTP error disclosure", () => {
+  it("returns actionable static routing guidance for the actual denied route before credentials", async () => {
+    const resolveWorkflowEnvironment = vi.fn(async () => ({}));
+    const spawnWorkflow = vi.fn();
+    const failure = await executeStudyBuddyWorkflow(
+      {
+        args: ["prompt", "Do the Moodle mini test", "--auto-answer"],
+        workspace: path.resolve("/workspace"),
+      },
+      {
+        packagedRoot: path.resolve("/app"),
+        nodeExecutable: "/usr/bin/node",
+        baseEnvironment: {},
+        resolveWorkflowEnvironment,
+        spawnWorkflow,
+      },
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(StudyBuddyQuizRoutingError);
+    expect(publicStudyBuddyWorkflowErrorMessage(failure)).toBe(STUDY_BUDDY_QUIZ_ROUTING_MESSAGE);
+    expect(publicStudyBuddyWorkflowErrorMessage(failure)).toContain('op:"inspect"');
+    expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    expect(spawnWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("never exposes unrelated errors or spoofed routing messages", () => {
+    for (const cause of [
+      new Error("MOODLE_PASSWORD=secret"),
+      { name: "StudyBuddyQuizRoutingError", message: "secret" },
+      undefined,
+    ]) {
+      expect(publicStudyBuddyWorkflowErrorMessage(cause)).toBe(
+        "Study Buddy could not start the requested workflow.",
+      );
+    }
+  });
+
+  it("uses the static guidance even if a typed error message was changed", () => {
+    const cause = new StudyBuddyQuizRoutingError();
+    cause.message = "private credential detail";
+    expect(publicStudyBuddyWorkflowErrorMessage(cause)).toBe(STUDY_BUDDY_QUIZ_ROUTING_MESSAGE);
+  });
+});
 
 function approveQuiz(request: Record<string, unknown>): void {
   const nativeRequestId = `native-${String(request.requestId)}`;

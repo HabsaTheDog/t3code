@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { maybeRunBrokeredWorkflow, requestBroker } from "./study-buddy-workflow-client.mjs";
 
 describe("packaged Study Buddy workflow client", () => {
-  it.each(["interactive-study-guide", "source-evidence", "sources", "document"])(
+  it.each(["interactive-study-guide", "source-evidence", "sources", "document", "quiz"])(
     "routes %s to the loopback broker without source credentials",
     async (command) => {
       const fetchImpl = vi.fn(

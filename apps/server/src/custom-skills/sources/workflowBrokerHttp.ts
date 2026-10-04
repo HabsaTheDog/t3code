@@ -33,6 +33,8 @@ import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
 import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
 import {
   executeStudyBuddyWorkflow,
+  StudyBuddyQuizRoutingError,
+  STUDY_BUDDY_QUIZ_ROUTING_MESSAGE,
   normalizeDocumentWorkflowRequest,
   type StudyBuddyWorkflowInvocation,
   type StudyBuddyWorkflowRequest,
@@ -117,6 +119,12 @@ const SAFE_BASE_ENVIRONMENT_NAMES = new Set([
 class StudyBuddyWorkflowBrokerRequestError extends Data.TaggedError(
   "StudyBuddyWorkflowBrokerRequestError",
 )<{ readonly cause?: unknown }> {}
+
+export function publicStudyBuddyWorkflowErrorMessage(cause: unknown): string {
+  return cause instanceof StudyBuddyQuizRoutingError
+    ? STUDY_BUDDY_QUIZ_ROUTING_MESSAGE
+    : "Study Buddy could not start the requested workflow.";
+}
 
 export function safeBaseEnvironment(
   source: NodeJS.ProcessEnv,
@@ -523,7 +531,7 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
 
         if (Result.isFailure(outcome)) {
           return HttpServerResponse.jsonUnsafe(
-            { message: "Study Buddy could not start the requested workflow." },
+            { message: publicStudyBuddyWorkflowErrorMessage(outcome.failure.cause) },
             { status: 400 },
           );
         }

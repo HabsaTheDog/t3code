@@ -49,6 +49,17 @@ export interface StudyBuddyWorkflowRequest {
   readonly sourceIds?: readonly string[];
 }
 
+export const STUDY_BUDDY_QUIZ_ROUTING_MESSAGE =
+  'Quiz execution is agent-owned. Use sources JSON tools to discover the exact quiz, then quiz with op:"inspect". Continue with the direct quiz start/read/fill/next/recover tools; legacy --auto-answer and quiz-url worker routes are unavailable in the app.';
+
+/** Only this static, non-sensitive denial may be disclosed by the HTTP broker. */
+export class StudyBuddyQuizRoutingError extends Error {
+  constructor() {
+    super(STUDY_BUDDY_QUIZ_ROUTING_MESSAGE);
+    this.name = "StudyBuddyQuizRoutingError";
+  }
+}
+
 export interface StudyBuddyWorkflowInvocation {
   readonly command: string;
   readonly args: readonly string[];
@@ -144,9 +155,7 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
       .slice(2)
       .some((argument) => argument === "--auto-answer" || argument.startsWith("--auto-answer="))
   ) {
-    throw new Error(
-      'Quiz execution is agent-owned. Use sources JSON tools to discover the exact quiz, then quiz with op:"inspect". Continue with the direct quiz start/read/fill/next/recover tools; legacy --auto-answer and quiz-url worker routes are unavailable in the app.',
-    );
+    throw new StudyBuddyQuizRoutingError();
   }
   if (command === "sources" || command === "document" || command === "quiz") {
     if (command === "quiz" && !input.threadId?.trim()) {

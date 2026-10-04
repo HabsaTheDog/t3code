@@ -26,6 +26,7 @@ if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 const USAGE = `Usage:
   study_buddy_task sources "<JSON: courses/page/download/text/pages>"
   study_buddy_task document "<JSON: prepare/compile/publish>"
+  study_buddy_task quiz "<JSON: inspect/start/read/fill/next/recover/status>"
   study_buddy_task source-evidence "<prompt>" [extra args]
   study_buddy_task prompt "<natural language prompt>" [extra args]
   study_buddy_task combined "<natural language prompt>" [extra args]
