@@ -127,6 +127,42 @@ it("separates informational mini-test overviews from executing an actual quiz", 
   );
 });
 
+it("requires grounded study communication even when the user does not mention email", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  const communication = instructions.slice(
+    instructions.indexOf("## Study Communication"),
+    instructions.indexOf("## Direct Document"),
+  );
+  expect(communication).toContain("even without the words email or message");
+  expect(communication).toContain("Before drafting, resolve");
+  expect(communication).toContain("recipient's name, role and explicitly observed email address");
+  expect(communication).toContain("affected course/session and its relevant date/time");
+  expect(communication).toContain("/app/task sources");
+  expect(communication).toContain('{"op":"inventory"}');
+  expect(communication).toContain('{"op":"calendar","prompt":"exact original user message"}');
+  expect(communication).toContain("private calendar URL");
+  expect(communication).toContain('"scope":"today"');
+  expect(communication).toContain("class window");
+  expect(communication).toContain("without starting a model workflow");
+  expect(communication).not.toContain("/app/task combined");
+  expect(communication).toContain("missing communication fields");
+  expect(communication).toContain("outside the message text");
+  expect(communication).toContain("late participation must remain late participation");
+  expect(communication).toContain("do not open, start or fill a quiz");
+  expect(communication).toContain("targeted clarification");
+  expect(communication).toContain("structured `contacts` field");
+  expect(communication).toContain("usable conditional draft");
+  expect(communication).toContain("do not replace the requested communication");
+  expect(communication).toContain("appointment already ended");
+  expect(communication).toContain("Do not invoke a blocking native question tool");
+  expect(communication).toContain("sending still requires the exact-message native approval");
+  expect(communication).toContain("Never construct an address");
+  expect(communication).toContain("existing mail permissions");
+  expect(communication).toContain("never authorize sending");
+});
+
 describe("profile task handoff", () => {
   it("includes specialized tasks once and requires them for every workflow route", () => {
     const base = duplicateStudyBuddyProfile(STUDY_BUDDY_BUILT_IN_PROFILES[1]!, "custom-task");

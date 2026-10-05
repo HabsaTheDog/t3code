@@ -7,7 +7,17 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 export function parseStudyBuddyEmailPermissionQuestion(
   question: UserInputQuestion | null | undefined,
 ): StudyBuddyEmailSendApprovalPayload | null {
-  if (!question || question.id !== STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID) return null;
+  if (!question) return null;
+  // Provider SDKs own their question IDs (Claude uses the full question text).
+  // Preserve that ID for answers; recognize the domain action by its exact card.
+  if (
+    question.id !== STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID &&
+    (question.multiSelect ||
+      question.options.length !== 2 ||
+      !question.options.some((option) => option.label === "Send this email (Recommended)") ||
+      !question.options.some((option) => option.label === "Do not send"))
+  )
+    return null;
   let value: unknown;
   try {
     value = JSON.parse(question.question);

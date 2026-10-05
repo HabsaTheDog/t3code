@@ -21,6 +21,57 @@ const payload = {
 } as const;
 
 describe("Study Buddy email approval card parser", () => {
+  it.each(["provider-question-1", JSON.stringify(payload)])(
+    "renders a validated exact-message card with provider question id %s",
+    (id) => {
+      expect(
+        parseStudyBuddyEmailPermissionQuestion({
+          id,
+          header: "Email approval",
+          question: JSON.stringify(payload),
+          multiSelect: false,
+          options: [
+            { label: "Send this email (Recommended)", description: "Send once" },
+            { label: "Do not send", description: "Cancel" },
+          ],
+        }),
+      ).toEqual(payload);
+    },
+  );
+
+  it("does not reinterpret ordinary questions or ambiguous choices as send approvals", () => {
+    for (const options of [
+      [],
+      [{ label: "Yes", description: "Approve" }],
+      [
+        { label: "Send this email (Recommended)", description: "Send" },
+        { label: "Do not send", description: "Cancel" },
+        { label: "Edit", description: "Change" },
+      ],
+    ]) {
+      expect(
+        parseStudyBuddyEmailPermissionQuestion({
+          id: "provider-question-1",
+          header: "Email approval",
+          question: JSON.stringify(payload),
+          options,
+        }),
+      ).toBeNull();
+    }
+    expect(
+      parseStudyBuddyEmailPermissionQuestion({
+        id: "provider-question-1",
+        header: "Email approval",
+        question: JSON.stringify(payload),
+        multiSelect: true,
+        options: [
+          { label: "Send this email (Recommended)", description: "Send" },
+          { label: "Do not send", description: "Cancel" },
+        ],
+      }),
+    ).toBeNull();
+  });
+
   it("accepts the exact v1 email action and preserves all displayed fields", () => {
     const parsed = parseStudyBuddyEmailPermissionQuestion({
       id: "study_buddy_email_send_v1",

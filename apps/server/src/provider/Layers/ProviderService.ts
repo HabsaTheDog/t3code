@@ -45,6 +45,7 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
+import { augmentPromptWithStudyBuddyEmailContext } from "../StudyBuddyEmailContext.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
@@ -630,7 +631,25 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": routed.adapter.provider,
         ...(input.modelSelection?.model ? { "provider.model": input.modelSelection.model } : {}),
       });
-      const turn = yield* routed.adapter.sendTurn(input);
+      // Source account policy belongs to the common dispatch boundary so every
+      // provider sees the same bounded evidence. Keep the original transport
+      // input and attachments intact; only the adapter copy receives context.
+      const originalPrompt = input.input;
+      const adapterInput =
+        originalPrompt !== undefined
+          ? {
+              ...input,
+              input: yield* Effect.promise(() =>
+                augmentPromptWithStudyBuddyEmailContext(originalPrompt),
+              ),
+            }
+          : input;
+      const validatedAdapterInput = yield* decodeInputOrValidationError({
+        operation: "ProviderService.sendTurn",
+        schema: ProviderSendTurnInput,
+        payload: adapterInput,
+      });
+      const turn = yield* routed.adapter.sendTurn(validatedAdapterInput);
       yield* directory.upsert({
         threadId: input.threadId,
         provider: routed.adapter.provider,

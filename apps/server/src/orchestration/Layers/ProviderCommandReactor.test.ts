@@ -30,6 +30,11 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import {
+  clearStudyBuddyEmailApprovalRequestsForTest,
+  registerStudyBuddyEmailApprovalExecutor,
+} from "../../custom-skills/sources/emailSendApprovals.ts";
+
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
@@ -55,6 +60,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService, type GitWorkflowServiceShape } from "../../git/GitWorkflowService.ts";
@@ -97,6 +103,7 @@ describe("ProviderCommandReactor", () => {
   const createdBaseDirs = new Set<string>();
 
   afterEach(async () => {
+    clearStudyBuddyEmailApprovalRequestsForTest();
     if (scope) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
@@ -893,11 +900,11 @@ describe("ProviderCommandReactor", () => {
         kind: "built-in",
         roles: expect.objectContaining({
           coordinator: expect.objectContaining({
-            model: "gpt-5.6-terra",
+            model: "gpt-6.1-sol",
             reasoningEffort: "low",
           }),
-          artifactBuilder: expect.objectContaining({ model: "gpt-5.6-luna" }),
-          qualityReviewer: expect.objectContaining({ model: "gpt-5.6-terra" }),
+          artifactBuilder: expect.objectContaining({ model: "gpt-6-luna" }),
+          qualityReviewer: expect.objectContaining({ model: "gpt-6.1-sol" }),
         }),
       }),
       modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
@@ -2098,6 +2105,119 @@ describe("ProviderCommandReactor", () => {
       },
     });
   });
+
+  it.each(["sent", "declined", "delivery-error", "invalid"] as const)(
+    "preserves the native email answer key for a %s broker receipt",
+    async (outcome) => {
+      const harness = await createHarness();
+      const nowMs = await Effect.runPromise(Clock.currentTimeMillis);
+      const now = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
+      const questionId = "provider-owned-email-question";
+      const executor = vi.fn(async () => {
+        if (outcome === "delivery-error") throw new Error("Delivery status unknown");
+      });
+      registerStudyBuddyEmailApprovalExecutor(executor);
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("email-session"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+      const message = {
+        version: 1,
+        owner: "study-buddy",
+        action: "send_email",
+        sourceId: "mail",
+        from: { address: "student@example.edu" },
+        to: [{ address: "prof@example.edu" }],
+        cc: [],
+        bcc: [],
+        subject: "Delay",
+        bodyText: "I will arrive late.",
+        attachments: [],
+        expiresAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + 60_000)),
+      };
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("email-request"),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("email-activity"),
+            tone: "approval",
+            kind: "user-input.requested",
+            summary: "Email approval",
+            payload: {
+              requestId: "email-native-request",
+              questions: [
+                {
+                  id: questionId,
+                  header: "Email",
+                  question: JSON.stringify(
+                    outcome === "invalid" ? { ...message, to: [] } : message,
+                  ),
+                  multiSelect: false,
+                  options: [
+                    { label: "Send this email (Recommended)", description: "Send once" },
+                    { label: "Do not send", description: "Decline" },
+                  ],
+                },
+              ],
+            },
+            turnId: null,
+            createdAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.user-input.respond",
+          commandId: CommandId.make("email-response"),
+          threadId: ThreadId.make("thread-1"),
+          requestId: asApprovalRequestId("email-native-request"),
+          answers: {
+            [questionId]: outcome === "declined" ? "Do not send" : "Send this email (Recommended)",
+          },
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.respondToUserInput.mock.calls.length === 1);
+      expect(harness.respondToUserInput.mock.calls[0]?.[0]).toMatchObject({
+        answers: {
+          [questionId]: outcome === "sent" ? "Send this email (Recommended)" : "Do not send",
+        },
+      });
+      expect(Object.keys(harness.respondToUserInput.mock.calls[0]?.[0].answers ?? {})).toEqual([
+        questionId,
+      ]);
+      expect(executor).toHaveBeenCalledTimes(
+        outcome === "sent" || outcome === "delivery-error" ? 1 : 0,
+      );
+      const readModel = await harness.readModel();
+      const activities =
+        readModel.threads.find((thread) => thread.id === ThreadId.make("thread-1"))?.activities ??
+        [];
+      expect(activities.some((activity) => activity.kind === "email.sent")).toBe(
+        outcome === "sent",
+      );
+      if (outcome === "sent")
+        expect(activities.find((activity) => activity.kind === "email.sent")?.summary).toBe(
+          "Email sent and verified by the Study Buddy server",
+        );
+    },
+  );
 
   it("surfaces stale provider approval request failures without faking approval resolution", async () => {
     const harness = await createHarness();

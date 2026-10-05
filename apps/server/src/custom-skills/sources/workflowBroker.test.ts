@@ -851,6 +851,9 @@ describe("direct native-owner tools", () => {
   });
   it.each([
     ["sources", '{"op":"courses","query":"topic"}'],
+    ["sources", '{"op":"inventory"}'],
+    ["sources", '{"op":"calendar","prompt":"Write an apology to my lecturer for arriving late"}'],
+    ["sources", '{"op":"calendar","prompt":"My train is late","scope":"today"}'],
     ["document", '{"op":"prepare","prompt":"Create my study document"}'],
   ])("brokers %s without a worker profile or extra stage", async (command, payload) => {
     const spawnWorkflow = vi.fn(async (input: StudyBuddyWorkflowInvocation) => ({
@@ -874,6 +877,12 @@ describe("direct native-owner tools", () => {
   it.each([
     ["sources", '{"op":"page","url":"https://example.edu","workspace":"/other"}'],
     ["sources", '{"op":"submit","url":"https://example.edu"}'],
+    ["sources", '{"op":"inventory","url":"https://unselected.example.edu"}'],
+    [
+      "sources",
+      '{"op":"calendar","prompt":"My next seminar","calendarUrl":"https://private.example.edu/secret"}',
+    ],
+    ["sources", '{"op":"calendar","prompt":"My next seminar","now":"2020-01-01"}'],
     [
       "document",
       '{"op":"compile","runDir":"/workspace/run","environment":{"MOODLE_PASSWORD":"x"}}',

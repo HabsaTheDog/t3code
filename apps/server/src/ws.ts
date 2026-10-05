@@ -128,6 +128,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { createStudyBuddySourcePlatform } from "./custom-skills/sources/sourcePlatform.ts";
 import { registerStudyBuddyEmailApprovalExecutor } from "./custom-skills/sources/emailSendApprovals.ts";
 import {
+  formatStudyBuddyEmailContextSenders,
   registerStudyBuddyEmailContextReader,
   studyBuddyEmailSearchTerm,
 } from "./provider/StudyBuddyEmailContext.ts";
@@ -397,9 +398,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           return sourceMessages.map((message) => ({
             id: message.message.messageId,
             sourceLabel: source.label,
-            from:
-              message.message.from.map((address) => address.name || address.address).join(", ") ||
-              "Unknown sender",
+            from: formatStudyBuddyEmailContextSenders(message.message.from),
             subject: message.message.subject,
             receivedAt: message.message.receivedAt ?? message.message.sentAt ?? "",
             bodyText: message.body.sanitizedText,

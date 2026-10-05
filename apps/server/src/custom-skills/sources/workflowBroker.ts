@@ -177,6 +177,8 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
     const allowed =
       command === "sources"
         ? {
+            inventory: ["op"],
+            calendar: ["op", "prompt", "scope"],
             courses: ["op", "query"],
             page: ["op", "url"],
             download: ["op", "url", "sourceID", "resourceID"],

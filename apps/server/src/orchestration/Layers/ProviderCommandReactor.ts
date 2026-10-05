@@ -52,7 +52,7 @@ import { prepareStudyBuddyWorkspace } from "../../workspace/prepareStudyBuddyWor
 import {
   captureStudyBuddyEmailApprovalActivity,
   resolveStudyBuddyEmailApprovalResponse,
-  STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID,
+  StudyBuddyEmailApprovalError,
 } from "../../custom-skills/sources/emailSendApprovals.ts";
 import {
   captureStudyBuddyQuizApprovalActivity,
@@ -1032,6 +1032,7 @@ const make = Effect.gen(function* () {
               String(event.payload.threadId),
               String(event.payload.requestId),
               persistedRequest.payload,
+              persistedRequest.createdAt,
             );
             captureStudyBuddyQuizApprovalActivity(
               String(event.payload.threadId),
@@ -1050,6 +1051,7 @@ const make = Effect.gen(function* () {
             handled: true,
             sent: false,
             failed: true as const,
+            denialAnswers: cause instanceof StudyBuddyEmailApprovalError ? cause.answers : {},
             detail: cause instanceof Error ? cause.message : String(cause),
           };
         }
@@ -1058,25 +1060,38 @@ const make = Effect.gen(function* () {
         yield* appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.user-input.respond.failed",
-          summary: "Email was not sent",
+          summary: "Email delivery could not be confirmed",
           detail: emailApproval.detail,
           turnId: null,
           createdAt: event.payload.createdAt,
           requestId: event.payload.requestId,
         });
       }
-      let providerAnswers = emailApproval.failed
-        ? {
-            ...event.payload.answers,
-            [STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID]: "Do not send",
-          }
-        : emailApproval.handled && emailApproval.sent
-          ? {
-              ...event.payload.answers,
-              [STUDY_BUDDY_EMAIL_PERMISSION_QUESTION_ID]:
-                "Email sent and verified by the Study Buddy server",
-            }
-          : event.payload.answers;
+      let providerAnswers = { ...event.payload.answers };
+      if (emailApproval.failed) {
+        providerAnswers = { ...providerAnswers, ...emailApproval.denialAnswers };
+      } else if (emailApproval.handled && emailApproval.questionId && emailApproval.answer) {
+        // Native choice tokens acknowledge the server's completed action; providers
+        // must never interpret this acknowledgment as permission to send themselves.
+        providerAnswers[emailApproval.questionId] = emailApproval.answer;
+        if (emailApproval.sent) {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: yield* serverCommandId("email-sent-activity"),
+            threadId: event.payload.threadId,
+            activity: {
+              id: yield* serverEventId(),
+              tone: "info",
+              kind: "email.sent",
+              summary: "Email sent and verified by the Study Buddy server",
+              payload: { requestId: event.payload.requestId },
+              turnId: null,
+              createdAt: event.payload.createdAt,
+            },
+            createdAt: event.payload.createdAt,
+          });
+        }
+      }
 
       const quizApproval = yield* Effect.promise(async () => {
         try {

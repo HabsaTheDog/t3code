@@ -49,6 +49,10 @@ import {
 } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  registerStudyBuddyEmailContextReader,
+  type StudyBuddyEmailContextRequest,
+} from "../StudyBuddyEmailContext.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
@@ -546,6 +550,173 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
     assert.equal(codex.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+const emailRouting = makeProviderServiceLayer();
+emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) => {
+  for (const [kind, adapter] of [
+    [CODEX_DRIVER, emailRouting.codex],
+    [CLAUDE_AGENT_DRIVER, emailRouting.claude],
+    [CURSOR_DRIVER, emailRouting.cursor],
+  ] as const) {
+    it.effect(`rejects oversized augmented ${kind} turns before adapter dispatch`, () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const threadId = asThreadId(`email-context-limit-${kind}`);
+        const reader = vi.fn(async () => ({
+          readStatePreserved: true as const,
+          accounts: [
+            {
+              sourceId: "configured-account",
+              sourceLabel: "College mail",
+              senderEmail: "student@college.example",
+              canRead: false,
+              canDraft: true,
+              canRequestSend: false,
+            },
+          ],
+          messages: [],
+        }));
+        yield* Effect.acquireRelease(
+          Effect.sync(() => registerStudyBuddyEmailContextReader(reader)),
+          (dispose) => Effect.sync(dispose),
+        );
+        yield* provider.startSession(threadId, {
+          provider: kind,
+          providerInstanceId: ProviderInstanceId.make(kind),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        adapter.sendTurn.mockClear();
+        const prompt = "Write an email to my professor. " + "x".repeat(119_950);
+        const rawInput = { threadId, input: prompt, attachments: [] };
+        const error = yield* Effect.flip(provider.sendTurn(rawInput));
+        assert.instanceOf(error, ProviderValidationError);
+        assert.equal(error.operation, "ProviderService.sendTurn");
+        assert.equal(reader.mock.calls.length, 1);
+        assert.equal(adapter.sendTurn.mock.calls.length, 0);
+        assert.equal(rawInput.input, prompt);
+        yield* provider.stopSession({ threadId });
+      }).pipe(Effect.scoped),
+    );
+    it.effect(
+      `supplies one permission-scoped context per ${kind} turn without mutating input or attachments`,
+      () =>
+        Effect.gen(function* () {
+          const provider = yield* ProviderService;
+          const threadId = asThreadId(`email-context-${kind}`);
+          const reader = vi.fn(async (request: StudyBuddyEmailContextRequest) => ({
+            readStatePreserved: true as const,
+            accounts: [
+              {
+                sourceId: "configured-account",
+                sourceLabel: "College mail",
+                senderEmail: "student@college.example",
+                canRead: request.includeBodies,
+                canDraft: true,
+                canRequestSend: false,
+              },
+            ],
+            messages: request.includeBodies
+              ? [
+                  {
+                    id: "observed-mail",
+                    sourceLabel: "College mail",
+                    from: "Instructor <instructor@college.example>",
+                    subject: "Lab",
+                    receivedAt: "2026-10-05T08:00:00Z",
+                    bodyText: "Explicit read evidence",
+                    isUnread: true,
+                  },
+                ]
+              : [],
+          }));
+          yield* Effect.acquireRelease(
+            Effect.sync(() => registerStudyBuddyEmailContextReader(reader)),
+            (dispose) => Effect.sync(dispose),
+          );
+          yield* provider.startSession(threadId, {
+            provider: kind,
+            providerInstanceId: ProviderInstanceId.make(kind),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          for (const [prompt, intent, includeBodies] of [
+            [
+              "Schreib eine Entschuldigung an meinen Professor wegen Zugverspätung.",
+              "draft",
+              false,
+            ],
+            ["Send an email to my lecturer about late arrival.", "send", false],
+            ["Read my latest email", "read", true],
+          ] as const) {
+            reader.mockClear();
+            adapter.sendTurn.mockClear();
+            const rawInput = {
+              threadId,
+              input: prompt,
+              attachments: [
+                {
+                  type: "image" as const,
+                  id: "image-fixture",
+                  name: "reference.png",
+                  mimeType: "image/png",
+                  sizeBytes: 42,
+                },
+                { type: "voice" as const, id: "voice-fixture", durationMs: 1500 },
+              ],
+            };
+            const original = structuredClone(rawInput);
+            yield* provider.sendTurn(rawInput);
+            assert.equal(reader.mock.calls.length, 1);
+            assert.deepEqual(reader.mock.calls[0]?.[0], {
+              query: prompt,
+              limit: 12,
+              intent,
+              includeBodies,
+              preserveUnread: true,
+            });
+            const forwarded = adapter.sendTurn.mock.calls[0]?.[0];
+            assert.ok(forwarded?.input?.startsWith(prompt));
+            assert.equal(forwarded?.input?.split("<study_buddy_email_context ").length, 2);
+            assert.include(forwarded?.input ?? "", '"canRequestSend": false');
+            assert.include(forwarded?.input ?? "", `"canRead": ${includeBodies}`);
+            assert.equal(
+              (forwarded?.input ?? "").includes("Explicit read evidence"),
+              includeBodies,
+            );
+            assert.deepEqual(forwarded?.attachments, original.attachments);
+            assert.deepEqual(rawInput, original);
+          }
+          reader.mockClear();
+          adapter.sendTurn.mockClear();
+          yield* provider.sendTurn({
+            threadId,
+            input: "Explain the law of inertia",
+            attachments: [],
+          });
+          assert.equal(reader.mock.calls.length, 0);
+          assert.equal(adapter.sendTurn.mock.calls[0]?.[0].input, "Explain the law of inertia");
+          reader.mockClear();
+          adapter.sendTurn.mockClear();
+          yield* provider.sendTurn({
+            threadId,
+            attachments: [
+              {
+                type: "image",
+                id: "image-only",
+                name: "example.png",
+                mimeType: "image/png",
+                sizeBytes: 3,
+              },
+            ],
+          });
+          assert.equal(reader.mock.calls.length, 0);
+          assert.equal(adapter.sendTurn.mock.calls[0]?.[0].input, undefined);
+          yield* provider.stopSession({ threadId });
+        }).pipe(Effect.scoped),
+    );
+  }
+});
 
 const routing = makeProviderServiceLayer();
 
