@@ -63,6 +63,12 @@ it("keeps quiz solving native and binds continuation to the first attempt", () =
   expect(instructions).toContain("serialize browser operations within each attempt");
   expect(instructions).toContain("permissionRequestPath");
   expect(instructions).toContain("packetDigest");
+  expect(instructions).toContain('"op":"collect"');
+  expect(instructions).toContain('"op":"complete"');
+  expect(instructions).toContain("Do not stop after the first question");
+  expect(instructions).toContain("shared_page_context");
+  expect(instructions).toContain("full source resolution");
+  expect(instructions).toContain("progress.complete:true");
   expect(instructions).toContain("Only persisted:true establishes a successful save");
   expect(instructions).toContain("Recovery reads only the bound first attempt");
   expect(instructions).toContain("Never use the second attempt");

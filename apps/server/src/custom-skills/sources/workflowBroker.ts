@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This is the server-owned workflow process boundary.
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 
 export const BROKERED_STUDY_BUDDY_COMMANDS = new Set([
   "sources",
@@ -188,6 +188,8 @@ function validateRequest(input: StudyBuddyWorkflowRequest): void {
               inspect: ["op", "url", "prompt"],
               start: ["op", "runDir", "permissionRequestPath"],
               read: ["op", "runDir", "page", "permissionRequestPath"],
+              collect: ["op", "runDir", "permissionRequestPath"],
+              complete: ["op", "runDir", "permissionRequestPath"],
               fill: ["op", "runDir", "answers", "packetDigest", "permissionRequestPath"],
               next: ["op", "runDir", "permissionRequestPath"],
               recover: ["op", "runDir", "permissionRequestPath"],
@@ -330,6 +332,65 @@ function validateRejectedArgumentOverrides(input: StudyBuddyWorkflowRequest): vo
   }
 }
 
+/** Continuations keep the exact inspected source even when several Moodle accounts exist. */
+async function quizSourceSelectionArgs(
+  input: StudyBuddyWorkflowRequest,
+  ownerThreadId: string | undefined,
+): Promise<readonly string[]> {
+  if (input.args[0] !== "quiz") return input.args;
+  const request = JSON.parse(input.args[1]!) as { op: string; runDir?: string };
+  if (request.op === "inspect" || !request.runDir) return input.args;
+  const runDir = path.resolve(request.runDir);
+  const relative = path.relative(input.workspace, runDir);
+  if (relative.startsWith("..") || path.isAbsolute(relative))
+    throw new Error("Direct quiz must remain in the owning workspace and thread.");
+  let file: string;
+  try {
+    file = await realpath(path.join(runDir, "direct-quiz.json"));
+  } catch (error) {
+    // Missing runs are rejected by the direct tool; they cannot supply a source override.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return input.args;
+    throw error;
+  }
+  const details = await lstat(file);
+  const realWorkspace = await realpath(input.workspace);
+  if (
+    !details.isFile() ||
+    details.nlink !== 1 ||
+    file !== path.join(realWorkspace, relative, "direct-quiz.json")
+  )
+    throw new Error("Direct quiz must remain in the owning workspace and thread.");
+  const actualRelative = path.relative(realWorkspace, file);
+  if (actualRelative.startsWith("..") || path.isAbsolute(actualRelative))
+    throw new Error("Direct quiz must remain in the owning workspace and thread.");
+  const state = JSON.parse(await readFile(file, "utf8")) as {
+    workspace?: string;
+    ownerThreadId?: string;
+    targetUrl?: string;
+  };
+  if (
+    state.workspace !== input.workspace ||
+    state.ownerThreadId !== ownerThreadId ||
+    typeof state.targetUrl !== "string"
+  )
+    throw new Error("Direct quiz must remain in the owning workspace and thread.");
+  const target = new URL(state.targetUrl);
+  if (
+    (target.protocol !== "https:" &&
+      !(
+        target.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname)
+      )) ||
+    target.searchParams.getAll("id").length !== 1 ||
+    [...target.searchParams.keys()].some((key) => key !== "id") ||
+    target.username ||
+    target.password ||
+    target.pathname !== "/mod/quiz/view.php" ||
+    !/^\d+$/.test(target.searchParams.get("id") ?? "")
+  )
+    throw new Error("Invalid saved direct quiz target.");
+  return [...input.args, target.href];
+}
+
 export async function executeStudyBuddyWorkflow(
   rawInput: StudyBuddyWorkflowRequest,
   dependencies: StudyBuddyWorkflowBrokerDependencies,
@@ -338,7 +399,10 @@ export async function executeStudyBuddyWorkflow(
   validateRequest(input);
   validateRejectedArgumentOverrides(input);
   const workflowEnvironment = await dependencies.resolveWorkflowEnvironment({
-    args: input.args,
+    args: await quizSourceSelectionArgs(
+      input,
+      dependencies.baseEnvironment.STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID ?? input.threadId,
+    ),
     ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
   });
   let sanitizedArgs = await sanitizeArgumentOverrides(input, dependencies, workflowEnvironment);

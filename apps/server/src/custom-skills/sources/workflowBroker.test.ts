@@ -1,13 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Native path fixtures validate cross-platform argv.
 import path from "node:path";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { executeStudyBuddyWorkflow, type StudyBuddyWorkflowInvocation } from "./workflowBroker.ts";
-import { spawnWorkflow as spawnNativeWorkflow } from "./workflowBrokerHttp.ts";
+import {
+  createBrokerExecutionRequest,
+  spawnWorkflow as spawnNativeWorkflow,
+} from "./workflowBrokerHttp.ts";
 
 describe("Study Buddy workflow broker", () => {
   it.each([
@@ -86,8 +89,150 @@ describe("Study Buddy workflow broker", () => {
     }
   });
 
+  it("selects the saved quiz source for technical continuation before staging approval", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "quiz-source-continuation-"));
+    try {
+      const runDir = path.join(workspace, "study-buddy-data", "direct-quizzes", "run");
+      await mkdir(runDir, { recursive: true });
+      await writeFile(
+        path.join(runDir, "direct-quiz.json"),
+        JSON.stringify({
+          workspace,
+          ownerThreadId: "owner",
+          targetUrl: "https://second-moodle.example/mod/quiz/view.php?id=7",
+        }),
+      );
+      const resolveWorkflowEnvironment = vi.fn(
+        async (_input: { args?: readonly string[]; sourceIds?: readonly string[] }) => ({}),
+      );
+      const spawnWorkflow = vi.fn(async (_input: StudyBuddyWorkflowInvocation) => ({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+      }));
+      await executeStudyBuddyWorkflow(
+        { args: ["quiz", JSON.stringify({ op: "collect", runDir })], workspace, threadId: "owner" },
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: {},
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      );
+      expect(resolveWorkflowEnvironment.mock.calls[0]![0].args).toContain(
+        "https://second-moodle.example/mod/quiz/view.php?id=7",
+      );
+      expect(JSON.parse(spawnWorkflow.mock.calls[0]![0].args[2]!)).toEqual({
+        op: "collect",
+        runDir,
+      });
+      await executeStudyBuddyWorkflow(
+        createBrokerExecutionRequest(
+          {
+            args: ["quiz", JSON.stringify({ op: "collect", runDir })],
+            workspace,
+            threadId: "owner",
+          },
+          workspace,
+          () => "temporary-id",
+        ),
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: { STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID: "owner" },
+          resolveWorkflowEnvironment,
+          spawnWorkflow,
+        },
+      );
+      expect(resolveWorkflowEnvironment.mock.calls[1]![0].args).toContain(
+        "https://second-moodle.example/mod/quiz/view.php?id=7",
+      );
+      for (const targetUrl of [
+        "ftp://second-moodle.example/mod/quiz/view.php?id=7",
+        "https://second-moodle.example/mod/quiz/view.php?id=7&id=8",
+        "https://second-moodle.example/mod/quiz/view.php?id=7&token=canary",
+      ]) {
+        await writeFile(
+          path.join(runDir, "direct-quiz.json"),
+          JSON.stringify({ workspace, ownerThreadId: "owner", targetUrl }),
+        );
+        resolveWorkflowEnvironment.mockClear();
+        await expect(
+          executeStudyBuddyWorkflow(
+            {
+              args: ["quiz", JSON.stringify({ op: "status", runDir })],
+              workspace,
+              threadId: "owner",
+            },
+            {
+              packagedRoot: "/app",
+              nodeExecutable: process.execPath,
+              baseEnvironment: {},
+              resolveWorkflowEnvironment,
+              spawnWorkflow,
+            },
+          ),
+        ).rejects.toThrow("Invalid saved direct quiz target");
+        expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+      }
+      resolveWorkflowEnvironment.mockClear();
+      await expect(
+        executeStudyBuddyWorkflow(
+          {
+            args: ["quiz", JSON.stringify({ op: "recover", runDir })],
+            workspace,
+            threadId: "other",
+          },
+          {
+            packagedRoot: "/app",
+            nodeExecutable: process.execPath,
+            baseEnvironment: {},
+            resolveWorkflowEnvironment,
+            spawnWorkflow,
+          },
+        ),
+      ).rejects.toThrow("owning workspace and thread");
+      expect(resolveWorkflowEnvironment).not.toHaveBeenCalled();
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["collect", "complete"])(
+    "forwards %s only through the existing native quiz boundary",
+    async (op) => {
+      const spawnWorkflow = vi.fn(async (_input: StudyBuddyWorkflowInvocation) => ({
+        exitCode: 0,
+        stdout: "{}",
+        stderr: "",
+      }));
+      await executeStudyBuddyWorkflow(
+        {
+          args: ["quiz", JSON.stringify({ op, runDir: "/workspace/run" })],
+          workspace: path.resolve("/workspace"),
+          threadId: "owner",
+        },
+        {
+          packagedRoot: "/app",
+          nodeExecutable: process.execPath,
+          baseEnvironment: {},
+          resolveWorkflowEnvironment: async () => ({}),
+          spawnWorkflow,
+        },
+      );
+      expect(spawnWorkflow).toHaveBeenCalledOnce();
+      expect(JSON.parse(spawnWorkflow.mock.calls[0]![0].args[2]!)).toEqual({
+        op,
+        runDir: "/workspace/run",
+      });
+    },
+  );
+
   it.each([
     { op: "submit", runDir: "/workspace/run" },
+    { op: "collect", runDir: "/workspace/run", attemptId: "second" },
+    { op: "complete", runDir: "/workspace/run", submit: true },
     { op: "start", runDir: "/workspace/run", attemptId: "second" },
     { op: "read", runDir: "/workspace/run", model: "override" },
     {
