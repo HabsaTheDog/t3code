@@ -76,6 +76,45 @@ it("keeps quiz solving native and binds continuation to the first attempt", () =
   expect(instructions).not.toContain('prompt "<exact quiz prompt>" --auto-answer');
 });
 
+it("requires the native owner and question solvers to resolve answer-changing mathematical risks before fill", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  })!;
+  const quiz = instructions.slice(
+    instructions.indexOf("## Direct Quiz"),
+    instructions.indexOf("## Safety And Output"),
+  );
+  const solverBrief = quiz.slice(quiz.indexOf("4. Delegate"), quiz.indexOf("5. Save"));
+  expect(solverBrief).toContain("exact quantifiers, domain and existence conditions");
+  expect(solverBrief).toContain("Never silently add an answer-changing assumption");
+  expect(solverBrief).toContain("exact referenced source");
+  expect(solverBrief).toContain("risk_flags");
+  expect(solverBrief).toContain("stop before fill");
+  expect(solverBrief).toContain("Complete question coverage never justifies a risky answer");
+  expect(quiz).toContain("persisted:true and progress.verified verify saved values only");
+  expect(quiz).toContain("not mathematical correctness or an official grade");
+});
+
+it("keeps the fill example valid JSON without prescribing copied high confidence", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy" },
+  })!;
+  const fill = instructions.match(/then fill with (\{"op":"fill"[^\n]+?\})\. Supply/);
+  expect(fill).not.toBeNull();
+  const request = JSON.parse(fill![1]!);
+  expect(request).toMatchObject({
+    op: "fill",
+    answers: [{ confidence: expect.any(Number), risk_flags: [] }],
+  });
+  expect(request.answers[0].confidence).toBeGreaterThanOrEqual(0);
+  expect(request.answers[0].confidence).toBeLessThan(0.99);
+  expect(instructions).toContain("<measured confidence>");
+  expect(instructions).toContain(
+    "Replace the illustrative numeric confidence with evidence-based confidence",
+  );
+  expect(instructions).toContain("An unresolved risk must not be hidden by high confidence");
+});
+
 it("gives execution of a real quiz priority before generic routing or a loaded legacy skill", () => {
   const instructions = buildStudyBuddyDeveloperInstructions({
     environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
