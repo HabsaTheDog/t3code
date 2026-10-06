@@ -87,6 +87,35 @@ describe("packaged Study Buddy workflow client", () => {
     );
   });
 
+  it("reads broker state from a dedicated runtime root in development", async () => {
+    const readRuntimeState = vi.fn(async () =>
+      JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
+    );
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ exitCode: 0, stdout: "", stderr: "" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    await expect(
+      maybeRunBrokeredWorkflow(["prompt", "test"], {
+        environment: {
+          STUDY_BUDDY_CONFIG_ROOT: path.resolve("/workflow/config"),
+          STUDY_BUDDY_RUNTIME_STATE_ROOT: path.resolve("/desktop/state"),
+          STUDY_BUDDY_WORKSPACE: path.resolve("/workspace"),
+        },
+        readRuntimeState,
+        fetchImpl,
+      }),
+    ).resolves.toBe(0);
+
+    expect(readRuntimeState).toHaveBeenCalledWith(
+      path.resolve("/desktop/state/server-runtime.json"),
+    );
+  });
+
   it("bypasses the broker for the server-owned child execution", async () => {
     const fetchImpl = vi.fn();
     await expect(

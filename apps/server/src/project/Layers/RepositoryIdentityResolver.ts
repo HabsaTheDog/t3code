@@ -87,7 +87,6 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
   cwd: string,
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
-  let cacheKey = cwd;
 
   const topLevelResult = yield* processRunner
     .run({
@@ -97,15 +96,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
     })
     .pipe(Effect.option);
   if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-    return cacheKey;
+    return null;
   }
 
   const candidate = topLevelResult.value.stdout.trim();
-  if (candidate.length > 0) {
-    cacheKey = candidate;
-  }
-
-  return cacheKey;
+  return candidate.length > 0 ? candidate : null;
 });
 
 const resolveRepositoryIdentityFromCacheKey = Effect.fn("resolveRepositoryIdentityFromCacheKey")(
@@ -133,11 +128,14 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
   function* (options: RepositoryIdentityResolverOptions = {}) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
 
+    // Cache the whole workspace lookup. Probing the Git root before the cache
+    // spawned a process for every project on every snapshot, even for No Git chats.
     const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-      (cacheKey) =>
-        resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
-          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        ),
+      (cwd) =>
+        Effect.gen(function* () {
+          const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd);
+          return cacheKey === null ? null : yield* resolveRepositoryIdentityFromCacheKey(cacheKey);
+        }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner)),
       {
         capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
         timeToLive: Exit.match({
@@ -152,12 +150,7 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
 
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
-    )(function* (cwd) {
-      const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-      );
-      return yield* Cache.get(repositoryIdentityCache, cacheKey);
-    });
+    )((cwd) => Cache.get(repositoryIdentityCache, cwd));
 
     return {
       resolve,

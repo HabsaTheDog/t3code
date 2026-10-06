@@ -237,3 +237,36 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     ),
   );
 });
+
+it.effect("coalesces all Git probes across repeated concurrent non-repository snapshots", () =>
+  Effect.gen(function* () {
+    let probes = 0;
+    const resolver = yield* makeRepositoryIdentityResolver({ negativeCacheTtl: "50 millis" }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () =>
+          Effect.sync(() => {
+            probes++;
+            return {
+              code: null,
+              stdout: "",
+              stderr: "not a git repository",
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      }),
+    );
+    const workspaces = Array.from({ length: 54 }, (_, index) => `/quick-chat/${index}`);
+    for (let snapshot = 0; snapshot < 5; snapshot++) {
+      const result = yield* Effect.forEach(workspaces, (cwd) => resolver.resolve(cwd), {
+        concurrency: 4,
+      });
+      expect(result.every((identity) => identity === null)).toBe(true);
+    }
+    expect(probes).toBe(54);
+    yield* TestClock.adjust("51 millis");
+    yield* resolver.resolve(workspaces[0]!);
+    expect(probes).toBe(55);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
