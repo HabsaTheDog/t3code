@@ -141,6 +141,9 @@ function summary(message: StudyBuddyEmailMessageSummary) {
     to: addresses(message.to),
     ...(message.sentAt ? { sentAt: message.sentAt } : {}),
     ...(message.receivedAt ? { receivedAt: message.receivedAt } : {}),
+    ...(message.providerDateLabel
+      ? { providerDateLabel: safeText(message.providerDateLabel, 128) }
+      : {}),
     sanitizedPreview: safeText(message.sanitizedPreview, 600),
     isSeen: message.isSeen,
     hasAttachments: message.hasAttachments,
@@ -331,6 +334,7 @@ export async function executeStudyBuddyEmailTool(
       sourceLabel: account.sourceLabel,
       folder,
       messages: page.messages.map(summary),
+      ordering: page.ordering ?? "unspecified",
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       complete: !page.nextCursor,
     });

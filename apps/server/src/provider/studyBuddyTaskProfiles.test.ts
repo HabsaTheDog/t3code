@@ -187,6 +187,14 @@ it("makes direct email acquisition available without a classifier or automatic m
   expect(email).toContain("follow returned pagination cursors with a bounded scope");
   expect(email).toContain("sourceId, folder, messageId, subject and observed date");
   expect(email).toContain("fixed latest-message sample is not exhaustive");
+  expect(email).toContain("For the newest N messages, request list with limit N");
+  expect(email).toContain("read only those N bodies");
+  expect(email).toContain("ordering arrival-desc");
+  expect(email).toContain("not necessarily descending receivedAt");
+  expect(email).toContain("providerDateLabel is localized display text, not a timestamp");
+  expect(email).toContain("Missing header dates do not justify reading every message");
+  expect(email).toContain("do not launch one login per mailbox message at once");
+  expect(email).toContain("Do not self-terminate mailbox read processes");
   expect(email).not.toContain("request_user_input");
   const safety = instructions.slice(instructions.indexOf("## Safety And Output"));
   expect(safety).toContain("canDraft");

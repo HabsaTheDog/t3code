@@ -90,6 +90,7 @@ describe("Study Buddy read-only IMAP broker", () => {
   it("reads an unread message without setting Seen", async () => {
     const harness = makeHarness(false);
     const page = await harness.broker.listMessages({ sourceId: "mail-source" });
+    expect(page.ordering).toBe("uid-desc");
     const messageId = page.messages[0]?.messageId;
     expect(messageId).toBeTruthy();
 

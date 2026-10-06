@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated filesystem fixtures for source persistence.
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import path from "node:path";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
@@ -784,6 +785,120 @@ describe("Study Buddy IMAP source configuration", () => {
     await expect(platform.email.listMessages({ sourceId: source.id })).rejects.toThrow(
       "Email reading is turned off",
     );
+  });
+
+  it("does not overwrite a newer permission change from an older materialization", async () => {
+    const h = await harness();
+    const inventory = await h.platform.createSource({
+      expectedRevision: 0,
+      kind: "email",
+      label: "Fixture mail",
+      url: "https://mail.example.edu/SOGo/",
+      enabled: true,
+      auth: { operation: "set-password", username: "fixture-user", password: "fixture-password" },
+    });
+    const source = inventory.sources.find((entry) => entry.kind === "email")!;
+    const registryPath = path.join(h.directory, "state", "study-buddy-sources.json");
+    const fixture = JSON.parse(await readFile(registryPath, "utf8"));
+    fixture.sources.find((entry: { id: string }) => entry.id === source.id).scope.tags = ["legacy"];
+    await writeFile(registryPath, JSON.stringify(fixture));
+    let releaseRead!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let signalEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    let held = false;
+    const readerSecrets: ServerSecretStoreShape = {
+      ...h.secretStore,
+      get: (name) => {
+        if (!held && h.secretValues.has(name)) {
+          held = true;
+          signalEntered();
+          return Effect.promise(async () => {
+            await blocked;
+            return h.secretValues.get(name) ?? null;
+          });
+        }
+        return h.secretStore.get(name);
+      },
+    };
+    const reader = createStudyBuddySourcePlatform(h.config, readerSecrets);
+    const olderRead = reader.getInventory();
+    await entered;
+    const mutation = h.platform.updateEmailPermissions({
+      expectedRevision: inventory.revision,
+      sourceId: source.id,
+      read: false,
+      draft: true,
+      send: false,
+      senderEmail: null,
+    });
+    // Allow the existing mutation to commit while the older snapshot is held.
+    // A serialized implementation may wait; the deadline only releases the fixture.
+    await Promise.race([mutation, delay(100)]);
+    releaseRead();
+    await Promise.all([olderRead, mutation]);
+    const persisted = JSON.parse(await readFile(registryPath, "utf8"));
+    expect(persisted.revision).toBe(inventory.revision + 1);
+    expect(persisted.sources.find((entry: { id: string }) => entry.id === source.id)).toMatchObject(
+      {
+        policy: { authenticatedReads: "denied", remoteDrafts: "allowed", emailSend: "denied" },
+        capabilities: ["mail.draft.local"],
+      },
+    );
+  });
+
+  it("rejects one conflicting same-revision mutation across platform instances", async () => {
+    const h = await harness();
+    const inventory = await h.platform.createSource({
+      expectedRevision: 0,
+      kind: "email",
+      label: "Fixture mail",
+      url: "https://mail.example.edu/SOGo/",
+      enabled: true,
+      auth: { operation: "set-password", username: "fixture-user", password: "fixture-password" },
+    });
+    const other = createStudyBuddySourcePlatform(h.config, h.secretStore);
+    const source = inventory.sources.find((entry) => entry.kind === "email")!;
+    const input = {
+      expectedRevision: inventory.revision,
+      sourceId: source.id,
+      draft: true,
+      send: false,
+      senderEmail: null,
+    };
+    const outcomes = await Promise.allSettled([
+      h.platform.updateEmailPermissions({ ...input, read: false }),
+      other.updateEmailPermissions({ ...input, read: true }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+    expect((await other.getInventory()).revision).toBe(inventory.revision + 1);
+  });
+
+  it("leaves an unchanged already-migrated legacy registry file intact", async () => {
+    const h = await harness();
+    const inventory = await h.platform.createSource({
+      expectedRevision: 0,
+      kind: "email",
+      label: "Fixture mail",
+      url: "https://mail.example.edu/SOGo/",
+      enabled: true,
+      auth: { operation: "set-password", username: "fixture-user", password: "fixture-password" },
+    });
+    const registryPath = path.join(h.directory, "state", "study-buddy-sources.json");
+    const fixture = JSON.parse(await readFile(registryPath, "utf8"));
+    fixture.sources[0].scope.tags = ["legacy"];
+    await writeFile(registryPath, JSON.stringify(fixture));
+    const before = await stat(registryPath);
+    const unchanged = await h.platform.getInventory();
+    const after = await stat(registryPath);
+    expect(unchanged.revision).toBe(inventory.revision);
+    expect(after.ino).toBe(before.ino);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
   });
 
   it("requires drafts and a sender address before send approval requests can be enabled", async () => {

@@ -103,6 +103,28 @@ function harness(sources = [source()], authState: "configured" | "not-configured
 }
 
 describe("Study Buddy native read-only email tools", () => {
+  it("passes proven order and display labels without reading bodies or inventing timestamps", async () => {
+    const h = harness();
+    const { receivedAt: _receivedAt, ...undatedMessage } = h.page.messages[0]!;
+    h.platform.email.listMessages.mockResolvedValue({
+      ...h.page,
+      ordering: "arrival-desc",
+      messages: [{ ...undatedMessage, providerDateLabel: "Gestern" }],
+    });
+    const output = JSON.parse((await h.run({ op: "list", sourceId: "mail-one", limit: 3 })).stdout);
+    expect(output.ordering).toBe("arrival-desc");
+    expect(output.messages[0].providerDateLabel).toBe("Gestern");
+    expect(output.messages[0].receivedAt).toBeUndefined();
+    expect(output.messages[0].sentAt).toBeUndefined();
+    expect(h.platform.email.readMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not assume newest-first ordering for a provider without a guarantee", async () => {
+    const h = harness();
+    const output = JSON.parse((await h.run({ op: "list", sourceId: "mail-one" })).stdout);
+    expect(output.ordering).toBe("unspecified");
+  });
+
   it("retains sanitized HTML evidence when a message has an empty plain-text part", async () => {
     const h = harness();
     const body = {

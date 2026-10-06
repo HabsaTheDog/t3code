@@ -37,6 +37,7 @@ export interface WebmailMessageRecord extends WebmailMessageReference {
   readonly to: readonly StudyBuddyEmailAddress[];
   readonly sentAt?: string;
   readonly receivedAt?: string;
+  readonly providerDateLabel?: string;
   readonly isSeen: boolean;
   readonly hasAttachments: boolean;
 }
@@ -53,7 +54,11 @@ export interface WebmailProviderProfile {
   list(
     session: WebmailProfileSession,
     input: { folder: string; query?: string; unreadOnly?: boolean; cursor?: string; limit: number },
-  ): Promise<{ records: readonly WebmailMessageRecord[]; nextCursor?: string }>;
+  ): Promise<{
+    records: readonly WebmailMessageRecord[];
+    nextCursor?: string;
+    ordering?: StudyBuddyEmailMessagePage["ordering"];
+  }>;
   inspectSeen(session: WebmailProfileSession, reference: WebmailMessageReference): Promise<boolean>;
   fetchRaw(session: WebmailProfileSession, reference: WebmailMessageReference): Promise<Buffer>;
   restoreSeen(
@@ -180,6 +185,7 @@ export function createStudyBuddyWebmailRuntime(
       return {
         sourceId: access.sourceId,
         messages: page.records.map((record) => toSummary(profile.id, record)),
+        ...(page.ordering ? { ordering: page.ordering } : {}),
         ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
       };
     });
@@ -268,6 +274,7 @@ function toSummary(
     to: record.to.slice(0, 512),
     ...(record.sentAt ? { sentAt: record.sentAt } : {}),
     ...(record.receivedAt ? { receivedAt: record.receivedAt } : {}),
+    ...(record.providerDateLabel ? { providerDateLabel: record.providerDateLabel } : {}),
     sanitizedPreview: truncate(body.replace(/\s+/g, " ").trim(), 4_000),
     isSeen: record.isSeen,
     hasAttachments: record.hasAttachments,

@@ -75,7 +75,13 @@ export function createSogoWebmailProfile(
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
-          sortingAttributes: { match: "AND", sort: "arrival", asc: false, noHeaders: false },
+          sortingAttributes: {
+            match: "AND",
+            sort: "arrival",
+            asc: false,
+            noHeaders: false,
+            dry: true,
+          },
           ...(input.unreadOnly ? { unseenOnly: 1 } : {}),
           ...(filters.length ? { filters } : {}),
         }),
@@ -84,9 +90,24 @@ export function createSogoWebmailProfile(
       const payload = parseJson(await readText(response)) as {
         headers?: unknown;
         uids?: unknown;
+        threaded?: unknown;
       };
       const offset = parseOffset(input.cursor);
-      const allUids = Array.isArray(payload.uids) ? payload.uids.map(String) : [];
+      // SOGo may return a threaded table instead of flat UIDs. Only the latter
+      // establishes the requested arrival order; never stringify nested rows.
+      const hasUidOrder =
+        (payload.threaded === undefined || payload.threaded === false || payload.threaded === 0) &&
+        Array.isArray(payload.uids) &&
+        payload.uids.every(
+          (uid) =>
+            ((typeof uid === "string" && /^[1-9]\d*$/.test(uid)) ||
+              (typeof uid === "number" && Number.isInteger(uid))) &&
+            Number(uid) > 0 &&
+            Number(uid) <= 4_294_967_295,
+        ) &&
+        new Set(payload.uids.map(String)).size === payload.uids.length;
+      if (!hasUidOrder) throw new Error("SOGo did not provide an unthreaded mailbox UID list.");
+      const allUids = (payload.uids as Array<string | number>).map(String);
       const selectedUids = allUids.slice(offset, offset + input.limit);
       let records = parseSogoHeaders(payload.headers, input.folder).filter((record) =>
         selectedUids.includes(record.id),
@@ -103,11 +124,15 @@ export function createSogoWebmailProfile(
         if (!headersResponse.ok) throw new Error("SOGo could not fetch mailbox headers.");
         records = parseSogoHeaders(parseJson(await readText(headersResponse)), input.folder);
       }
-      if (allUids.length === 0) {
-        records = parseSogoHeaders(payload.headers, input.folder).slice(0, input.limit);
-      }
+      const byUid = new Map(records.map((record) => [record.id, record]));
+      records = selectedUids.map((uid) => {
+        const record = byUid.get(uid);
+        if (!record) throw new Error("SOGo could not fetch mailbox headers.");
+        return record;
+      });
       return {
         records,
+        ordering: "arrival-desc" as const,
         ...(offset + selectedUids.length < allUids.length
           ? { nextCursor: String(offset + selectedUids.length) }
           : {}),
@@ -606,6 +631,9 @@ export function parseSogoHeaders(value: unknown, folder: string): WebmailMessage
         subject: decodeEntities(String(row.Subject ?? "(No subject)")),
         from: parseSogoAddresses(row.From),
         to: parseSogoAddresses(row.To),
+        ...(typeof row.RelativeDate === "string" && row.RelativeDate.trim()
+          ? { providerDateLabel: decodeEntities(row.RelativeDate).slice(0, 128) }
+          : {}),
         isSeen: sogoBoolean(row.isRead),
         hasAttachments: sogoBoolean(row.hasAttachment),
       },

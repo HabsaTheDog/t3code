@@ -228,7 +228,8 @@ export function createStudyBuddyEmailReadBroker(
       const limit = Math.min(input.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
       const selected = eligible.slice(0, limit);
       const hasMore = eligible.length > selected.length;
-      if (selected.length === 0) return { sourceId: input.sourceId, messages: [] };
+      if (selected.length === 0)
+        return { sourceId: input.sourceId, messages: [], ordering: "uid-desc" };
       const fetched = await client.fetchAll(
         selected,
         { uid: true, flags: true, envelope: true, internalDate: true, bodyStructure: true },
@@ -242,6 +243,7 @@ export function createStudyBuddyEmailReadBroker(
       return {
         sourceId: input.sourceId,
         messages,
+        ordering: "uid-desc",
         ...(hasMore
           ? { nextCursor: encodeCursor(mailbox.uidValidity, selected[selected.length - 1]!) }
           : {}),

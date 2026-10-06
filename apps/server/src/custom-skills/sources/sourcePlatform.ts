@@ -88,6 +88,25 @@ const StoredSourceDocumentSchema = Schema.Struct({
 });
 const decodeStoredSourceDocument = Schema.decodeUnknownSync(StoredSourceDocumentSchema);
 
+// HTTP and websocket brokers may own distinct platform instances in one server.
+// Serialize their registry transactions by path; transport work stays outside.
+const registryQueues = new Map<string, Promise<void>>();
+
+function withRegistryTransaction<T>(registryPath: string, operation: () => Promise<T>): Promise<T> {
+  const key = path.resolve(registryPath);
+  const previous = registryQueues.get(key) ?? Promise.resolve();
+  const result = previous.then(operation, operation);
+  const tail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  registryQueues.set(key, tail);
+  void tail.then(() => {
+    if (registryQueues.get(key) === tail) registryQueues.delete(key);
+  });
+  return result;
+}
+
 function nowIso(): string {
   return DateTime.formatIso(DateTime.nowUnsafe());
 }
@@ -186,19 +205,16 @@ export function createStudyBuddySourcePlatform(
     dependencies.loginCandidateClassifier ??
     createCodexLoginCandidateClassifier({ model: "gpt-5.6-luna" });
   const connectPortal = dependencies.connectPasswordPortal ?? connectPasswordPortal;
-  let mutationQueue: Promise<void> = Promise.resolve();
+  const withMutation = <T>(operation: () => Promise<T>): Promise<T> =>
+    withRegistryTransaction(registryPath, operation);
 
-  const withMutation = <T>(operation: () => Promise<T>): Promise<T> => {
-    const result = mutationQueue.then(operation, operation);
-    mutationQueue = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
+  const readMaterializedDocument = () =>
+    withMutation(() => materializedDocument(config, registryPath, secrets));
 
   const getInventory = async (): Promise<StudyBuddySourceInventory> =>
-    publicInventory(config, await materializedDocument(config, registryPath, secrets), secrets);
+    withMutation(async () =>
+      publicInventory(config, await materializedDocument(config, registryPath, secrets), secrets),
+    );
 
   const resolveWorkflowEnvironment = async (
     input: {
@@ -206,7 +222,7 @@ export function createStudyBuddySourcePlatform(
       readonly args?: readonly string[];
     } = {},
   ): Promise<Record<string, string>> => {
-    const document = await materializedDocument(config, registryPath, secrets);
+    const document = await readMaterializedDocument();
     const selectedIds = input.sourceIds ? new Set(input.sourceIds) : null;
     if (selectedIds) {
       const enabledIds = new Set(
@@ -350,7 +366,7 @@ export function createStudyBuddySourcePlatform(
     sourceId: string,
     purpose: "read" | "test" | "send",
   ): Promise<StudyBuddyEmailAccess> => {
-    const document = await materializedDocument(config, registryPath, secrets);
+    const document = await readMaterializedDocument();
     const source = document.sources.find((entry) => entry.id === sourceId);
     if (!source) throw sourceError("not-found", "Email source was not found.");
     if (source.kind !== "email") throw sourceError("invalid", "Source is not an email source.");
@@ -721,7 +737,7 @@ export function createStudyBuddySourcePlatform(
     input: StudyBuddyTestSourceInput,
   ): Promise<StudyBuddySourceTestResult> => {
     try {
-      const document = await materializedDocument(config, registryPath, secrets);
+      const document = await readMaterializedDocument();
       const source = document.sources.find((entry) => entry.id === input.sourceId);
       if (!source) throw sourceError("not-found", "Source was not found.");
       const connection = document.connections.find((entry) => entry.id === source.connectionId);
@@ -882,13 +898,17 @@ async function readDocument(
   config: ServerConfigShape,
   registryPath: string,
   secrets: ServerSecretStoreShape,
-): Promise<StoredSourceDocument> {
+): Promise<{ document: StoredSourceDocument; persisted: boolean }> {
   try {
-    return withoutUnconfiguredLegacyPlaceholders(
-      validateStoredDocument(JSON.parse(await readFile(registryPath, "utf8"))),
-    );
+    return {
+      document: withoutUnconfiguredLegacyPlaceholders(
+        validateStoredDocument(JSON.parse(await readFile(registryPath, "utf8"))),
+      ),
+      persisted: true,
+    };
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") return projectLegacySources(config, secrets);
+    if (isNodeError(error) && error.code === "ENOENT")
+      return { document: await projectLegacySources(config, secrets), persisted: false };
     if (error instanceof SyntaxError) throw sourceError("internal", "Source registry is invalid.");
     throw error;
   }
@@ -899,7 +919,7 @@ async function materializedDocument(
   registryPath: string,
   secrets: ServerSecretStoreShape,
 ): Promise<StoredSourceDocument> {
-  const document = await readDocument(config, registryPath, secrets);
+  const { document, persisted } = await readDocument(config, registryPath, secrets);
   const legacyConfiguration = document.sources.some((source) =>
     source.scope.tags.includes("legacy"),
   )
@@ -931,7 +951,9 @@ async function materializedDocument(
       }),
   );
   const sanitized = sanitizeStoredAuthMetadata(document);
-  if (sanitized !== document || legacyConfiguration) await writeDocument(registryPath, sanitized);
+  // Legacy configuration can be present on every read even after migration.
+  // Persist initial projection/actual metadata cleanup, never an unchanged snapshot.
+  if (!persisted || sanitized !== document) await writeDocument(registryPath, sanitized);
   if (legacyConfiguration) {
     await clearLegacyStudyBuddySourceCredentials(legacyConfiguration);
   }

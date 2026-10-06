@@ -134,6 +134,159 @@ describe("generic webmail read-state runtime", () => {
 });
 
 describe("official-provider response adapters", () => {
+  it.each(["Gestern", "Dienstag", "06.10.26", "22:16"])(
+    "keeps the SOGo display date %s as a label, not an exact timestamp",
+    (label) => {
+      const [record] = parseSogoHeaders(
+        [
+          ["uid", "Subject", "RelativeDate", "isRead"],
+          ["42", "Mail", label, 0],
+        ],
+        "INBOX",
+      );
+      expect(record?.providerDateLabel).toBe(label);
+      expect(record?.sentAt).toBeUndefined();
+      expect(record?.receivedAt).toBeUndefined();
+    },
+  );
+
+  it.each([false, true])(
+    "preserves SOGo arrival order and pagination with header fallback=%s",
+    async (fallback) => {
+      const selectedPages: string[][] = [];
+      const table = [
+        ["uid", "Subject", "RelativeDate", "isRead"],
+        ["9", "Third arrival", "Dienstag", 0],
+        ["3", "Fourth arrival", "Montag", 0],
+        ["5", "Second arrival", "Gestern", 0],
+        ["8", "First arrival", "22:16", 0],
+        ["99", "Not in the UID selection", "22:17", 0],
+      ];
+      const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/connect"))
+          return Response.json({ username: "student@example.edu" });
+        if (url.pathname.endsWith("/view")) {
+          const request = JSON.parse(String(init?.body));
+          expect(request.sortingAttributes).toEqual({
+            match: "AND",
+            sort: "arrival",
+            asc: false,
+            noHeaders: false,
+            dry: true,
+          });
+          expect(request.unseenOnly).toBe(1);
+          return Response.json({
+            uids: [8, "5", 9, "3"],
+            headers: fallback ? [table[0], table[4]] : table,
+          });
+        }
+        if (url.pathname.endsWith("/headers")) {
+          selectedPages.push(JSON.parse(String(init?.body)).uids);
+          return Response.json(table);
+        }
+        throw new Error("Only login and metadata endpoints may be called");
+      }) as unknown as typeof fetch;
+      const profile = createSogoWebmailProfile({
+        fetch: fetchMock,
+        validateUrl: async () => undefined,
+      });
+      const runtime = createStudyBuddyWebmailRuntime({ profiles: [profile] });
+      const configured = {
+        ...access,
+        profileId: "sogo",
+        baseUrl: "https://mail.example.edu/SOGo/",
+      };
+      const first = await runtime.list(configured, { folder: "INBOX", limit: 2, unreadOnly: true });
+      const second = await runtime.list(configured, {
+        folder: "INBOX",
+        limit: 2,
+        unreadOnly: true,
+        ...(first.nextCursor ? { cursor: first.nextCursor } : {}),
+      });
+      expect(first.ordering).toBe("arrival-desc");
+      expect(first.messages.map((message) => message.subject)).toEqual([
+        "First arrival",
+        "Second arrival",
+      ]);
+      expect(first.messages.map((message) => message.providerDateLabel)).toEqual([
+        "22:16",
+        "Gestern",
+      ]);
+      expect(first.nextCursor).toBe("2");
+      expect(second.ordering).toBe("arrival-desc");
+      expect(second.messages.map((message) => message.subject)).toEqual([
+        "Third arrival",
+        "Fourth arrival",
+      ]);
+      expect(second.nextCursor).toBeUndefined();
+      expect(selectedPages).toEqual(
+        fallback
+          ? [
+              ["8", "5"],
+              ["9", "3"],
+            ]
+          : [],
+      );
+    },
+  );
+
+  it.each([
+    {},
+    { uids: [["42", 0, 0]] },
+    { uids: ["42"], threaded: true },
+    { uids: ["42"], threaded: 1 },
+    { uids: ["42", "42"] },
+    { uids: [0] },
+    { uids: [-1] },
+    { uids: [1.5] },
+    { uids: [true] },
+    { uids: [{}] },
+    { uids: ["042"] },
+    { uids: [4_294_967_296] },
+  ])(
+    "withholds unproven SOGo UID pages instead of claiming complete coverage %j",
+    async (uidPayload) => {
+      const profile = createSogoWebmailProfile({
+        validateUrl: async () => undefined,
+        fetch: vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+          if (new URL(String(input)).pathname.endsWith("/connect"))
+            return Response.json({ username: "student@example.edu" });
+          return Response.json({
+            ...uidPayload,
+            headers: [
+              ["uid", "Subject", "isRead"],
+              ["42", "Mail", 0],
+            ],
+          });
+        }) as unknown as typeof fetch,
+      });
+      const session = await profile.login({ ...access, baseUrl: "https://mail.example.edu/SOGo/" });
+      await expect(profile.list(session, { folder: "INBOX", limit: 3 })).rejects.toThrow(
+        "SOGo did not provide an unthreaded mailbox UID list.",
+      );
+    },
+  );
+
+  it("withholds a SOGo page when selected arrival UIDs have no recoverable headers", async () => {
+    const profile = createSogoWebmailProfile({
+      validateUrl: async () => undefined,
+      fetch: vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith("/connect")) return Response.json({ username: "student@example.edu" });
+        const headers = [
+          ["uid", "Subject", "isRead"],
+          ["42", "Mail", 0],
+        ];
+        return Response.json(path.endsWith("/view") ? { uids: [42, 43], headers } : headers);
+      }) as unknown as typeof fetch,
+    });
+    const session = await profile.login({ ...access, baseUrl: "https://mail.example.edu/SOGo/" });
+    await expect(profile.list(session, { folder: "INBOX", limit: 2 })).rejects.toThrow(
+      "SOGo could not fetch mailbox headers.",
+    );
+  });
+
   it("parses SOGo header-table read state without message view endpoints", () => {
     const records = parseSogoHeaders(
       [

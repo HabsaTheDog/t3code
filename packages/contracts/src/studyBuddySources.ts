@@ -290,6 +290,8 @@ export const StudyBuddyEmailMessageSummary = Schema.Struct({
   to: Schema.Array(StudyBuddyEmailAddress).pipe(Schema.check(Schema.isMaxLength(512))),
   sentAt: Schema.optionalKey(IsoDateTime),
   receivedAt: Schema.optionalKey(IsoDateTime),
+  /** Localized provider display text, never an exact timestamp. */
+  providerDateLabel: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
   sanitizedPreview: Schema.String.check(Schema.isMaxLength(4_000)),
   isSeen: Schema.Boolean,
   hasAttachments: Schema.Boolean,
@@ -323,6 +325,8 @@ export type StudyBuddySearchEmailMessagesInput = typeof StudyBuddySearchEmailMes
 
 export const StudyBuddyEmailMessagePage = Schema.Struct({
   sourceId: StudyBuddySourceId,
+  /** Omitted when the adapter cannot establish the page's ordering. */
+  ordering: Schema.optionalKey(Schema.Literals(["arrival-desc", "uid-desc"])),
   messages: Schema.Array(StudyBuddyEmailMessageSummary).pipe(Schema.check(Schema.isMaxLength(100))),
   nextCursor: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
 });

@@ -6,10 +6,43 @@ import {
   StudyBuddyListEmailMessagesInput,
   StudyBuddyReadEmailMessageResult,
   StudyBuddyEmailSendApprovalPayload,
+  StudyBuddyEmailMessagePage,
   StudyBuddyUpdateEmailPermissionsInput,
 } from "./studyBuddySources.ts";
 
 describe("Study Buddy read-only email contracts", () => {
+  it("distinguishes proven page ordering and localized labels from exact email dates", () => {
+    const decode = Schema.decodeUnknownSync(StudyBuddyEmailMessagePage);
+    const page = {
+      sourceId: "email-source",
+      ordering: "arrival-desc",
+      messages: [
+        {
+          messageId: "opaque-id",
+          folder: "INBOX",
+          subject: "Mail",
+          from: [],
+          to: [],
+          providerDateLabel: "Gestern",
+          sanitizedPreview: "",
+          isSeen: false,
+          hasAttachments: false,
+        },
+      ],
+    };
+    expect(decode(page).messages[0]?.providerDateLabel).toBe("Gestern");
+    expect(decode({ ...page, ordering: "uid-desc" }).ordering).toBe("uid-desc");
+    expect(() => decode({ ...page, ordering: "receivedAt-desc" })).toThrow();
+    expect(decode(page).messages[0]?.sentAt).toBeUndefined();
+    expect(decode(page).messages[0]?.receivedAt).toBeUndefined();
+    expect(() =>
+      decode({
+        ...page,
+        messages: [{ ...page.messages[0], providerDateLabel: "x".repeat(129) }],
+      }),
+    ).toThrow();
+  });
+
   it("accepts adaptive email provider hints without embedding credentials", () => {
     const decode = Schema.decodeUnknownSync(StudyBuddyCreateSourceInput);
     const result = decode({
