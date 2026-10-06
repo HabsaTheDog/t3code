@@ -127,11 +127,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { createStudyBuddySourcePlatform } from "./custom-skills/sources/sourcePlatform.ts";
 import { registerStudyBuddyEmailApprovalExecutor } from "./custom-skills/sources/emailSendApprovals.ts";
-import {
-  formatStudyBuddyEmailContextSenders,
-  registerStudyBuddyEmailContextReader,
-  studyBuddyEmailSearchTerm,
-} from "./provider/StudyBuddyEmailContext.ts";
+import { registerStudyBuddyEmailContextReader } from "./provider/StudyBuddyEmailContext.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -341,12 +337,11 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       registerStudyBuddyEmailApprovalExecutor(async ({ payload }) => {
         await studyBuddySources.email.sendExact(payload);
       });
-      registerStudyBuddyEmailContextReader(async ({ query, limit, includeBodies }) => {
+      registerStudyBuddyEmailContextReader(async () => {
         const inventory = await studyBuddySources.getInventory();
         const sources = inventory.sources.filter(
           (source) => source.kind === "email" && source.enabled,
         );
-        if (sources.length === 0) throw new Error("No enabled email source is configured.");
         const connections = new Map(
           inventory.connections.map((connection) => [connection.id, connection]),
         );
@@ -368,44 +363,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
               Boolean(connection?.auth.emailAddress),
           };
         });
-        if (!includeBodies) return { readStatePreserved: true, accounts, messages: [] };
-        const readableSources = sources.filter((source) =>
-          accounts.some((account) => account.sourceId === source.id && account.canRead),
-        );
-        if (readableSources.length === 0) {
-          return { readStatePreserved: true, accounts, messages: [] };
-        }
-        const perSourceLimit = Math.max(1, Math.min(10, Math.ceil(limit / readableSources.length)));
-        const searchTerm = studyBuddyEmailSearchTerm(query);
-        const outcomes = await Promise.allSettled(
-          readableSources.map(async (source) => ({
-            source,
-            messages: await studyBuddySources.email.readContext({
-              sourceId: source.id,
-              ...(searchTerm ? { query: searchTerm } : {}),
-              limit: perSourceLimit,
-            }),
-          })),
-        );
-        const successful = outcomes.flatMap((outcome) =>
-          outcome.status === "fulfilled" ? [outcome.value] : [],
-        );
-        if (successful.length === 0) throw new Error("Configured email sources were unavailable.");
-        const messages = successful.flatMap(({ source, messages: sourceMessages }) => {
-          if (sourceMessages.some((message) => !message.seenState.preserved)) {
-            throw new Error("Email read state could not be preserved.");
-          }
-          return sourceMessages.map((message) => ({
-            id: message.message.messageId,
-            sourceLabel: source.label,
-            from: formatStudyBuddyEmailContextSenders(message.message.from),
-            subject: message.message.subject,
-            receivedAt: message.message.receivedAt ?? message.message.sentAt ?? "",
-            bodyText: message.body.sanitizedText,
-            isUnread: !message.seenState.seenBefore,
-          }));
-        });
-        return { readStatePreserved: true, accounts, messages: messages.slice(0, limit) };
+        return { accounts };
       });
       const runtimeContext = yield* Effect.context<never>();
       const runPromise = Effect.runPromiseWith(runtimeContext);

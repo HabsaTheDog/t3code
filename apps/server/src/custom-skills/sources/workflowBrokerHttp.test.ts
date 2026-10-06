@@ -169,7 +169,7 @@ describe("Study Buddy workflow broker request identity", () => {
       args: ["document", JSON.stringify({ op: "prepare", prompt: "Exact request" })],
     });
   });
-  it.each(["sources", "document", "quiz"])(
+  it.each(["sources", "document", "quiz", "email"])(
     "keeps %s model-free without worker-profile arguments",
     (command) => {
       const input = {

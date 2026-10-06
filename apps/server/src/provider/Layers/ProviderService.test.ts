@@ -49,10 +49,7 @@ import {
 } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
-import {
-  registerStudyBuddyEmailContextReader,
-  type StudyBuddyEmailContextRequest,
-} from "../StudyBuddyEmailContext.ts";
+import { registerStudyBuddyEmailContextReader } from "../StudyBuddyEmailContext.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
@@ -563,7 +560,6 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
         const provider = yield* ProviderService;
         const threadId = asThreadId(`email-context-limit-${kind}`);
         const reader = vi.fn(async () => ({
-          readStatePreserved: true as const,
           accounts: [
             {
               sourceId: "configured-account",
@@ -574,7 +570,6 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
               canRequestSend: false,
             },
           ],
-          messages: [],
         }));
         yield* Effect.acquireRelease(
           Effect.sync(() => registerStudyBuddyEmailContextReader(reader)),
@@ -604,31 +599,17 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
         Effect.gen(function* () {
           const provider = yield* ProviderService;
           const threadId = asThreadId(`email-context-${kind}`);
-          const reader = vi.fn(async (request: StudyBuddyEmailContextRequest) => ({
-            readStatePreserved: true as const,
+          const reader = vi.fn(async () => ({
             accounts: [
               {
                 sourceId: "configured-account",
                 sourceLabel: "College mail",
                 senderEmail: "student@college.example",
-                canRead: request.includeBodies,
+                canRead: true,
                 canDraft: true,
                 canRequestSend: false,
               },
             ],
-            messages: request.includeBodies
-              ? [
-                  {
-                    id: "observed-mail",
-                    sourceLabel: "College mail",
-                    from: "Instructor <instructor@college.example>",
-                    subject: "Lab",
-                    receivedAt: "2026-10-05T08:00:00Z",
-                    bodyText: "Explicit read evidence",
-                    isUnread: true,
-                  },
-                ]
-              : [],
           }));
           yield* Effect.acquireRelease(
             Effect.sync(() => registerStudyBuddyEmailContextReader(reader)),
@@ -640,15 +621,13 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
             threadId,
             runtimeMode: "full-access",
           });
-          for (const [prompt, intent, includeBodies] of [
-            [
-              "Schreib eine Entschuldigung an meinen Professor wegen Zugverspätung.",
-              "draft",
-              false,
-            ],
-            ["Send an email to my lecturer about late arrival.", "send", false],
-            ["Read my latest email", "read", true],
-          ] as const) {
+          for (const prompt of [
+            "Kannst du mal durchschauen, was bei meinen E Mails noch alles so offen ist oder was da noch ansteht?",
+            "Schreib eine Entschuldigung an meinen Professor wegen Zugverspätung.",
+            "Send an email to my lecturer about late arrival.",
+            "Read my latest email",
+            "Do not read my emails; find my lecturer's address.",
+          ]) {
             reader.mockClear();
             adapter.sendTurn.mockClear();
             const rawInput = {
@@ -668,22 +647,13 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
             const original = structuredClone(rawInput);
             yield* provider.sendTurn(rawInput);
             assert.equal(reader.mock.calls.length, 1);
-            assert.deepEqual(reader.mock.calls[0]?.[0], {
-              query: prompt,
-              limit: 12,
-              intent,
-              includeBodies,
-              preserveUnread: true,
-            });
+            assert.deepEqual(reader.mock.calls, [[]]);
             const forwarded = adapter.sendTurn.mock.calls[0]?.[0];
             assert.ok(forwarded?.input?.startsWith(prompt));
             assert.equal(forwarded?.input?.split("<study_buddy_email_context ").length, 2);
-            assert.include(forwarded?.input ?? "", '"canRequestSend": false');
-            assert.include(forwarded?.input ?? "", `"canRead": ${includeBodies}`);
-            assert.equal(
-              (forwarded?.input ?? "").includes("Explicit read evidence"),
-              includeBodies,
-            );
+            assert.include(forwarded?.input ?? "", '"canRequestSend":false');
+            assert.include(forwarded?.input ?? "", '"canRead":true');
+            assert.include(forwarded?.input ?? "", "not mailbox messages");
             assert.deepEqual(forwarded?.attachments, original.attachments);
             assert.deepEqual(rawInput, original);
           }
@@ -694,8 +664,11 @@ emailRouting.layer("ProviderServiceLive provider-neutral email context", (it) =>
             input: "Explain the law of inertia",
             attachments: [],
           });
-          assert.equal(reader.mock.calls.length, 0);
-          assert.equal(adapter.sendTurn.mock.calls[0]?.[0].input, "Explain the law of inertia");
+          assert.deepEqual(reader.mock.calls, [[]]);
+          assert.ok(
+            adapter.sendTurn.mock.calls[0]?.[0].input?.startsWith("Explain the law of inertia"),
+          );
+          assert.include(adapter.sendTurn.mock.calls[0]?.[0].input ?? "", "not mailbox messages");
           reader.mockClear();
           adapter.sendTurn.mockClear();
           yield* provider.sendTurn({

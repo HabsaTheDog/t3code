@@ -30,6 +30,7 @@ import {
 } from "../../provider/setup/studyBuddyCodexPolicy.ts";
 import { readPersistedServerRuntimeState } from "../../serverRuntimeState.ts";
 import { createStudyBuddySourcePlatform } from "./sourcePlatform.ts";
+import { executeStudyBuddyEmailTool } from "./emailAgentTools.ts";
 import { assertStudyBuddyQuizApprovalGrant } from "./quizApprovals.ts";
 import {
   executeStudyBuddyWorkflow,
@@ -49,7 +50,9 @@ export function applyWorkflowExecutionProfile(
   profile: StudyBuddyExecutionProfileDefinition,
 ): StudyBuddyWorkflowRequest {
   const input = normalizeDocumentWorkflowRequest(rawInput);
-  if (["source-runtime-probe", "sources", "document", "quiz"].includes(input.args[0] ?? ""))
+  if (
+    ["source-runtime-probe", "sources", "document", "quiz", "email"].includes(input.args[0] ?? "")
+  )
     return input;
   const args = input.args.slice(0, 2);
   for (let index = 2; index < input.args.length; index += 1) {
@@ -119,6 +122,10 @@ const SAFE_BASE_ENVIRONMENT_NAMES = new Set([
 class StudyBuddyWorkflowBrokerRequestError extends Data.TaggedError(
   "StudyBuddyWorkflowBrokerRequestError",
 )<{ readonly cause?: unknown }> {}
+
+class StudyBuddyWorkflowRuntimeUnavailable extends Data.TaggedError(
+  "StudyBuddyWorkflowRuntimeUnavailable",
+)<{}> {}
 
 export function publicStudyBuddyWorkflowErrorMessage(cause: unknown): string {
   return cause instanceof StudyBuddyQuizRoutingError
@@ -402,18 +409,6 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
         const nodeExecutable = process.env.STUDY_BUDDY_NODE_EXECUTABLE;
         const packagedRoot = process.env.STUDY_BUDDY_ROOT;
         const taskModulePath = process.env.STUDY_BUDDY_TASK_MODULE;
-        if (
-          !nodeExecutable ||
-          !packagedRoot ||
-          !taskModulePath ||
-          !path.isAbsolute(taskModulePath)
-        ) {
-          return HttpServerResponse.jsonUnsafe(
-            { message: "Study Buddy packaged workflow runtime is unavailable." },
-            { status: 503 },
-          );
-        }
-
         const body = yield* request.json.pipe(Effect.option);
         if (Option.isNone(body)) {
           return HttpServerResponse.jsonUnsafe(
@@ -467,7 +462,10 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               (thread) => thread.id === input.threadId && thread.deletedAt === null,
             );
             if (input.threadId && !ownerThread) throw new Error("Workflow thread is unavailable.");
-            if (["sources", "document", "quiz"].includes(input.args[0] ?? "") && !ownerThread)
+            if (
+              ["sources", "document", "quiz", "email"].includes(input.args[0] ?? "") &&
+              !ownerThread
+            )
               throw new Error("Direct Study Buddy tools require an owning native thread.");
             const modelEnvironment: Record<string, string> = {};
             let executionRequest = input;
@@ -478,6 +476,11 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
               const ownerWorkspace = ownerThread.worktreePath ?? ownerProject?.workspaceRoot;
               if (!ownerWorkspace || (await realpath(ownerWorkspace)) !== workspace)
                 throw new Error("Workflow thread does not own this workspace.");
+              // Mail stays in the server-owned broker: no worker, model bridge,
+              // environment projection or packaged runtime is needed for reads.
+              if (input.args[0] === "email") {
+                return executeStudyBuddyEmailTool(input, sourcePlatform);
+              }
               modelEnvironment.STUDY_BUDDY_DOCUMENT_OWNER_THREAD_ID = ownerThread.id;
               if (!["sources", "document", "quiz"].includes(input.args[0] ?? "")) {
                 const instance = await runPromise(
@@ -508,6 +511,14 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
                 );
               }
             }
+            if (
+              !nodeExecutable ||
+              !packagedRoot ||
+              !taskModulePath ||
+              !path.isAbsolute(taskModulePath)
+            ) {
+              throw new StudyBuddyWorkflowRuntimeUnavailable();
+            }
             return executeStudyBuddyWorkflow(
               createBrokerExecutionRequest(executionRequest, workspace),
               {
@@ -530,6 +541,12 @@ export const studyBuddyWorkflowRouteLayer = Layer.unwrap(
         }).pipe(Effect.result);
 
         if (Result.isFailure(outcome)) {
+          if (outcome.failure.cause instanceof StudyBuddyWorkflowRuntimeUnavailable) {
+            return HttpServerResponse.jsonUnsafe(
+              { message: "Study Buddy packaged workflow runtime is unavailable." },
+              { status: 503 },
+            );
+          }
           return HttpServerResponse.jsonUnsafe(
             { message: publicStudyBuddyWorkflowErrorMessage(outcome.failure.cause) },
             { status: 400 },

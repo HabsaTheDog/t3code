@@ -26,6 +26,7 @@ export function requestBroker(url, init) {
 }
 
 const BROKERED_COMMANDS = new Set([
+  "email",
   "sources",
   "document",
   "quiz",

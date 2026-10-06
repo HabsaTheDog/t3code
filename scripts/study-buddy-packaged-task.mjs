@@ -24,6 +24,7 @@ const brokeredExitCode = await maybeRunBrokeredWorkflow(process.argv.slice(2));
 if (brokeredExitCode !== null) process.exit(brokeredExitCode);
 
 const USAGE = `Usage:
+  study_buddy_task email "<JSON: inventory/list/search/read>"
   study_buddy_task sources "<JSON: courses/page/download/text/pages>"
   study_buddy_task document "<JSON: prepare/compile/publish>"
   study_buddy_task quiz "<JSON: inspect/start/read/fill/next/recover/status>"
@@ -995,6 +996,8 @@ async function main(argv = process.argv.slice(2)) {
   if (action === "data-root") return console.log(dataRoot) ?? 0;
   if (action === "output-root") return console.log(outputRoot) ?? 0;
   if (["help", "-h", "--help"].includes(action)) return console.log(USAGE) ?? 0;
+  if (action === "email")
+    return fail("Email tools require the authenticated Study Buddy desktop service.");
   if (action === "cancel") return cancelRun(args[0] ?? "");
   if (action === "status") return printStatus(args[0] ?? "");
   if (action === "checkpoint") return checkpoint(args[0] ?? "");

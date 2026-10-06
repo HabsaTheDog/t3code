@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { maybeRunBrokeredWorkflow, requestBroker } from "./study-buddy-workflow-client.mjs";
 
 describe("packaged Study Buddy workflow client", () => {
-  it.each(["interactive-study-guide", "source-evidence", "sources", "document", "quiz"])(
+  it.each(["interactive-study-guide", "source-evidence", "sources", "document", "quiz", "email"])(
     "routes %s to the loopback broker without source credentials",
     async (command) => {
       const fetchImpl = vi.fn(
@@ -141,6 +141,45 @@ describe("packaged Study Buddy workflow client", () => {
       workspace: path.resolve("/workspace"),
       sourceIds: ["source-aabb-1234"],
     });
+  });
+
+  it("keeps mail JSON and selected accounts intact through the authenticated transport", async () => {
+    const json = JSON.stringify({
+      op: "search",
+      sourceId: "mail-account",
+      query: "Lab registration",
+      cursor: "next-page",
+      limit: 25,
+    });
+    const fetchImpl = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify({ exitCode: 0, stdout: '{"messages":[]}\n', stderr: "" })),
+    );
+    const stdout = vi.fn();
+    await expect(
+      maybeRunBrokeredWorkflow(["email", json], {
+        environment: {
+          STUDY_BUDDY_RUNTIME_STATE_ROOT: path.resolve("/desktop/state"),
+          STUDY_BUDDY_WORKSPACE: path.resolve("/quick-chat"),
+          STUDY_BUDDY_THREAD_ID: "owner-thread",
+          STUDY_BUDDY_SOURCE_IDS: "mail-account",
+          IMAP_PASSWORD: "private-password-canary",
+        },
+        readRuntimeState: async () =>
+          JSON.stringify({ version: 1, port: 45678, workflowToken: "a".repeat(43) }),
+        fetchImpl,
+        writeStdout: stdout,
+      }),
+    ).resolves.toBe(0);
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(JSON.parse(String(init?.body))).toEqual({
+      args: ["email", json],
+      workspace: path.resolve("/quick-chat"),
+      threadId: "owner-thread",
+      sourceIds: ["mail-account"],
+    });
+    expect(init?.body).not.toContain("private-password-canary");
+    expect(stdout).toHaveBeenCalledWith('{"messages":[]}\n');
   });
 
   it("waits for broker output writers to drain before returning", async () => {

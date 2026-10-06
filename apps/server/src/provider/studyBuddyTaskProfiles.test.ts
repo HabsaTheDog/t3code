@@ -166,6 +166,35 @@ it("separates informational mini-test overviews from executing an actual quiz", 
   );
 });
 
+it("makes direct email acquisition available without a classifier or automatic message prefetch", () => {
+  const instructions = buildStudyBuddyDeveloperInstructions({
+    environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
+  })!;
+  const email = instructions.slice(
+    instructions.indexOf("## Direct Email"),
+    instructions.indexOf("## Study Communication"),
+  );
+  for (const op of ["inventory", "list", "search", "read"]) {
+    expect(email).toContain(`"op":"${op}"`);
+  }
+  expect(email).toContain("/app/task email");
+  expect(email).toContain("saved credentials");
+  expect(email).toContain("No messages have been read merely because this block exists");
+  expect(email).toContain("including indirect wording, typos, and negation");
+  expect(email).toContain("Do not read mail merely to enrich a draft");
+  expect(email).toContain("discover a contact address");
+  expect(email).toContain("start with list, not a keyword guessed from the prompt's last word");
+  expect(email).toContain("follow returned pagination cursors with a bounded scope");
+  expect(email).toContain("sourceId, folder, messageId, subject and observed date");
+  expect(email).toContain("fixed latest-message sample is not exhaustive");
+  expect(email).not.toContain("request_user_input");
+  const safety = instructions.slice(instructions.indexOf("## Safety And Output"));
+  expect(safety).toContain("canDraft");
+  expect(safety).toContain("study_buddy_email_send_v1");
+  expect(safety).toContain('from: {"address":"..."}');
+  expect(safety).toContain("The Study Buddy server executes the approved send");
+});
+
 it("requires grounded study communication even when the user does not mention email", () => {
   const instructions = buildStudyBuddyDeveloperInstructions({
     environment: { STUDY_BUDDY_ROOT: "/study-buddy", STUDY_BUDDY_TASK_WRAPPER: "/app/task" },
