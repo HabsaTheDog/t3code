@@ -1368,7 +1368,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.status, 200);
       assert.equal(body.authenticated, false);
       assert.equal(body.auth.policy, "desktop-managed-local");
-      assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap"]);
+      assert.deepEqual(body.auth.bootstrapMethods, ["desktop-bootstrap", "one-time-token"]);
       assert.deepEqual(body.auth.sessionMethods, [
         "browser-session-cookie",
         "bearer-access-token",
@@ -1409,6 +1409,51 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "pairs a local browser once without network exposure or access-management escalation",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const anonymous = yield* HttpClient.post("/api/auth/pairing-token", {
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(anonymous.status, 401);
+
+        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+        const created = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: ownerCookie },
+          body: yield* HttpBody.json({ label: "Local browser" }),
+        });
+        assert.equal(created.status, 200);
+        const grant = (yield* created.json) as { readonly credential: string };
+        const paired = yield* HttpClient.post("/api/auth/browser-session", {
+          body: yield* HttpBody.json({ credential: grant.credential }),
+        });
+        assert.equal(paired.status, 200);
+        const clientCookie = paired.headers["set-cookie"]?.split(";")[0];
+        assert.isDefined(clientCookie);
+
+        const sessionUrl = yield* getHttpServerUrl("/api/auth/session");
+        const session = yield* fetchEffect(sessionUrl, { headers: { cookie: clientCookie ?? "" } });
+        const state = yield* responseJsonEffect<{
+          readonly authenticated: boolean;
+          readonly auth: { readonly policy: string };
+        }>(session);
+        assert.equal(state.authenticated, true);
+        assert.equal(state.auth.policy, "desktop-managed-local");
+
+        const replay = yield* HttpClient.post("/api/auth/browser-session", {
+          body: yield* HttpBody.json({ credential: grant.credential }),
+        });
+        assert.equal(replay.status, 401);
+        const cannotManage = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: clientCookie ?? "" },
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(cannotManage.status, 403);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("exchanges a bootstrap grant for a scoped bearer access token", () =>

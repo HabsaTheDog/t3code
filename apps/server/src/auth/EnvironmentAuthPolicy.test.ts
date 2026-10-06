@@ -32,7 +32,7 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
       const descriptor = yield* policy.getDescriptor();
 
       expect(descriptor.policy).toBe("desktop-managed-local");
-      expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap"]);
+      expect(descriptor.bootstrapMethods).toEqual(["desktop-bootstrap", "one-time-token"]);
       expect(descriptor.sessionCookieName).toBe("t3_session_3773");
     }).pipe(
       Effect.provide(

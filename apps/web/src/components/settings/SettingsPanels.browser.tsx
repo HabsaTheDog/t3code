@@ -548,7 +548,7 @@ describe("GeneralSettingsPanel observability", () => {
     authAccessHarness.reset();
   });
 
-  it("hides owner pairing tools in browser-served loopback builds without remote exposure", async () => {
+  it("shows local pairing for owners without changing exposure", async () => {
     Reflect.deleteProperty(window, "desktopBridge");
     authAccessHarness.setSnapshot({
       pairingLinks: [],
@@ -611,11 +611,56 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
-    await expect.element(page.getByText("Authorized clients")).not.toBeInTheDocument();
-    await expect.element(page.getByText("Chrome on Mac")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Authorized clients")).toBeInTheDocument();
+    await expect.element(page.getByText("Chrome on Mac")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Create link", exact: true }))
+      .toBeInTheDocument();
     await expect
       .element(page.getByRole("heading", { name: "Remote environments", exact: true }))
       .toBeInTheDocument();
+  });
+
+  it("hides local pairing from non-admin clients", async () => {
+    Reflect.deleteProperty(window, "desktopBridge");
+    setServerConfigSnapshot(createBaseServerConfig());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith("/api/auth/session")) {
+          return new Response(
+            JSON.stringify({
+              authenticated: true,
+              auth: createBaseServerConfig().auth,
+              scopes: ["orchestration:read"],
+              sessionMethod: "browser-session-cookie",
+              expiresAt: "2036-05-07T00:00:00.000Z",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`Unhandled fetch GET ${url}`);
+      }),
+    );
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect
+      .element(
+        page.getByText(
+          "Pairing links and client-session management require the access:write scope for this backend.",
+        ),
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Authorized clients")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Create link", exact: true }))
+      .not.toBeInTheDocument();
   });
 
   it("hides advertised endpoint rows when desktop network access is disabled", async () => {
@@ -828,16 +873,18 @@ describe("GeneralSettingsPanel observability", () => {
       .not.toBeInTheDocument();
   });
 
-  it("creates and shows a pairing link when network access is enabled", async () => {
-    window.desktopBridge = createDesktopBridgeStub({
+  const pairingExposureModes = ["local-only", "network-accessible"] as const;
+  it.each(pairingExposureModes)("pairs without changing %s exposure", async (mode) => {
+    const desktopBridge = createDesktopBridgeStub({
       serverExposureState: {
-        mode: "network-accessible",
-        endpointUrl: "http://192.168.1.44:3773",
-        advertisedHost: "192.168.1.44",
+        mode,
+        endpointUrl: mode === "network-accessible" ? "http://192.168.1.44:3773" : null,
+        advertisedHost: mode === "network-accessible" ? "192.168.1.44" : null,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       },
     });
+    window.desktopBridge = desktopBridge;
     let pairingLinks: Array<AuthAccessSnapshot["pairingLinks"][number]> = [];
     let clientSessions: Array<AuthAccessSnapshot["clientSessions"][number]> = [
       makeClientSession({
@@ -930,8 +977,13 @@ describe("GeneralSettingsPanel observability", () => {
     );
 
     await expect.element(page.getByText("Authorized clients")).toBeInTheDocument();
+    if (mode === "local-only") {
+      await expect.element(page.getByLabelText("Enable network access")).not.toBeChecked();
+    } else {
+      await expect.element(page.getByLabelText("Enable network access")).toBeChecked();
+    }
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
-    await expect.element(page.getByText("This Mac")).toBeInTheDocument();
+    await expect.element(page.getByText("This Mac", { exact: true })).toBeInTheDocument();
     await page.getByRole("button", { name: "Create link", exact: true }).click();
     await expect.element(page.getByText("Create pairing link")).toBeInTheDocument();
     await expect.element(page.getByRole("checkbox", { name: /View environment/ })).toBeChecked();
@@ -950,10 +1002,17 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
     await page.getByRole("button", { name: "Client scopes: show 1 scope" }).click();
     await expect.element(page.getByText("orchestration:read", { exact: true })).toBeInTheDocument();
-    await expect
-      .element(page.getByRole("button", { name: /^Copy pairing URL for:/ }))
-      .toBeInTheDocument();
+    if (mode === "local-only") {
+      await expect
+        .element(page.getByRole("button", { name: "Copy code", exact: true }))
+        .toBeInTheDocument();
+    } else {
+      await expect
+        .element(page.getByRole("button", { name: /^Copy pairing URL for:/ }))
+        .toBeInTheDocument();
+    }
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
+    expect(desktopBridge.setServerExposureMode).not.toHaveBeenCalled();
   });
 
   it("revokes all other paired clients from settings", async () => {

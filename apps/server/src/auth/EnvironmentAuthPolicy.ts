@@ -30,11 +30,7 @@ export const make = Effect.fn("makeEnvironmentAuthPolicy")(function* () {
         : "loopback-browser";
 
   const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
-    policy === "desktop-managed-local"
-      ? ["desktop-bootstrap"]
-      : config.mode === "desktop" && policy === "remote-reachable"
-        ? ["desktop-bootstrap", "one-time-token"]
-        : ["one-time-token"];
+    config.mode === "desktop" ? ["desktop-bootstrap", "one-time-token"] : ["one-time-token"];
 
   const descriptor: ServerAuthDescriptor = {
     policy,

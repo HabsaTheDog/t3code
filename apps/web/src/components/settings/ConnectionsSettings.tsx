@@ -2498,8 +2498,6 @@ export function ConnectionsSettings() {
         : visibleDesktopNetworkAdvertisedEndpoints,
     [tailscaleHttpsEndpoint, visibleDesktopNetworkAdvertisedEndpoints],
   );
-  const isLocalBackendRemotelyReachable =
-    isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
@@ -2890,20 +2888,18 @@ export function ConnectionsSettings() {
             )}
           </SettingsSection>
 
-          {isLocalBackendRemotelyReachable ? (
-            <SettingsSection
-              title="Authorized clients"
-              headerAction={
-                <AuthorizedClientsHeaderAction
-                  clientSessions={desktopClientSessions}
-                  isRevokingOtherClients={isRevokingOtherDesktopClients}
-                  onRevokeOtherClients={handleRevokeOtherDesktopClients}
-                />
-              }
-            >
-              {renderAuthorizedClients("current")}
-            </SettingsSection>
-          ) : null}
+          <SettingsSection
+            title="Authorized clients"
+            headerAction={
+              <AuthorizedClientsHeaderAction
+                clientSessions={desktopClientSessions}
+                isRevokingOtherClients={isRevokingOtherDesktopClients}
+                onRevokeOtherClients={handleRevokeOtherDesktopClients}
+              />
+            }
+          >
+            {renderAuthorizedClients("current")}
+          </SettingsSection>
           <AlertDialog
             open={isDesktopServerExposureDialogOpen}
             onOpenChange={(open) => {
