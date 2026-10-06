@@ -109,6 +109,7 @@ packageExtensions:
     dependencies:
       vite: "catalog:"
 patchedDependencies:
+  "http-cache-semantics@4.3.0": patches/http-cache-semantics@4.3.0.patch
   "@effect/vitest@4.0.0-beta.78": patches/@effect__vitest@4.0.0-beta.78.patch
   "@pierre/diffs@1.1.20": patches/@pierre%2Fdiffs@1.1.20.patch
   effect@4.0.0-beta.78: patches/effect@4.0.0-beta.78.patch

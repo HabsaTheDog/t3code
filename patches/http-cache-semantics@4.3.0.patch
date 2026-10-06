@@ -1,0 +1,22 @@
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -424,6 +424,18 @@ class CachePolicy {
+         // the stored response is either:
+         // fresh, or allowed to be served stale
+         if (this.stale()) {
++            // max-stale must not override the shared-cache prohibitions that
++            // deliberately reduce maxAge() to zero for private cookie responses
++            // or proxy-revalidate. These responses may still be storable.
++            if (this._isShared && (
++                this._rescc['proxy-revalidate'] ||
++                (this._resHeaders['set-cookie'] &&
++                    !this._rescc.public &&
++                    !this._rescc.immutable)
++            )) {
++                return this._evaluateRequestMissResult(req);
++            }
++
+             // If a value is present, then the client is willing to accept a response that has
+             // exceeded its freshness lifetime by no more than the specified number of seconds
+             const allowsStaleWithoutRevalidation = 'max-stale' in requestCC &&
