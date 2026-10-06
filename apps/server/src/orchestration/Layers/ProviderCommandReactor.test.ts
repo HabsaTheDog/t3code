@@ -664,6 +664,8 @@ describe("ProviderCommandReactor", () => {
       );
     });
     expect(harness.generateThreadTitle).toHaveBeenCalledOnce();
+    // Title generation and provider dispatch run independently.
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: providerInput });
     const snapshot = await harness.readModel();
     const message = snapshot.threads

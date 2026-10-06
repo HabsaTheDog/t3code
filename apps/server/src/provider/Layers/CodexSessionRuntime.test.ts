@@ -434,10 +434,21 @@ describe("buildTurnStartParams", () => {
       params.collaborationMode?.settings.developer_instructions ?? "",
       /study_buddy_quiz_permission_v1/,
     );
-    assert.match(
-      params.collaborationMode?.settings.developer_instructions ?? "",
-      /Reuse that path for start\/read\/fill\/next\/recover of the same attempt/,
+    const instructions = params.collaborationMode?.settings.developer_instructions ?? "";
+    const continuation =
+      /Reuse that path for ([a-z/]+) of the same attempt until it finishes or the grant expires/.exec(
+        instructions,
+      );
+    assert.ok(continuation, "quiz continuations must retain the original grant and its expiry");
+    const operations = continuation[1];
+    assert.ok(operations, "quiz continuation operations must be present");
+    assert.deepEqual(
+      operations.split("/").toSorted(),
+      ["start", "read", "collect", "fill", "next", "complete", "recover"].toSorted(),
     );
+    assert.match(instructions, /`permissionRequestPath` set to the original absolute request path/);
+    assert.match(instructions, /Technical continuation does not authorize another start/);
+    assert.match(instructions, /Final quiz submission remains blocked in every mode/);
     assert.match(
       params.collaborationMode?.settings.developer_instructions ?? "",
       /\/home\/student\/\.agents\/skills\/study-buddy\/scripts\/study_buddy_task\.sh/,
