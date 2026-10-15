@@ -190,6 +190,7 @@ function capability(
     provider,
     displayName,
     executable: provider,
+    installed: false,
     actions,
   };
 }
@@ -349,9 +350,7 @@ describe("provider setup", () => {
 
     await vi.waitFor(() => expect(ref.current).not.toBeNull());
     await expect(ref.current?.save()).resolves.toBe(true);
-    await expect
-      .element(page.getByRole("button", { name: "Install the latest Codex" }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Update Codex" })).toBeInTheDocument();
     expect(harness.updateSettings).not.toHaveBeenCalled();
 
     await screen.unmount();
@@ -390,7 +389,7 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
-  it("renders Codex actions without waiting for slow provider discovery", async () => {
+  it("offers installation only after filesystem discovery confirms it is missing", async () => {
     let finishRefresh: (() => void) | undefined;
     harness.refreshProviders.mockImplementationOnce(
       () =>
@@ -405,6 +404,72 @@ describe("provider setup", () => {
     await expect.element(page.getByText("Checking Codex…")).not.toBeInTheDocument();
 
     finishRefresh?.();
+    await screen.unmount();
+  });
+
+  it("recognizes a disabled existing Claude and connects it without installation or login", async () => {
+    harness.capabilities = [
+      {
+        ...capability("claude", "Claude", [
+          action({ id: "claude.install", kind: "install", label: "Install Claude" }),
+          claudeAuth,
+        ]),
+        installed: true,
+      },
+    ];
+    harness.providers = [
+      provider({ instanceId: "claudeAgent", driver: "claudeAgent", enabled: false }),
+    ];
+    harness.settings = {
+      ...harness.settings,
+      providerInstances: {
+        claudeAgent: { driver: "claudeAgent", enabled: false, config: { binaryPath: "claude" } },
+      } as UnifiedSettings["providerInstances"],
+    };
+    const screen = await render(<ProviderSetupStep provider="claude" />);
+    await expect
+      .element(page.getByRole("button", { name: "Install Claude" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Needs installation")).not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Connect existing installation" }).click();
+    await vi.waitFor(() =>
+      expect(harness.updateSettings).toHaveBeenCalledWith({
+        providerInstances: {
+          claudeAgent: { driver: "claudeAgent", enabled: true, config: { binaryPath: "claude" } },
+        },
+      }),
+    );
+    expect(harness.startProviderSetup).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
+
+  it("does not mistake an installed Codex with an unknown version for an outdated install", async () => {
+    harness.capabilities = [
+      { ...capability("codex", "Codex", [codexInstall, codexBrowserAuth]), installed: true },
+    ];
+    const screen = await render(<ProviderSetupStep provider="codex" />);
+    await expect
+      .element(page.getByRole("button", { name: "Install Codex" }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Update Codex" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Sign in with browser" })).toBeEnabled();
+    await screen.unmount();
+  });
+
+  it("checks an externally installed CLI again without starting an installer", async () => {
+    const screen = await render(<ProviderSetupStep provider="codex" />);
+    await expect.element(page.getByRole("button", { name: "Install Codex" })).toBeInTheDocument();
+    harness.capabilities = [
+      { ...capability("codex", "Codex", [codexInstall, codexBrowserAuth]), installed: true },
+    ];
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Install Codex" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByText("Needs installation")).not.toBeInTheDocument();
+    expect(harness.startProviderSetup).not.toHaveBeenCalled();
     await screen.unmount();
   });
 

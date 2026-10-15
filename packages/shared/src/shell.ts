@@ -443,8 +443,17 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
         ]
       : []),
     ...(localAppData ? [`${localAppData}\\pnpm`] : []),
-    ...(userProfile ? [`${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`] : []),
+    ...(userProfile
+      ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
+      : []),
   ];
+}
+
+// Standalone Codex and Claude installers use this directory even when the
+// desktop was launched before a shell profile or user PATH update took effect.
+export function resolveKnownPosixCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+  const home = env.HOME?.trim();
+  return home ? [join(home, ".local", "bin")] : [];
 }
 
 export interface WindowsEnvironmentResolverOptions {

@@ -1,3 +1,11 @@
+import type { UnifiedSettings } from "@t3tools/contracts";
+import { isCommandAvailable } from "@t3tools/shared/shell";
+import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { resolveDefaultProviderSetupConfig } from "./executionConfig.ts";
+import {
+  studyBuddyCodexEnvironment,
+  type StudyBuddyCodexPolicyPaths,
+} from "./studyBuddyCodexPolicy.ts";
 import type {
   ProviderSetupActionCapability,
   ProviderSetupActionId,
@@ -297,10 +305,35 @@ export function resolveProviderSetupAction(
 
 export function getProviderSetupCapabilities(
   platform: ProviderSetupPlatform = detectProviderSetupPlatform(),
+  discovery?: {
+    readonly settings: Pick<UnifiedSettings, "providers" | "providerInstances">;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly codexPaths?: StudyBuddyCodexPolicyPaths;
+  },
 ): ReadonlyArray<ProviderSetupCapability> {
   return PROVIDERS.filter((provider) => ["codex", "claude"].includes(provider.provider)).map(
     (provider) => ({
       ...provider,
+      ...(discovery
+        ? {
+            installed: (() => {
+              const { instance, binaryPath } = resolveDefaultProviderSetupConfig(
+                provider.provider,
+                discovery.settings,
+              );
+              const environment = mergeProviderInstanceEnvironment(
+                instance?.environment,
+                discovery.environment,
+              );
+              return isCommandAvailable(binaryPath, {
+                platform: platform.platform,
+                env: discovery.codexPaths
+                  ? studyBuddyCodexEnvironment(discovery.codexPaths, environment, platform.platform)
+                  : environment,
+              });
+            })(),
+          }
+        : {}),
       actions: ACTIONS.filter((action) => action.provider === provider.provider).map((action) => {
         const unsupportedReason = action.supports(platform);
         return {

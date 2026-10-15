@@ -300,7 +300,7 @@ export const WsServerGetProviderSetupCapabilitiesRpc = Rpc.make(
   {
     payload: Schema.Struct({}),
     success: Schema.Array(ProviderSetupCapability),
-    error: EnvironmentAuthorizationError,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
 

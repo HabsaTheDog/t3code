@@ -12,6 +12,7 @@ import {
   readPathFromLoginShell,
   resolveCommandPath,
   resolveKnownWindowsCliDirs,
+  resolveKnownPosixCliDirs,
   resolveWindowsEnvironment,
 } from "./shell.ts";
 
@@ -317,9 +318,23 @@ describe("resolveKnownWindowsCliDirs", () => {
       "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
       "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
       "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+      "C:\\Users\\testuser\\.local\\bin",
       "C:\\Users\\testuser\\.bun\\bin",
       "C:\\Users\\testuser\\scoop\\shims",
     ]);
+  });
+});
+
+describe("resolveKnownPosixCliDirs", () => {
+  it("includes the standalone provider install directory", () => {
+    expect(resolveKnownPosixCliDirs({ HOME: "/home/student" })).toEqual([
+      "/home/student/.local/bin",
+    ]);
+  });
+
+  it("does not invent a relative search directory when HOME is missing", () => {
+    expect(resolveKnownPosixCliDirs({})).toEqual([]);
+    expect(resolveKnownPosixCliDirs({ HOME: "  " })).toEqual([]);
   });
 });
 
@@ -375,6 +390,7 @@ describe("resolveWindowsEnvironment", () => {
         "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
         "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.local\\bin",
         "C:\\Users\\testuser\\.bun\\bin",
         "C:\\Users\\testuser\\scoop\\shims",
         "C:\\Shell\\Bin",
@@ -426,6 +442,7 @@ describe("resolveWindowsEnvironment", () => {
         "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
         "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
         "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+        "C:\\Users\\testuser\\.local\\bin",
         "C:\\Users\\testuser\\.bun\\bin",
         "C:\\Users\\testuser\\scoop\\shims",
         "C:\\Shell\\Bin",
@@ -462,6 +479,7 @@ describe("resolveWindowsEnvironment", () => {
     ).toEqual({
       PATH: [
         "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+        "C:\\Users\\testuser\\.local\\bin",
         "C:\\Users\\testuser\\.bun\\bin",
         "C:\\Users\\testuser\\scoop\\shims",
         "C:\\Windows\\System32",

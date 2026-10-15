@@ -86,6 +86,24 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  for (const platform of ["linux", "darwin"] as const) {
+    it.effect(`includes standalone provider installs with stale ${platform} shell PATH`, () =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = {
+          HOME: "/home/student",
+          SHELL: "/bin/bash",
+          PATH: "/custom/bin:/usr/bin",
+        };
+        yield* runShellEnvironment({
+          env,
+          platform,
+          handler: () => envOutput({ PATH: "/usr/bin" }),
+        });
+        assert.equal(env.PATH, "/usr/bin:/custom/bin:/home/student/.local/bin");
+      }),
+    );
+  }
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -214,9 +232,11 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Profile\\Node",
           "C:\\Windows\\System32",
           "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+          "C:\\Users\\testuser\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
           "C:\\Custom\\Bin",

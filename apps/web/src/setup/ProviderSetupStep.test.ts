@@ -65,8 +65,27 @@ describe("provider setup view model", () => {
       installed: true,
       authenticated: true,
       selected: true,
-      version: "1.2.3",
+      version: "1.2.4",
     });
+  });
+
+  it("keeps installation discovery separate from disabled runtime status", () => {
+    const providers = [
+      {
+        driver: "claudeAgent",
+        enabled: false,
+        installed: false,
+        version: null,
+        auth: { status: "unknown" },
+      },
+    ] as unknown as ServerProvider[];
+    expect(summarizeProvider(providers, "claude", true)).toEqual({
+      installed: true,
+      authenticated: false,
+      selected: false,
+      version: null,
+    });
+    expect(summarizeProvider(providers, "claude", false).installed).toBe(false);
   });
 
   it("maps the setup Claude name to the claudeAgent runtime driver", () => {

@@ -1,12 +1,28 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ServerSettings } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vitest";
 
-import { ProviderSetupJobRunner, ProviderSetupRequestError } from "./jobRunner.ts";
+import {
+  ProviderSetupJobRunner,
+  ProviderSetupRequestError,
+  type ProviderSetupExecution,
+} from "./jobRunner.ts";
+import { getProviderSetupCapabilities, resolveProviderSetupAction } from "./capabilities.ts";
+import { resolveProviderSetupExecution } from "./execution.ts";
 import type {
   ProviderSetupChildProcess,
   ProviderSetupJobEvent,
   ProviderSetupProcessResult,
   ProviderSetupSpawnInput,
 } from "./types.ts";
+
+const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
 
 async function* chunks(values: ReadonlyArray<string>): AsyncIterable<string> {
   for (const value of values) yield value;
@@ -68,6 +84,151 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 describe("ProviderSetupJobRunner", () => {
+  it("uses current Codex instance configuration while retaining the application security home", async () => {
+    const settings = decodeSettings({
+      providers: { codex: { binaryPath: "stale-codex" } },
+      providerInstances: {
+        codex: {
+          driver: "codex",
+          config: { binaryPath: "custom-codex", homePath: "/external/home" },
+          environment: [
+            { name: "PATH", value: "/custom/bin", sensitive: false },
+            { name: "CODEX_HOME", value: "/external/override", sensitive: false },
+            { name: "MOODLE_PASSWORD", value: "private-secret", sensitive: true },
+          ],
+        },
+      },
+    });
+    const execution = await Effect.runPromise(
+      resolveProviderSetupExecution({
+        action: resolveProviderSetupAction("codex.auth.browser", {
+          platform: "linux",
+          isWsl: false,
+        })!,
+        settings,
+        codexPaths: {
+          codexHome: "/study-buddy/codex-home",
+          configPath: "",
+          configRoot: "/study-buddy",
+          deniedPaths: [],
+        },
+        environment: { PATH: "/stale/path" },
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+    expect(execution.command).toBe("custom-codex");
+    expect(execution.env).toMatchObject({
+      CODEX_HOME: "/study-buddy/codex-home",
+      STUDY_BUDDY_CODEX_PERMISSION_PROFILE: "study_buddy",
+    });
+    expect(execution.env?.PATH).toContain("/custom/bin");
+    expect(execution.env?.MOODLE_PASSWORD).toBeUndefined();
+  });
+
+  it("authenticates the discovered default instance using current config and environment per job", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "sb-setup-execution-"));
+    try {
+      const configFor = (
+        binaryPath: string,
+        homePath: string,
+        enabled: boolean,
+        pathValue = directory,
+      ) =>
+        decodeSettings({
+          providers: { claudeAgent: { binaryPath: "stale-legacy-claude" } },
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent",
+              enabled,
+              config: { binaryPath, homePath },
+              environment: [{ name: "PATH", value: pathValue, sensitive: false }],
+            },
+          },
+        });
+      writeFileSync(join(directory, "custom-claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      let settings = configFor("custom-claude", join(directory, "first-home"), false);
+      const requests: ProviderSetupSpawnInput[] = [];
+      const resolveExecution = vi.fn((action) =>
+        Effect.runPromise(
+          resolveProviderSetupExecution({
+            action,
+            settings,
+            codexPaths: {
+              codexHome: join(directory, "codex-home"),
+              configPath: "",
+              configRoot: directory,
+              deniedPaths: [],
+            },
+            environment: { PATH: "/stale-startup-path" },
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      );
+      const runner = new ProviderSetupJobRunner({
+        spawner: {
+          spawn: async (request) => {
+            requests.push(request);
+            return makeChild().child;
+          },
+        },
+        refreshProviderStatus: async () => {},
+        platform: { platform: "linux", isWsl: false },
+        resolveExecution,
+      });
+      expect(
+        getProviderSetupCapabilities({ platform: "linux", isWsl: false }, { settings }).find(
+          (provider) => provider.provider === "claude",
+        )?.installed,
+      ).toBe(true);
+
+      // Enabling the discovered provider updates settings while this runner
+      // remains alive; a later settings edit must also affect the next login.
+      settings = configFor("custom-claude", join(directory, "first-home"), true);
+      expect((await runner.start({ actionId: "claude.auth.login" }).completion).type).toBe(
+        "completed",
+      );
+      settings = configFor(
+        "updated-claude",
+        join(directory, "second-home"),
+        true,
+        join(directory, "updated-bin"),
+      );
+      expect((await runner.start({ actionId: "claude.auth.login" }).completion).type).toBe(
+        "completed",
+      );
+
+      expect(requests.map((request) => request.command)).toEqual([
+        "custom-claude",
+        "updated-claude",
+      ]);
+      expect(requests.map((request) => request.env?.HOME)).toEqual([
+        resolve(directory, "first-home"),
+        resolve(directory, "second-home"),
+      ]);
+      expect(requests[0]?.env?.PATH?.endsWith(directory)).toBe(true);
+      expect(requests[1]?.env?.PATH?.endsWith(join(directory, "updated-bin"))).toBe(true);
+      expect(resolveExecution).toHaveBeenCalledTimes(2);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not spawn a job cancelled while current execution settings are resolving", async () => {
+    const execution = deferred<ProviderSetupExecution>();
+    const resolveExecution = vi.fn(() => execution.promise);
+    const spawn = vi.fn(async () => makeChild().child);
+    const runner = new ProviderSetupJobRunner({
+      spawner: { spawn },
+      refreshProviderStatus: async () => {},
+      platform: { platform: "linux", isWsl: false },
+      resolveExecution,
+    });
+    const handle = runner.start({ actionId: "codex.auth.browser" });
+    await waitUntil(() => resolveExecution.mock.calls.length === 1);
+    expect(handle.cancel()).toBe(true);
+    execution.resolve({ command: "codex", env: {} });
+    expect((await handle.completion).type).toBe("cancelled");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("isolates native login environments by provider", async () => {
     const requests: ProviderSetupSpawnInput[] = [];
     const runner = new ProviderSetupJobRunner({

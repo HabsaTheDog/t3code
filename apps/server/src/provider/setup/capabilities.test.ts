@@ -1,3 +1,9 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ServerSettings } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -6,9 +12,91 @@ import {
   resolveProviderSetupCommand,
 } from "./capabilities.ts";
 
+const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
+
 const linux = { platform: "linux", isWsl: false } as const;
 
 describe("provider setup capability registry", () => {
+  it("discovers disabled providers and rechecks files installed after the app started", () => {
+    const directory = mkdtempSync(join(tmpdir(), "sb-provider-discovery-"));
+    try {
+      const settings = decodeSettings({});
+      const environment = { PATH: directory };
+      const discover = () => getProviderSetupCapabilities(linux, { settings, environment });
+      expect(discover().map((entry) => entry.installed)).toEqual([false, false]);
+      writeFileSync(join(directory, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      expect(settings.providers.claudeAgent.enabled).toBe(false);
+      expect(discover().map((entry) => entry.installed)).toEqual([false, true]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the managed Codex installation visible with an instance PATH override", () => {
+    const directory = mkdtempSync(join(tmpdir(), "sb-managed-discovery-"));
+    try {
+      const codexPaths = {
+        codexHome: join(directory, "codex-home"),
+        configPath: join(directory, "codex-home", "config.toml"),
+        configRoot: directory,
+        deniedPaths: [],
+      };
+      const managedBin = join(codexPaths.codexHome, "bin");
+      mkdirSync(managedBin, { recursive: true });
+      writeFileSync(
+        join(managedBin, process.platform === "win32" ? "codex.exe" : "codex"),
+        "never execute this discovery fixture",
+        { mode: 0o755 },
+      );
+      const settings = decodeSettings({
+        providerInstances: {
+          codex: {
+            driver: "codex",
+            enabled: false,
+            config: { binaryPath: "codex" },
+            environment: [{ name: "PATH", value: directory, sensitive: false }],
+          },
+        },
+      });
+      const platform = { platform: process.platform, isWsl: false };
+      const codex = getProviderSetupCapabilities(platform, {
+        settings,
+        environment: { PATH: managedBin },
+        codexPaths,
+      }).find((entry) => entry.provider === "codex");
+      // Windows uses the upstream per-user standalone location, rather than the managed POSIX bin.
+      expect(codex?.installed).toBe(process.platform !== "win32");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("respects the default instance binary and PATH without running it", () => {
+    const directory = mkdtempSync(join(tmpdir(), "sb-provider-custom-"));
+    try {
+      writeFileSync(join(directory, "custom-claude"), "this executable must never be spawned", {
+        mode: 0o755,
+      });
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: {
+            driver: "claudeAgent",
+            enabled: false,
+            config: { binaryPath: "custom-claude" },
+            environment: [{ name: "PATH", value: directory, sensitive: false }],
+          },
+        },
+      });
+      expect(
+        getProviderSetupCapabilities(linux, { settings, environment: { PATH: "/missing" } }).find(
+          (entry) => entry.provider === "claude",
+        )?.installed,
+      ).toBe(true);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("exposes Codex and Claude through stable allowlisted action ids", () => {
     const capabilities = getProviderSetupCapabilities(linux);
 
