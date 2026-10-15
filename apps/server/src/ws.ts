@@ -1,4 +1,3 @@
-import { makeClaudeEnvironment } from "./provider/Drivers/ClaudeHome.ts";
 import { ProviderInstanceSetupError } from "@t3tools/contracts";
 import { ProviderManagement } from "./provider/providerManagement.ts";
 import * as Cause from "effect/Cause";
@@ -8,6 +7,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -81,7 +81,7 @@ import {
   ensureStudyBuddyCodexHome,
   studyBuddyCodexEnvironment,
   ProviderSetupRequestError,
-  resolveProviderSetupCommand,
+  resolveProviderSetupExecution,
 } from "./provider/setup/index.ts";
 import { readStoredStudyBuddyConfiguration } from "./custom-skills/moodle/studyBuddyConfig.ts";
 import { redactConversationTurn } from "./telemetry/ConversationRedaction.ts";
@@ -365,7 +365,7 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         });
         return { accounts };
       });
-      const runtimeContext = yield* Effect.context<never>();
+      const runtimeContext = yield* Effect.context<Path.Path>();
       const runPromise = Effect.runPromiseWith(runtimeContext);
       const studyBuddyCodexPaths = yield* Effect.tryPromise({
         try: () => ensureStudyBuddyCodexHome(config),
@@ -375,29 +375,25 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             message: cause instanceof Error ? cause.message : "Codex security setup failed.",
           }),
       });
-      const configuredProviders = yield* serverSettings.getSettings;
-      const configuredCodexBinary = configuredProviders.providers.codex.binaryPath;
       const providerManagement = yield* Effect.serviceOption(ProviderManagement);
       const setupEnvironment = studyBuddyCodexEnvironment(studyBuddyCodexPaths);
-      const claudeSetupEnvironment = yield* makeClaudeEnvironment(
-        configuredProviders.providers.claudeAgent,
-        setupEnvironment,
-      );
       const providerSetupPlatform = detectProviderSetupPlatform();
       const providerSetupRunner = new ProviderSetupJobRunner({
         spawner: nodeProviderSetupProcessSpawner,
         cwd: config.cwd,
-        env: setupEnvironment,
-        resolveEnvironment: (action) =>
-          action.provider === "claude" ? claudeSetupEnvironment : setupEnvironment,
         platform: providerSetupPlatform,
-        resolveCommand: (action) =>
-          resolveProviderSetupCommand({
-            action,
-            platform: providerSetupPlatform,
-            configuredCodexBinary,
-            configuredClaudeBinary: configuredProviders.providers.claudeAgent.binaryPath,
-          }),
+        resolveExecution: (action) =>
+          runPromise(
+            serverSettings.getSettings.pipe(
+              Effect.flatMap((settings) =>
+                resolveProviderSetupExecution({
+                  action,
+                  settings,
+                  codexPaths: studyBuddyCodexPaths,
+                }),
+              ),
+            ),
+          ),
         refreshProviderStatus: () => runPromise(providerRegistry.refresh().pipe(Effect.asVoid)),
       });
       const providerSetupError = (cause: unknown): ProviderSetupError => {
@@ -1157,7 +1153,15 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
         [WS_METHODS.serverGetProviderSetupCapabilities]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetProviderSetupCapabilities,
-            Effect.sync(() => getProviderSetupCapabilities()),
+            serverSettings.getSettings.pipe(
+              Effect.map((settings) =>
+                getProviderSetupCapabilities(providerSetupPlatform, {
+                  settings,
+                  environment: setupEnvironment,
+                  codexPaths: studyBuddyCodexPaths,
+                }),
+              ),
+            ),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverManageProvider]: (input) =>

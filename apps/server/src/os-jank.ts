@@ -10,6 +10,7 @@ import {
   listLoginShellCandidates,
   mergePathEntries,
   readPathFromLaunchctl,
+  resolveKnownPosixCliDirs,
 } from "@t3tools/shared/shell";
 
 type WindowsCommandAvailabilityChecker = (
@@ -75,7 +76,11 @@ export function fixPath(
       platform === "darwin" && !shellPath
         ? (options.readLaunchctlPath ?? readPathFromLaunchctl)()
         : undefined;
-    const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
+    const mergedPath = mergePathEntries(
+      mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform),
+      resolveKnownPosixCliDirs(env).join(":"),
+      platform,
+    );
     if (mergedPath) {
       env.PATH = mergedPath;
     }

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { resolveKnownPosixCliDirs, resolveKnownWindowsCliDirs } from "@t3tools/shared/shell";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
@@ -103,27 +104,6 @@ const listLoginShellCandidates = (config: ShellEnvironmentConfig): ReadonlyArray
 
   return candidates;
 };
-
-const knownWindowsCliDirs = (env: NodeJS.ProcessEnv): ReadonlyArray<string> => [
-  ...trimNonEmpty(env.APPDATA).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\npm`],
-    }),
-  ),
-  ...trimNonEmpty(env.LOCALAPPDATA).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\Programs\\nodejs`, `${value}\\Volta\\bin`, `${value}\\pnpm`],
-    }),
-  ),
-  ...trimNonEmpty(env.USERPROFILE).pipe(
-    Option.match({
-      onNone: () => [],
-      onSome: (value) => [`${value}\\.bun\\bin`, `${value}\\scoop\\shims`],
-    }),
-  ),
-];
 
 const startMarker = (name: string) => `__T3CODE_ENV_${name}_START__`;
 const endMarker = (name: string) => `__T3CODE_ENV_${name}_END__`;
@@ -263,7 +243,7 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     });
     const mergedPath = mergePaths("win32", [
       trimNonEmpty(profile.PATH),
-      trimNonEmpty(knownWindowsCliDirs(config.env).join(";")),
+      trimNonEmpty(resolveKnownWindowsCliDirs(config.env).join(";")),
       trimNonEmpty(noProfile.PATH),
       readEnvPath(config.env),
     ]);
@@ -301,6 +281,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     const mergedPath = mergePaths(config.platform, [
       trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
+      trimNonEmpty(resolveKnownPosixCliDirs(config.env).join(":")),
     ]);
 
     if (Option.isSome(mergedPath)) {

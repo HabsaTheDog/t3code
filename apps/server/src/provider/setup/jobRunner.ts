@@ -85,6 +85,14 @@ export interface ProviderSetupJobRunnerOptions {
     | ((action: ResolvedProviderSetupAction) => NodeJS.ProcessEnv)
     | undefined;
   readonly resolveCommand?: ((action: ResolvedProviderSetupAction) => string) | undefined;
+  readonly resolveExecution?:
+    | ((action: ResolvedProviderSetupAction) => Promise<ProviderSetupExecution>)
+    | undefined;
+}
+
+export interface ProviderSetupExecution {
+  readonly command: string;
+  readonly env: NodeJS.ProcessEnv | undefined;
 }
 
 export class ProviderSetupJobRunner {
@@ -97,6 +105,7 @@ export class ProviderSetupJobRunner {
   readonly #env: NodeJS.ProcessEnv | undefined;
   readonly #resolveEnvironment: ProviderSetupJobRunnerOptions["resolveEnvironment"];
   readonly #resolveCommand: (action: ResolvedProviderSetupAction) => string;
+  readonly #resolveExecution: ProviderSetupJobRunnerOptions["resolveExecution"];
   readonly #jobs = new Map<string, ActiveJob>();
 
   constructor(options: ProviderSetupJobRunnerOptions) {
@@ -109,6 +118,7 @@ export class ProviderSetupJobRunner {
     this.#env = options.env;
     this.#resolveEnvironment = options.resolveEnvironment;
     this.#resolveCommand = options.resolveCommand ?? ((action) => action.executable);
+    this.#resolveExecution = options.resolveExecution;
   }
 
   start(request: ProviderSetupJobRequest): ProviderSetupJobHandle {
@@ -233,11 +243,20 @@ export class ProviderSetupJobRunner {
     this.#event(jobId, job, { type: "started" });
 
     try {
+      const execution = this.#resolveExecution
+        ? await this.#resolveExecution(job.action)
+        : {
+            command: this.#resolveCommand(job.action),
+            env: this.#resolveEnvironment?.(job.action) ?? this.#env,
+          };
+      if (job.cancelled) {
+        return this.#terminalEvent(jobId, job, { type: "cancelled" });
+      }
       const child = await this.#spawner.spawn({
-        command: this.#resolveCommand(job.action),
+        command: execution.command,
         args: [...job.action.args],
         cwd: this.#cwd,
-        env: this.#resolveEnvironment?.(job.action) ?? this.#env,
+        env: execution.env,
         pty: job.action.interaction === "sanitized-terminal",
       });
       job.child = child;

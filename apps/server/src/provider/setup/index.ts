@@ -9,7 +9,9 @@ export {
   ProviderSetupJobRunner,
   ProviderSetupRequestError,
   type ProviderSetupJobRunnerOptions,
+  type ProviderSetupExecution,
 } from "./jobRunner.ts";
+export { resolveProviderSetupExecution } from "./execution.ts";
 export { nodeProviderSetupProcessSpawner } from "./nodeProcessSpawner.ts";
 export { makeProviderSetupProgressSanitizer, sanitizeProviderSetupOutput } from "./sanitize.ts";
 export {

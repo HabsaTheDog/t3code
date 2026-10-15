@@ -41,6 +41,8 @@ export const ProviderSetupCapability = Schema.Struct({
   displayName: TrimmedNonEmptyString,
   executable: TrimmedNonEmptyString,
   actions: Schema.Array(ProviderSetupAction),
+  // Filesystem discovery is independent of whether the provider is enabled.
+  installed: Schema.optional(Schema.Boolean),
 });
 export type ProviderSetupCapability = typeof ProviderSetupCapability.Type;
 

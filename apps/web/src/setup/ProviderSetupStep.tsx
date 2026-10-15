@@ -163,6 +163,7 @@ function ProviderStatusIndicator(props: {
   installed: boolean;
   authenticated: boolean;
   installJustCompleted: boolean;
+  providerLabel: string;
 }) {
   const needsAuthentication =
     (props.installed || props.installJustCompleted) && !props.authenticated;
@@ -189,7 +190,7 @@ function ProviderStatusIndicator(props: {
         }
       />
       <TooltipPopup side="top" className="max-w-64 whitespace-normal leading-relaxed">
-        Codex is installed. Sign in to finish connecting it to Study Buddy.
+        {props.providerLabel} is installed. Sign in to finish connecting it to Study Buddy.
       </TooltipPopup>
     </Tooltip>
   );
@@ -198,6 +199,7 @@ function ProviderStatusIndicator(props: {
 export function summarizeProvider(
   providers: ReadonlyArray<ServerProvider>,
   driver: ProviderSetupProvider,
+  discoveredInstalled = false,
 ): {
   installed: boolean;
   authenticated: boolean;
@@ -207,9 +209,15 @@ export function summarizeProvider(
   const runtimeDrivers =
     driver === "claude" ? new Set(["claude", "claudeAgent"]) : new Set([driver]);
   const matches = providers.filter((provider) => runtimeDrivers.has(provider.driver));
-  const installed = matches.find((provider) => provider.installed);
+  const installed =
+    matches.find(
+      (provider) =>
+        provider.installed && provider.enabled && provider.auth.status === "authenticated",
+    ) ??
+    matches.find((provider) => provider.installed && provider.enabled) ??
+    matches.find((provider) => provider.installed);
   return {
-    installed: installed !== undefined,
+    installed: installed !== undefined || discoveredInstalled,
     authenticated: matches.some(
       (provider) => provider.installed && provider.auth.status === "authenticated",
     ),
@@ -362,9 +370,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
         const unsubscribe = subscriptions.current.get(event.jobId);
         unsubscribe?.();
         subscriptions.current.delete(event.jobId);
-        void ensureLocalApi()
-          .server.refreshProviders()
-          .catch(() => undefined);
+        void loadCapabilities();
       }
     };
 
@@ -441,6 +447,30 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
             ),
           },
         });
+      }
+    };
+
+    const connectExistingProvider = async (provider: ProviderSetupProvider) => {
+      const driver = PROVIDER_DRIVER_BY_SETUP_NAME[provider];
+      const instanceId = defaultInstanceIdForDriver(driver);
+      const current = settings.providerInstances[instanceId];
+      try {
+        await ensureLocalApi().server.updateSettings({
+          providerInstances: {
+            ...settings.providerInstances,
+            [instanceId]: {
+              ...current,
+              driver,
+              enabled: true,
+              config:
+                current?.config ?? settings.providers[driver as keyof typeof settings.providers],
+            },
+          },
+        });
+        await ensureLocalApi().server.refreshProviders();
+        await loadCapabilities();
+      } catch {
+        setLoadError("We couldn’t check that installation. Try checking again.");
       }
     };
 
@@ -523,6 +553,10 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
 
     return (
       <div className="space-y-4">
+        <Button variant="ghost" size="sm" onClick={() => void loadCapabilities()}>
+          <RefreshCwIcon className="size-4" />
+          Check again
+        </Button>
         {loadError ? (
           <div
             className="flex items-center justify-between gap-4 rounded-xl border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-sm"
@@ -541,14 +575,16 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
         <div className="grid gap-4">
           {visibleProviders.map((providerName) => {
             const capability = capabilityByProvider.get(providerName);
-            const status = summarizeProvider(providers, providerName);
+            const status = summarizeProvider(providers, providerName, capability?.installed);
             const job = jobs[providerName];
             const running = job?.status === "starting" || job?.status === "running";
             const updateRequired =
               providerName === "codex" &&
               status.installed &&
-              (status.version === null ||
-                compareSemverVersions(status.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) < 0);
+              status.version !== null &&
+              compareSemverVersions(status.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) < 0;
+            // A completed legacy response may omit filesystem discovery metadata.
+            // Keep its status-based actions available; only the initial request is loading.
             const actions = visibleProviderActions(capability, status.installed, updateRequired);
             const retryAction = actionForRetry(job);
             const unsupported = actions.length > 0 && actions.every((action) => !action.supported);
@@ -587,11 +623,13 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
                           {status.authenticated ? "Signed in" : "Sign-in needed"}
                         </p>
                         <p className="mt-2 text-xs text-muted-foreground/80">
-                          {status.authenticated
-                            ? `${providerLabel} is ready to use.`
-                            : status.installed
-                              ? "Choose an option below to sign in."
-                              : `Install ${providerLabel} first, then sign in.`}
+                          {updateRequired
+                            ? `Codex ${status.version} is installed. Update to a supported version.`
+                            : status.authenticated
+                              ? `${providerLabel} is ready to use.`
+                              : status.installed
+                                ? "Choose an option below to sign in."
+                                : `Install ${providerLabel} first, then sign in.`}
                         </p>
                       </div>
                     </div>
@@ -599,6 +637,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
                       installed={status.installed}
                       authenticated={status.authenticated}
                       installJustCompleted={installJustCompleted}
+                      providerLabel={providerLabel}
                     />
                   </div>
 
@@ -616,6 +655,16 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
                   ) : null}
 
                   <div className="mt-5 grid gap-2">
+                    {status.installed && !status.selected ? (
+                      <Button
+                        size="lg"
+                        variant="outline"
+                        disabled={running}
+                        onClick={() => void connectExistingProvider(providerName)}
+                      >
+                        Connect existing installation
+                      </Button>
+                    ) : null}
                     {actions.map((action) =>
                       (() => {
                         const ActionIcon = getActionIcon(action);
@@ -642,7 +691,7 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
                               <span className="flex flex-col items-start">
                                 <span>
                                   {action.kind === "install" && updateRequired
-                                    ? "Install the latest Codex"
+                                    ? "Update Codex"
                                     : action.label}
                                 </span>
                                 {!status.installed && action.kind === "authenticate" ? (
