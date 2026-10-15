@@ -1,6 +1,7 @@
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { resolveClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { resolveDefaultProviderSetupConfig } from "./executionConfig.ts";
 import {
   studyBuddyCodexEnvironment,
@@ -317,14 +318,23 @@ export function getProviderSetupCapabilities(
       ...(discovery
         ? {
             installed: (() => {
-              const { instance, binaryPath } = resolveDefaultProviderSetupConfig(
+              const { instance, binaryPath, config } = resolveDefaultProviderSetupConfig(
                 provider.provider,
                 discovery.settings,
               );
-              const environment = mergeProviderInstanceEnvironment(
+              const instanceEnvironment = mergeProviderInstanceEnvironment(
                 instance?.environment,
                 discovery.environment,
               );
+              const homePath = (config as { readonly homePath?: unknown } | undefined)?.homePath;
+              const environment =
+                provider.provider === "claude"
+                  ? resolveClaudeEnvironment(
+                      { homePath: typeof homePath === "string" ? homePath : "" },
+                      instanceEnvironment,
+                      platform.platform,
+                    )
+                  : instanceEnvironment;
               return isCommandAvailable(binaryPath, {
                 platform: platform.platform,
                 env: discovery.codexPaths

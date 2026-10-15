@@ -3,6 +3,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ServerSettings } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
@@ -11,12 +14,76 @@ import {
   resolveProviderSetupAction,
   resolveProviderSetupCommand,
 } from "./capabilities.ts";
+import { resolveProviderSetupExecution } from "./execution.ts";
+import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
 const decodeSettings = Schema.decodeUnknownSync(ServerSettings);
 
 const linux = { platform: "linux", isWsl: false } as const;
 
 describe("provider setup capability registry", () => {
+  it("discovers and runs the Claude executable installed into its configured HOME", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "sb-claude-home-install-"));
+    try {
+      const homePath = join(directory, "account");
+      const environment = { PATH: join(directory, "inherited-bin") };
+      const settings = decodeSettings({
+        providerInstances: {
+          claudeAgent: {
+            driver: "claudeAgent",
+            enabled: true,
+            config: { binaryPath: "claude", homePath },
+          },
+        },
+      });
+      const platform = { platform: process.platform, isWsl: false };
+      const discover = () =>
+        getProviderSetupCapabilities(platform, { settings, environment }).find(
+          (entry) => entry.provider === "claude",
+        )?.installed;
+      const executionFor = (actionId: string) =>
+        Effect.runPromise(
+          resolveProviderSetupExecution({
+            action: resolveProviderSetupAction(actionId, platform)!,
+            settings,
+            environment,
+            codexPaths: {
+              codexHome: join(directory, "codex"),
+              configPath: "",
+              configRoot: directory,
+              deniedPaths: [],
+            },
+          }).pipe(Effect.provide(NodeServices.layer)),
+        );
+      expect(discover()).toBe(false);
+      const install = await executionFor("claude.install");
+
+      // Simulate native installer output using the HOME that the setup job
+      // supplies, then exercise discovery, login, and the runtime resolver.
+      const nativeBin = join(install.env!.HOME!, ".local", "bin");
+      mkdirSync(nativeBin, { recursive: true });
+      const executable = join(nativeBin, process.platform === "win32" ? "claude.exe" : "claude");
+      writeFileSync(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      expect(discover()).toBe(true);
+      const auth = await executionFor("claude.auth.login");
+      expect(resolveCommandPath(auth.command, { env: auth.env })).toBe(executable);
+      const runtimeEnv = await Effect.runPromise(makeClaudeEnvironment({ homePath }, environment));
+      expect(resolveCommandPath("claude", { env: runtimeEnv })).toBe(executable);
+
+      // An explicitly configured executable remains first even when the
+      // account home also contains a standalone installation.
+      mkdirSync(environment.PATH, { recursive: true });
+      const configuredExecutable = join(
+        environment.PATH,
+        process.platform === "win32" ? "claude.exe" : "claude",
+      );
+      writeFileSync(configuredExecutable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      expect(resolveCommandPath("claude", { env: runtimeEnv })).toBe(configuredExecutable);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("discovers disabled providers and rechecks files installed after the app started", () => {
     const directory = mkdtempSync(join(tmpdir(), "sb-provider-discovery-"));
     try {

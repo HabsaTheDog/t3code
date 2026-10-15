@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -203,8 +203,8 @@ describe("ProviderSetupJobRunner", () => {
         resolve(directory, "first-home"),
         resolve(directory, "second-home"),
       ]);
-      expect(requests[0]?.env?.PATH?.endsWith(directory)).toBe(true);
-      expect(requests[1]?.env?.PATH?.endsWith(join(directory, "updated-bin"))).toBe(true);
+      expect(requests[0]?.env?.PATH?.split(delimiter)).toContain(directory);
+      expect(requests[1]?.env?.PATH?.split(delimiter)).toContain(join(directory, "updated-bin"));
       expect(resolveExecution).toHaveBeenCalledTimes(2);
     } finally {
       rmSync(directory, { recursive: true, force: true });

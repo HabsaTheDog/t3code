@@ -10,10 +10,26 @@ import {
   makeClaudeContinuationGroupKey,
   makeClaudeEnvironment,
   resolveClaudeHomePath,
+  resolveClaudeEnvironment,
 } from "./ClaudeHome.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
+    it("keeps explicit Windows Path entries ahead of the configured home install directory", () => {
+      const environment = resolveClaudeEnvironment(
+        { homePath: "C:\\Accounts\\Student" },
+        { Path: "C:\\Tools;C:\\Windows\\System32" },
+        "win32",
+      );
+      expect(environment.HOME).toBe("C:\\Accounts\\Student");
+      expect(environment.PATH).toBe(
+        "C:\\Tools;C:\\Windows\\System32;C:\\Accounts\\Student\\.local\\bin",
+      );
+      expect(
+        resolveClaudeEnvironment({ homePath: "C:\\Accounts\\Student" }, environment, "win32").PATH,
+      ).toBe(environment.PATH);
+    });
+
     it.effect("uses the process home when no Claude home override is configured", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
