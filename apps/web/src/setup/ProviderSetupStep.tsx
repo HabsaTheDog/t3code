@@ -583,10 +583,9 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
               status.installed &&
               status.version !== null &&
               compareSemverVersions(status.version, MINIMUM_STUDY_BUDDY_CODEX_VERSION) < 0;
-            const checking = capability?.installed === undefined && !status.installed;
-            const actions = checking
-              ? []
-              : visibleProviderActions(capability, status.installed, updateRequired);
+            // A completed legacy response may omit filesystem discovery metadata.
+            // Keep its status-based actions available; only the initial request is loading.
+            const actions = visibleProviderActions(capability, status.installed, updateRequired);
             const retryAction = actionForRetry(job);
             const unsupported = actions.length > 0 && actions.every((action) => !action.supported);
             const providerLabel =
@@ -612,29 +611,25 @@ export const ProviderSetupStep = forwardRef<ProviderSetupStepHandle, SetupProps>
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold">{providerLabel}</h3>
                           {status.authenticated ? <Badge variant="success">Ready</Badge> : null}
-                          {!status.installed && !checking ? (
+                          {!status.installed ? (
                             <Badge variant="outline">Needs installation</Badge>
                           ) : null}
                         </div>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          {checking
-                            ? "Checking installation…"
-                            : status.installed
-                              ? `Installed${status.version ? ` · ${status.version}` : ""}`
-                              : "Not installed"}
+                          {status.installed
+                            ? `Installed${status.version ? ` · ${status.version}` : ""}`
+                            : "Not installed"}
                           {" · "}
                           {status.authenticated ? "Signed in" : "Sign-in needed"}
                         </p>
                         <p className="mt-2 text-xs text-muted-foreground/80">
-                          {checking
-                            ? "Looking for an existing installation on this device."
-                            : updateRequired
-                              ? `Codex ${status.version} is installed. Update to a supported version.`
-                              : status.authenticated
-                                ? `${providerLabel} is ready to use.`
-                                : status.installed
-                                  ? "Choose an option below to sign in."
-                                  : `Install ${providerLabel} first, then sign in.`}
+                          {updateRequired
+                            ? `Codex ${status.version} is installed. Update to a supported version.`
+                            : status.authenticated
+                              ? `${providerLabel} is ready to use.`
+                              : status.installed
+                                ? "Choose an option below to sign in."
+                                : `Install ${providerLabel} first, then sign in.`}
                         </p>
                       </div>
                     </div>

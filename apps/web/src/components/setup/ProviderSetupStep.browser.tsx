@@ -407,6 +407,50 @@ describe("provider setup", () => {
     await screen.unmount();
   });
 
+  it("keeps legacy capability install actions available when discovery metadata is absent", async () => {
+    const { installed: _installed, ...legacy } = capability("codex", "Codex", [
+      codexInstall,
+      codexBrowserAuth,
+    ]);
+    harness.capabilities = [legacy];
+    const screen = await render(<ProviderSetupStep provider="codex" />);
+    await expect.element(page.getByRole("button", { name: "Install Codex" })).toBeEnabled();
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect.element(page.getByRole("button", { name: "Install Codex" })).toBeEnabled();
+    await page.getByRole("button", { name: "Install Codex" }).click();
+    await vi.waitFor(() =>
+      expect(harness.startProviderSetup).toHaveBeenCalledWith({
+        actionId: "codex.install",
+        confirmed: true,
+      }),
+    );
+    await waitForJob("job-1");
+    await screen.unmount();
+  });
+
+  it("uses legacy runtime status to hide reinstall and allow sign-in without discovery metadata", async () => {
+    const { installed: _installed, ...legacy } = capability("codex", "Codex", [
+      codexInstall,
+      codexBrowserAuth,
+    ]);
+    harness.capabilities = [legacy];
+    harness.providers = [
+      provider({
+        instanceId: "codex",
+        driver: "codex",
+        installed: true,
+        enabled: true,
+        version: "0.147.0",
+      }),
+    ];
+    const screen = await render(<ProviderSetupStep provider="codex" />);
+    await expect
+      .element(page.getByRole("button", { name: "Install Codex" }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Sign in with browser" })).toBeEnabled();
+    await screen.unmount();
+  });
+
   it("recognizes a disabled existing Claude and connects it without installation or login", async () => {
     harness.capabilities = [
       {
